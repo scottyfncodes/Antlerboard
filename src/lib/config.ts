@@ -47,16 +47,17 @@ export const DRAFT_COLOR_ANCHOR_COLOR: DraftColorName = "RED";
 
 /**
  * Seasons that do not advance the five-color cycle at all (the color
- * sequence "pauses" - the season simply has no draft color).
+ * sequence "pauses" - the season simply has no draft color). 2020 predates
+ * the color system entirely (it began in 2021, per the league's confirmed
+ * history), not just a paused year within it - listing it here (rather than
+ * backward-extrapolating from the 2021 = RED anchor) is what keeps it from
+ * resolving to a color it never actually had.
  */
-export const DRAFT_COLOR_SKIPPED_SEASONS: number[] = [2027];
+export const DRAFT_COLOR_SKIPPED_SEASONS: number[] = [2020, 2027];
 
 /**
  * Explicit historical overrides, keyed by season year. Takes precedence
- * over the computed cycle value. 2020 predates the documented anchor
- * (2021 = RED) and the league's actual 2020 color was not supplied, so it
- * is left to be computed by backward extrapolation unless/until a
- * commissioner sets an explicit override here or in LeagueSettings.
+ * over the computed cycle value.
  */
 export const DRAFT_COLOR_OVERRIDES: Record<number, DraftColorName> = {};
 

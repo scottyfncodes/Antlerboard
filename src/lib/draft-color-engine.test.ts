@@ -28,10 +28,10 @@ describe("draft-color-engine", () => {
     expect(color2028).toBe("ORANGE");
   });
 
-  it("computes a color for 2020 (before the documented anchor) via extrapolation", () => {
+  it("marks 2020 as skipped - the color system didn't exist before 2021", () => {
     const result = getDraftColor(2020);
-    expect(result.skipped).toBe(false);
-    expect(result.color).not.toBeNull();
+    expect(result.skipped).toBe(true);
+    expect(result.color).toBeNull();
   });
 
   it("continues the cycle correctly for future seasons after the skip", () => {
