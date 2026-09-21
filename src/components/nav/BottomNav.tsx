@@ -36,7 +36,7 @@ export function BottomNav() {
                     isActive(item.href) ? "text-antler-strong bg-surface-raised" : "text-muted"
                   )}
                 >
-                  <item.icon className="h-5 w-5" strokeWidth={1.75} />
+                  <item.icon className="h-6 w-6" strokeWidth={2} />
                   <span>{item.label}</span>
                 </Link>
               </li>
@@ -61,7 +61,7 @@ export function BottomNav() {
                   )}
                 >
                   {active && <span className="absolute top-0 h-0.5 w-6 rounded-full bg-antler-strong" />}
-                  <item.icon className="h-5 w-5" strokeWidth={active ? 2 : 1.75} />
+                  <item.icon className="h-6 w-6" strokeWidth={active ? 2.5 : 2.25} />
                   <span>{item.label}</span>
                 </Link>
               </li>
@@ -76,7 +76,7 @@ export function BottomNav() {
               )}
             >
               {(moreOpen || moreActive) && <span className="absolute top-0 h-0.5 w-6 rounded-full bg-antler-strong" />}
-              <Menu className="h-5 w-5" strokeWidth={moreOpen || moreActive ? 2 : 1.75} />
+              <Menu className="h-6 w-6" strokeWidth={moreOpen || moreActive ? 2.5 : 2.25} />
               <span>More</span>
             </button>
           </li>

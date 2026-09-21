@@ -59,7 +59,7 @@ export function NotificationBell() {
         className="relative text-muted hover:text-foreground"
         aria-label="Notifications"
       >
-        <Bell className="h-5 w-5" strokeWidth={1.75} />
+        <Bell className="h-6 w-6" strokeWidth={2.25} />
         {unreadCount > 0 && (
           <span className="absolute -top-1.5 -right-1.5 min-w-[16px] rounded-full bg-red px-1 text-[10px] font-semibold leading-4 text-white text-center ring-2 ring-surface">
             {unreadCount > 9 ? "9+" : unreadCount}

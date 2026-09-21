@@ -20,7 +20,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </Link>
           <div className="ml-auto flex items-center gap-4">
             <Link href="/search" className="text-muted hover:text-foreground" aria-label="Search">
-              <Search className="h-5 w-5" strokeWidth={1.75} />
+              <Search className="h-6 w-6" strokeWidth={2.25} />
             </Link>
             <NotificationBell />
           </div>

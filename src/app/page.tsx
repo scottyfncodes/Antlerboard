@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 export default async function BoardPage() {
   const manager = await getCurrentManager();
 
-  const [season, standings, keeperDeadlineSeason, recentTrades, recentTransactions, expiringKeepers, availablePlayers, recentDpud, yahoo, unreadCount] =
+  const [season, standings, keeperDeadlineSeason, recentTrades, recentTransactions, expiringKeepers, availablePlayers, recentPropBets, dpudCount, yahoo, unreadCount] =
     await Promise.all([
       prisma.season.findFirst({ where: { year: CURRENT_SEASON_YEAR }, include: { draftDayDetails: true } }),
       prisma.teamStanding.findMany({
@@ -49,6 +49,12 @@ export default async function BoardPage() {
         take: 3,
         include: { participants: true },
       }),
+      // The real DPUD (see /dpud) - FYPD-drafted players who'll show as
+      // Yahoo-available but are already off-limits via C&A call-up rights.
+      // Not to be confused with the dpudBet model above, which is the
+      // league's prop-bet game (see /prop-bets - it used to be called
+      // "DPUD" before that name got reused for this).
+      prisma.fypdSelection.count({ where: { isDpud: true, callUpExercised: false } }),
       prisma.yahooConnection.findFirst(),
       manager
         ? prisma.notification.count({ where: { managerId: manager.id, read: false } })
@@ -202,7 +208,7 @@ export default async function BoardPage() {
         </Card>
       </section>
 
-      <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card>
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-display text-lg">Recent Trade Activity</h2>
@@ -245,10 +251,33 @@ export default async function BoardPage() {
             </ul>
           )}
         </Card>
+
+        <Card>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-display text-lg">Prop Bet Activity</h2>
+            <Link href="/prop-bets" className="text-xs text-antler hover:text-antler-strong">
+              Prop Bets &rarr;
+            </Link>
+          </div>
+          {recentPropBets.length === 0 ? (
+            <p className="text-sm text-muted">No prop bets yet.</p>
+          ) : (
+            <ul className="space-y-2">
+              {recentPropBets.map((b) => (
+                <li key={b.id} className="text-sm flex items-center justify-between">
+                  <span className="truncate">{b.title}</span>
+                  <Badge variant={b.status === "COMPLETE" ? "green" : b.status === "ACTIVE" ? "blue" : "default"}>
+                    {b.status} {b.status !== "COMPLETE" && `· ${b.participants.length}`}
+                  </Badge>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
       </section>
 
-      <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Card>
+      <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Card className="md:col-span-2">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-display text-lg">Newly Available</h2>
             <Link href="/players?tag=AVAILABLE" className="text-xs text-antler hover:text-antler-strong">
@@ -272,26 +301,14 @@ export default async function BoardPage() {
         </Card>
 
         <Card>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-display text-lg">DPUD Activity</h2>
-            <Link href="/dpud" className="text-xs text-antler hover:text-antler-strong">
-              DPUD &rarr;
-            </Link>
-          </div>
-          {recentDpud.length === 0 ? (
-            <p className="text-sm text-muted">No prop bets yet.</p>
-          ) : (
-            <ul className="space-y-2">
-              {recentDpud.map((b) => (
-                <li key={b.id} className="text-sm flex items-center justify-between">
-                  <span className="truncate">{b.title}</span>
-                  <Badge variant={b.status === "COMPLETE" ? "green" : b.status === "ACTIVE" ? "blue" : "default"}>
-                    {b.status} {b.status !== "COMPLETE" && `· ${b.participants.length}`}
-                  </Badge>
-                </li>
-              ))}
-            </ul>
-          )}
+          <h2 className="font-display text-lg mb-1">DPUD</h2>
+          <p className="text-2xl font-display tabular">{dpudCount}</p>
+          <p className="text-xs text-muted mt-1">
+            Yahoo-available, but already owned in C&amp;A via FYPD call-up rights.
+          </p>
+          <Link href="/dpud" className="inline-block mt-3 text-xs text-antler hover:text-antler-strong">
+            Full list &rarr;
+          </Link>
         </Card>
       </section>
     </div>
