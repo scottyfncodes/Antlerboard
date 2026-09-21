@@ -30,7 +30,13 @@ export function parseFypdRawSection(
   sourceSheet: string,
   label: string,
   rows: Cell[][],
-  columns: FypdColumnMap
+  columns: FypdColumnMap,
+  /**
+   * The year isn't labeled anywhere on the source sheet, so it can only
+   * ever be filled in here from an explicit, out-of-band confirmation
+   * (e.g. known-fypd-drafts.ts) - never guessed from row content.
+   */
+  confirmedSeasonYear?: number
 ): ParsedFypdSection {
   const picks: ParsedFypdPick[] = [];
 
@@ -38,7 +44,11 @@ export function parseFypdRawSection(
     const pickVal = row[columns.pick];
     const teamVal = row[columns.team];
     const playerVal = row[columns.player];
-    if (pickVal == null && teamVal == null && playerVal == null) continue; // blank row
+    // A real pick always has a player name. Rows with only a bare pick
+    // number and no player (seen as a long dangling tail past the last
+    // real pick in the real sheet) and the sheet's own header row (caught
+    // upstream by slicing it off before this is called) are not picks.
+    if (asTrimmedString(playerVal) === null) continue;
 
     picks.push({
       overallPickInSource: typeof pickVal === "number" ? pickVal : null,
@@ -53,9 +63,12 @@ export function parseFypdRawSection(
     sourceSheet,
     label,
     picks,
-    seasonYear: null,
-    flags: [
-      "Draft year is not labeled anywhere on the source sheet - this batch stays PENDING_REVIEW until a commissioner confirms the year (see FypdImportBatch).",
-    ],
+    seasonYear: confirmedSeasonYear ?? null,
+    flags:
+      confirmedSeasonYear === undefined
+        ? [
+            "Draft year is not labeled anywhere on the source sheet - this batch stays PENDING_REVIEW until a commissioner confirms the year (see FypdImportBatch).",
+          ]
+        : [],
   };
 }

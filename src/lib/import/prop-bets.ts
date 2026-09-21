@@ -9,7 +9,7 @@
 
 import type { ParsedPropBet } from "./types";
 
-type Cell = string | number | null | undefined;
+type Cell = string | number | Date | null | undefined;
 
 function asTrimmedString(v: Cell): string | null {
   return typeof v === "string" && v.trim().length > 0 ? v.trim() : null;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseTeamSeasonLabel, parseManagerSheetSeasonBlocks } from "./team-season-history";
+import { parseTeamSeasonLabel, parseManagerSheetSeasonBlocks, resolveTeamSeasonRecords } from "./team-season-history";
 
 describe("parseTeamSeasonLabel", () => {
   it("parses a plain 'Team - Year' label with no finish", () => {
@@ -56,5 +56,33 @@ describe("parseManagerSheetSeasonBlocks", () => {
     ]);
     expect(results).toHaveLength(3);
     expect(results.map((r) => r.seasonYear)).toEqual([2021, 2022, 2023]);
+  });
+});
+
+describe("resolveTeamSeasonRecords", () => {
+  it("attributes a franchise with a known handoff to the predecessor before the handoff year", () => {
+    const records = parseManagerSheetSeasonBlocks("Andrew", ["Team A - 2021", "Team A - 2023", "Team B - 2024"]);
+    const resolved = resolveTeamSeasonRecords(records);
+    expect(resolved.map((r) => r.resolvedManagerName)).toEqual(["Stan", "Stan", "Andrew"]);
+    expect(resolved.every((r) => r.attribution === "confirmed_handoff")).toBe(true);
+  });
+
+  it("marks a confirmed original as such regardless of mid-run renames", () => {
+    const records = parseManagerSheetSeasonBlocks("Kurt", ["Whales - 2021", "Plush Sox - 2024"]);
+    const resolved = resolveTeamSeasonRecords(records);
+    expect(resolved.every((r) => r.resolvedManagerName === "Kurt")).toBe(true);
+    expect(resolved.every((r) => r.attribution === "confirmed_original")).toBe(true);
+  });
+
+  it("marks a manager with no recorded handoff or confirmation as inferred continuous", () => {
+    const records = parseManagerSheetSeasonBlocks("Scott", ["Ranger Thingz - 2021"]);
+    const resolved = resolveTeamSeasonRecords(records);
+    expect(resolved[0]).toMatchObject({ resolvedManagerName: "Scott", attribution: "inferred_continuous" });
+  });
+
+  it("marks a record with no parseable year as unattributed rather than guessing a manager", () => {
+    const records = parseManagerSheetSeasonBlocks("Andrew", ["Team A (no year)"]);
+    const resolved = resolveTeamSeasonRecords(records);
+    expect(resolved[0].attribution).toBe("unattributed");
   });
 });

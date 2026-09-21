@@ -23,6 +23,14 @@ export interface ParsedTeamSeasonBlock {
   flags: string[];
 }
 
+export type SeasonAttribution = "confirmed_handoff" | "confirmed_original" | "inferred_continuous" | "unattributed";
+
+export interface ResolvedTeamSeasonRecord extends ParsedTeamSeasonBlock {
+  /** Who actually ran the team this season - may differ from managerSheetName (see known-league-history.ts). */
+  resolvedManagerName: string;
+  attribution: SeasonAttribution;
+}
+
 export interface ParsedPropBet {
   seasonYear: number | null;
   teamAName: string;
@@ -70,6 +78,7 @@ export interface ParsedFypdSection {
   sourceSheet: string;
   label: string;
   picks: ParsedFypdPick[];
-  seasonYear: null;
+  /** Only ever non-null via an explicit out-of-band confirmation - see parseFypdRawSection. */
+  seasonYear: number | null;
   flags: string[];
 }

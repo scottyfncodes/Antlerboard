@@ -11,7 +11,8 @@
  * returned with a flag rather than silently dropped.
  */
 
-import type { ParsedTeamSeasonBlock } from "./types";
+import type { ParsedTeamSeasonBlock, ResolvedTeamSeasonRecord } from "./types";
+import { KNOWN_HANDOFFS, CONFIRMED_ORIGINALS, resolveSeasonManager } from "./known-league-history";
 
 // The trailing "- finish" segment is optional and, in the real data, can be
 // present but empty (a dangling "- " with nothing after it) - `(.*)` (not
@@ -51,4 +52,32 @@ export function parseManagerSheetSeasonBlocks(
   return headerLabels
     .filter((label): label is string => !!label && label.trim().length > 0)
     .map((label) => parseTeamSeasonLabel(managerSheetName, label));
+}
+
+/**
+ * Attributes each parsed season block to whoever actually ran it, using
+ * the confirmed handoff history in known-league-history.ts. This is the
+ * one place a franchise's sheet-name label ("this is filed under Andrew")
+ * gets corrected to the real historical manager ("but 2021-2023 was
+ * Stan") - see that module's own docs for why the raw spreadsheet can't
+ * tell us this on its own.
+ */
+export function resolveTeamSeasonRecords(records: ParsedTeamSeasonBlock[]): ResolvedTeamSeasonRecord[] {
+  return records.map((r) => {
+    if (r.seasonYear === null) {
+      return { ...r, resolvedManagerName: r.managerSheetName, attribution: "unattributed" };
+    }
+    const hasHandoff = KNOWN_HANDOFFS.some((h) => h.currentManagerSheetName === r.managerSheetName);
+    if (hasHandoff) {
+      return {
+        ...r,
+        resolvedManagerName: resolveSeasonManager(r.managerSheetName, r.seasonYear),
+        attribution: "confirmed_handoff",
+      };
+    }
+    if (CONFIRMED_ORIGINALS.has(r.managerSheetName)) {
+      return { ...r, resolvedManagerName: r.managerSheetName, attribution: "confirmed_original" };
+    }
+    return { ...r, resolvedManagerName: r.managerSheetName, attribution: "inferred_continuous" };
+  });
 }
