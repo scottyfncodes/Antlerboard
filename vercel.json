@@ -3,7 +3,7 @@
   "crons": [
     {
       "path": "/api/cron/yahoo-sync",
-      "schedule": "0 */3 * * *"
+      "schedule": "0 12 * * *"
     },
     {
       "path": "/api/cron/notifications",
