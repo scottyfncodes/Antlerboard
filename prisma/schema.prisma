@@ -38,6 +38,9 @@ model League {
   yahooConnection YahooConnection?
   settings LeagueSettings?
   fypdDrafts FypdDraft[]
+  historicalTrades HistoricalTrade[]
+  historicalPropBets HistoricalPropBet[]
+  fypdImportBatches FypdImportBatch[]
 }
 
 // Centralized league configuration (see also src/lib/config.ts for code
@@ -148,6 +151,11 @@ model Manager {
   email      String?  @unique
   isCommissioner Boolean @default(false)
   yahooGuid  String?
+  // False for a manager who has left the league (e.g. the pre-2021 era's
+  // Drew/Trey/Stan/Holman) - kept as a real historical identity rather than
+  // deleted, so old records (trades, prop bets, keeper costs) still resolve
+  // to a real person instead of a dangling reference.
+  active     Boolean  @default(true)
   createdAt  DateTime @default(now())
 
   teams                Team[]
@@ -158,6 +166,7 @@ model Manager {
   createdDpudBets      DpudBet[] @relation("DpudCreator")
   dpudParticipants     DpudParticipant[]
   offers               Offer[] @relation("OfferSender")
+  teamSeasonRecords    TeamSeasonRecord[]
 
   @@index([leagueId])
 }
@@ -185,9 +194,104 @@ model Team {
   standings      TeamStanding[]
   fypdOrderSlots FypdDraftOrderSlot[]
   fypdSelections FypdSelection[]
+  seasonRecords  TeamSeasonRecord[]
 
   @@unique([leagueId, yahooTeamId])
   @@index([leagueId])
+}
+
+// One row per team per season, recording what the team was actually called
+// and who actually ran it *in that season* - imported from the league's own
+// historical spreadsheet. This is deliberately separate from the live
+// Team.name/Team.managerId fields (which only ever reflect the team's
+// *current* name/owner): a team that was "Bluth Co. Softball" in 2021 and
+// is "Dallas Eagles" today keeps both facts, forever, keyed by season year.
+// Renaming a team today must never touch (or require touching) this table -
+// see the import tooling's historical-data-is-immutable rule.
+model TeamSeasonRecord {
+  id         String  @id @default(cuid())
+  team       Team    @relation(fields: [teamId], references: [id])
+  teamId     String
+  seasonYear Int
+  teamName   String
+  manager    Manager @relation(fields: [managerId], references: [id])
+  managerId  String
+  // Free-text finish, as the source recorded it (e.g. "10th", "9th Brigade").
+  // Not parsed into a numeric rank here - see TeamStanding for that, which
+  // is Yahoo/commissioner-maintained separately.
+  finish     String?
+  sourceNote String?
+  createdAt  DateTime @default(now())
+
+  @@unique([teamId, seasonYear])
+}
+
+// A trade or a wager as the historical spreadsheet actually recorded it -
+// two named parties, free text, nothing more. Deliberately NOT the live
+// Trade/Offer or DpudBet models: those require structured players, teams,
+// and (for DpudBet) an opt-in participant list, none of which most
+// historical entries actually have. Manufacturing that structure to fit
+// would misrepresent history that was never that precise. teamAId/teamBId
+// are populated only when the raw name confidently resolves to a real
+// Team; the raw name is always kept regardless, so nothing is lost if a
+// name can't be resolved (an old, departed team, for instance).
+model HistoricalTrade {
+  id            String   @id @default(cuid())
+  league        League   @relation(fields: [leagueId], references: [id])
+  leagueId      String
+  seasonYear    Int?
+  tradeDate     DateTime?
+  teamAName     String
+  teamAId       String?
+  teamAPlayersRaw String?
+  teamADropsRaw String?
+  teamBName     String
+  teamBId       String?
+  teamBPlayersRaw String?
+  teamBDropsRaw String?
+  sourceRef     String?
+  createdAt     DateTime @default(now())
+}
+
+model HistoricalPropBet {
+  id          String   @id @default(cuid())
+  league      League   @relation(fields: [leagueId], references: [id])
+  leagueId    String
+  seasonYear  Int?
+  teamAName   String
+  teamAId     String?
+  teamBName   String
+  teamBId     String?
+  amount      Float?
+  description String
+  sourceRef   String?
+  createdAt   DateTime @default(now())
+}
+
+enum FypdImportBatchStatus {
+  PENDING_REVIEW
+  CONFIRMED
+  DISCARDED
+}
+
+// Staging area for FYPD sections parsed from the historical spreadsheet
+// whose draft year isn't explicitly labeled in the source. Deliberately
+// NOT written into FypdDraft/FypdSelection until a commissioner confirms
+// the year (and any other ambiguous fields) - see the import tooling's
+// "never invent a year" rule. rawPicks preserves exactly what was parsed,
+// unmodified, so confirming doesn't require re-parsing the source.
+model FypdImportBatch {
+  id            String   @id @default(cuid())
+  league        League   @relation(fields: [leagueId], references: [id])
+  leagueId      String
+  label         String
+  sourceSheet   String
+  rawPicks      Json
+  seasonYear    Int?
+  status        FypdImportBatchStatus @default(PENDING_REVIEW)
+  notes         String?
+  createdAt     DateTime @default(now())
+  confirmedAt   DateTime?
 }
 
 // ---------------------------------------------------------------------------
