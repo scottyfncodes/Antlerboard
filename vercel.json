@@ -1,0 +1,13 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    {
+      "path": "/api/cron/yahoo-sync",
+      "schedule": "0 */3 * * *"
+    },
+    {
+      "path": "/api/cron/notifications",
+      "schedule": "0 13 * * *"
+    }
+  ]
+}

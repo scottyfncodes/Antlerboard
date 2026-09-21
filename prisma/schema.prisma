@@ -1,0 +1,633 @@
+// Antlerboard data model
+//
+// Yahoo is the source of truth for live fantasy-platform facts (rosters,
+// standings, current transactions). Antlerboard is the source of truth for
+// everything Yahoo doesn't know about the Claw & Antler League: keeper
+// history, tags, trade marketplace state, DPUD, draft colors, and history.
+// A Yahoo sync must never overwrite the C&A-specific fields below - see
+// src/lib/yahoo/sync.ts for the merge rules.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// League / Season
+// ---------------------------------------------------------------------------
+
+model League {
+  id           String   @id @default(cuid())
+  name         String
+  abbreviation String
+  currentSeasonYear Int?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  seasons  Season[]
+  teams    Team[]
+  managers Manager[]
+  players  Player[]
+  yahooConnection YahooConnection?
+  settings LeagueSettings?
+}
+
+// Centralized league configuration (see also src/lib/config.ts for code
+// defaults). Rows here let a commissioner override defaults without a
+// redeploy.
+model LeagueSettings {
+  id                        String   @id @default(cuid())
+  league                    League   @relation(fields: [leagueId], references: [id])
+  leagueId                  String   @unique
+  keeperSlotCount           Int      @default(10)
+  maxConsecutiveKeeperYears Int      @default(5)
+  keeperCostIncrementPerYear Int     @default(1)
+  teamCount                 Int      @default(10)
+  updatedAt                 DateTime @updatedAt
+}
+
+enum DraftColor {
+  RED
+  ORANGE
+  YELLOW
+  GREEN
+  BLUE
+}
+
+enum SeasonStatus {
+  UPCOMING
+  DRAFTING
+  IN_PROGRESS
+  COMPLETE
+}
+
+model Season {
+  id        String       @id @default(cuid())
+  league    League       @relation(fields: [leagueId], references: [id])
+  leagueId  String
+  year      Int
+  draftColor DraftColor?
+  colorSkipped Boolean    @default(false)
+  colorOverridden Boolean @default(false)
+  status    SeasonStatus @default(UPCOMING)
+  keeperDeadline   DateTime?
+  draftDate        DateTime?
+  champion  Team?        @relation("SeasonChampion", fields: [championTeamId], references: [id])
+  championTeamId String?
+  notes     String?
+
+  draftPicks    DraftPick[]
+  acquisitions  Acquisition[]
+  keeperRecords KeeperRecord[]
+  transactions  Transaction[]
+  trades        Trade[]
+  dpudBets      DpudBet[]
+  standings     TeamStanding[]
+
+  @@unique([leagueId, year])
+}
+
+// Cached from Yahoo (source of truth for live standings). Populated by the
+// sync layer; empty/stale until a league connects Yahoo, at which point the
+// dashboard degrades gracefully to "connect Yahoo to see live standings".
+model TeamStanding {
+  id            String   @id @default(cuid())
+  season        Season   @relation(fields: [seasonId], references: [id])
+  seasonId      String
+  team          Team     @relation(fields: [teamId], references: [id])
+  teamId        String
+  wins          Int      @default(0)
+  losses        Int      @default(0)
+  ties          Int      @default(0)
+  rank          Int?
+  gamesBack     Float?
+  pointsFor     Float?
+  pointsAgainst Float?
+  updatedAt     DateTime @updatedAt
+
+  @@unique([seasonId, teamId])
+}
+
+// ---------------------------------------------------------------------------
+// Managers / Teams
+// ---------------------------------------------------------------------------
+
+model Manager {
+  id         String   @id @default(cuid())
+  league     League   @relation(fields: [leagueId], references: [id])
+  leagueId   String
+  name       String
+  email      String?  @unique
+  isCommissioner Boolean @default(false)
+  yahooGuid  String?
+  createdAt  DateTime @default(now())
+
+  teams                Team[]
+  notificationPrefs    NotificationPreference[]
+  notifications        Notification[]
+  pushSubscriptions     PushSubscription[]
+  createdTrades        Trade[] @relation("TradeProposer")
+  createdDpudBets      DpudBet[] @relation("DpudCreator")
+  dpudParticipants     DpudParticipant[]
+  offers               Offer[] @relation("OfferSender")
+
+  @@index([leagueId])
+}
+
+model Team {
+  id          String   @id @default(cuid())
+  league      League   @relation(fields: [leagueId], references: [id])
+  leagueId    String
+  yahooTeamId String?
+  name        String
+  manager     Manager  @relation(fields: [managerId], references: [id])
+  managerId   String
+  logoUrl     String?
+  active      Boolean  @default(true)
+
+  acquisitions   Acquisition[]
+  keeperRecords  KeeperRecord[]
+  draftPicks     DraftPick[]
+  playerTags     PlayerTag[]
+  championSeasons Season[] @relation("SeasonChampion")
+  tradesAsTeamA  Trade[]  @relation("TradeTeamA")
+  tradesAsTeamB  Trade[]  @relation("TradeTeamB")
+  offersSent     Offer[]  @relation("OfferSendingTeam")
+  offersReceived Offer[]  @relation("OfferReceivingTeam")
+  standings      TeamStanding[]
+
+  @@unique([leagueId, yahooTeamId])
+  @@index([leagueId])
+}
+
+// ---------------------------------------------------------------------------
+// Players
+// ---------------------------------------------------------------------------
+
+model Player {
+  id            String   @id @default(cuid())
+  league        League   @relation(fields: [leagueId], references: [id])
+  leagueId      String
+  yahooPlayerId String?
+  name          String
+  mlbTeam       String?
+  positions     String[] @default([])
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  acquisitions   Acquisition[]
+  keeperRecords  KeeperRecord[]
+  draftPicks     DraftPick[]
+  tags           PlayerTag[]
+  transactionLinks TransactionPlayer[]
+  tradeAssets    TradeAsset[]
+  dpudSubjects   DpudBetPlayer[]
+  targetedOffers Offer[]
+
+  @@unique([leagueId, yahooPlayerId])
+  @@index([leagueId, name])
+}
+
+enum AcquisitionMethod {
+  DRAFT
+  WAIVER
+  FREE_AGENT
+  TRADE
+}
+
+// One row per time a player entered a team's roster from *outside* the
+// league's C&A keeper chain (DRAFT / WAIVER / FREE_AGENT), or moved between
+// two rostered teams via TRADE. DRAFT/WAIVER/FREE_AGENT start a brand new
+// keeper "stint" (tenure resets to zero); TRADE carries the existing stint's
+// tenure and cost forward untouched. See src/lib/keeper-engine.ts.
+model Acquisition {
+  id        String            @id @default(cuid())
+  season    Season            @relation(fields: [seasonId], references: [id])
+  seasonId  String
+  seasonYear Int
+  player    Player            @relation(fields: [playerId], references: [id])
+  playerId  String
+  team      Team              @relation(fields: [teamId], references: [id])
+  teamId    String
+  method    AcquisitionMethod
+  cost      Float             @default(0)
+  date      DateTime          @default(now())
+  draftRound Int?
+  draftPick  Int?
+  notes     String?
+  createdAt DateTime          @default(now())
+
+  @@index([playerId])
+  @@index([teamId])
+}
+
+enum KeeperStatus {
+  KEPT
+  FORCED_BACK
+  DROPPED
+  NEEDS_DECISION
+}
+
+// Materialized per-season keeper computation, refreshed by the keeper
+// engine. Persisted (rather than purely computed on read) so history stays
+// stable, is fast to query for the Keeper Board, and can be manually
+// corrected by a commissioner when historical data is ambiguous.
+model KeeperRecord {
+  id          String       @id @default(cuid())
+  season      Season       @relation(fields: [seasonId], references: [id])
+  seasonId    String
+  seasonYear  Int
+  player      Player       @relation(fields: [playerId], references: [id])
+  playerId    String
+  team        Team         @relation(fields: [teamId], references: [id])
+  teamId      String
+  keeperYear  Int
+  keeperCost  Float
+  yearsRemaining Int
+  status      KeeperStatus
+  stintIndex  Int          @default(0)
+  commissionerOverride Boolean @default(false)
+  updatedAt   DateTime     @updatedAt
+
+  @@unique([seasonId, playerId])
+  @@index([teamId])
+}
+
+model DraftPick {
+  id         String   @id @default(cuid())
+  season     Season   @relation(fields: [seasonId], references: [id])
+  seasonId   String
+  seasonYear Int
+  round      Int
+  pick       Int
+  overallPick Int
+  team       Team     @relation(fields: [teamId], references: [id])
+  teamId     String
+  player     Player?  @relation(fields: [playerId], references: [id])
+  playerId   String?
+  cost       Float?
+  acquisitionType String @default("DRAFT")
+  isKeeperSlot Boolean  @default(false)
+
+  @@unique([seasonId, overallPick])
+}
+
+// ---------------------------------------------------------------------------
+// Transactions (general audit-friendly log, including drops)
+// ---------------------------------------------------------------------------
+
+enum TransactionType {
+  DRAFT
+  WAIVER_ADD
+  FREE_AGENT_ADD
+  DROP
+  TRADE
+  KEEPER_DECLARED
+  COMMISSIONER_CORRECTION
+}
+
+model Transaction {
+  id        String          @id @default(cuid())
+  season    Season          @relation(fields: [seasonId], references: [id])
+  seasonId  String
+  seasonYear Int
+  type      TransactionType
+  date      DateTime        @default(now())
+  notes     String?
+  isHistoricalCorrection Boolean @default(false)
+  // Yahoo's transaction id, when this row originated from a Yahoo sync - keeps re-syncs idempotent.
+  yahooTransactionId String? @unique
+  createdAt DateTime        @default(now())
+
+  players TransactionPlayer[]
+  teams   TransactionTeam[]
+
+  @@index([seasonId])
+}
+
+model TransactionPlayer {
+  id            String      @id @default(cuid())
+  transaction   Transaction @relation(fields: [transactionId], references: [id])
+  transactionId String
+  player        Player      @relation(fields: [playerId], references: [id])
+  playerId      String
+
+  @@unique([transactionId, playerId])
+}
+
+model TransactionTeam {
+  id            String      @id @default(cuid())
+  transaction   Transaction @relation(fields: [transactionId], references: [id])
+  transactionId String
+  teamId        String
+  role          String // e.g. "FROM", "TO"
+
+  @@unique([transactionId, teamId, role])
+}
+
+// ---------------------------------------------------------------------------
+// Trades / Make Me an Offer
+// ---------------------------------------------------------------------------
+
+enum TradeStatus {
+  PROPOSED
+  COUNTERED
+  ACCEPTED
+  REJECTED
+  WITHDRAWN
+}
+
+model Trade {
+  id         String      @id @default(cuid())
+  season     Season      @relation(fields: [seasonId], references: [id])
+  seasonId   String
+  seasonYear Int
+  teamA      Team        @relation("TradeTeamA", fields: [teamAId], references: [id])
+  teamAId    String
+  teamB      Team        @relation("TradeTeamB", fields: [teamBId], references: [id])
+  teamBId    String
+  proposer   Manager     @relation("TradeProposer", fields: [proposerId], references: [id])
+  proposerId String
+  status     TradeStatus @default(PROPOSED)
+  notes      String?
+  parentTradeId String?  // set when this row is a counter-offer
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  assets TradeAsset[]
+
+  @@index([seasonId])
+}
+
+enum TradeAssetType {
+  PLAYER
+  DRAFT_PICK
+}
+
+model TradeAsset {
+  id        String         @id @default(cuid())
+  trade     Trade          @relation(fields: [tradeId], references: [id])
+  tradeId   String
+  fromTeamId String
+  toTeamId   String
+  assetType TradeAssetType
+  player    Player?        @relation(fields: [playerId], references: [id])
+  playerId  String?
+  draftPickDescription String? // e.g. "2027 3rd round pick"
+}
+
+enum OfferStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  WITHDRAWN
+}
+
+// "Make Me an Offer" flow - lighter weight than a full Trade proposal.
+model Offer {
+  id             String      @id @default(cuid())
+  targetPlayer   Player?     @relation(fields: [targetPlayerId], references: [id])
+  targetPlayerId String?
+  sendingTeam    Team        @relation("OfferSendingTeam", fields: [sendingTeamId], references: [id])
+  sendingTeamId  String
+  sendingManager Manager     @relation("OfferSender", fields: [sendingManagerId], references: [id])
+  sendingManagerId String
+  receivingTeam  Team        @relation("OfferReceivingTeam", fields: [receivingTeamId], references: [id])
+  receivingTeamId String
+  playersOffered   String[] @default([]) // player IDs offered by sending team
+  playersRequested String[] @default([]) // player IDs requested from receiving team
+  draftPicksOffered String[] @default([])
+  message        String?
+  status         OfferStatus @default(PENDING)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Player tags
+// ---------------------------------------------------------------------------
+
+enum PlayerTagType {
+  KEEPING
+  ON_THE_TABLE
+  MAKE_ME_AN_OFFER
+  AVAILABLE
+  NEEDS_DECISION
+  FORCED_BACK
+  RECENTLY_ACQUIRED
+}
+
+model PlayerTag {
+  id        String        @id @default(cuid())
+  player    Player        @relation(fields: [playerId], references: [id])
+  playerId  String
+  team      Team          @relation(fields: [teamId], references: [id])
+  teamId    String
+  tag       PlayerTagType
+  note      String?
+  updatedAt DateTime      @updatedAt
+
+  @@unique([playerId, teamId])
+}
+
+// ---------------------------------------------------------------------------
+// DPUD
+// ---------------------------------------------------------------------------
+
+enum DpudStatus {
+  OPEN
+  ACTIVE
+  COMPLETE
+  CANCELLED
+}
+
+model DpudBet {
+  id          String     @id @default(cuid())
+  season      Season     @relation(fields: [seasonId], references: [id])
+  seasonId    String
+  seasonYear  Int
+  creator     Manager    @relation("DpudCreator", fields: [creatorId], references: [id])
+  creatorId   String
+  title       String
+  description String
+  statCondition String
+  stakes      String?
+  startDate   DateTime
+  endDate     DateTime
+  status      DpudStatus @default(OPEN)
+  result      String?
+  winnerParticipantId String?
+  notes       String?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  players      DpudBetPlayer[]
+  participants DpudParticipant[]
+}
+
+model DpudBetPlayer {
+  id       String  @id @default(cuid())
+  bet      DpudBet @relation(fields: [betId], references: [id])
+  betId    String
+  player   Player  @relation(fields: [playerId], references: [id])
+  playerId String
+
+  @@unique([betId, playerId])
+}
+
+model DpudParticipant {
+  id        String   @id @default(cuid())
+  bet       DpudBet  @relation(fields: [betId], references: [id])
+  betId     String
+  manager   Manager  @relation(fields: [managerId], references: [id])
+  managerId String
+  optedInAt DateTime @default(now())
+
+  @@unique([betId, managerId])
+}
+
+// ---------------------------------------------------------------------------
+// Notifications
+// ---------------------------------------------------------------------------
+
+enum NotificationType {
+  TRADE_PROPOSED
+  TRADE_COUNTERED
+  TRADE_ACCEPTED
+  TRADE_REJECTED
+  OFFER_RECEIVED
+  OFFER_ACTIVITY
+  PLAYER_CHANGED_TEAMS
+  KEEPER_DEADLINE_APPROACHING
+  KEEPER_FINAL_YEAR
+  KEEPER_YEAR_FIVE
+  KEEPER_FORCED_BACK
+  KEEPER_COST_CHANGED
+  KEEPER_DECISION_REQUIRED
+  DRAFT_REMINDER
+  DRAFT_APPROACHING
+  DRAFT_RESULTS_AVAILABLE
+  KEEPER_LIST_INCOMPLETE
+  DPUD_NEW_BET
+  DPUD_OPT_IN
+  DPUD_RELEVANT_BET
+  DPUD_ENDING_SOON
+  DPUD_RESOLVED
+  SYNC_SUCCESSFUL
+  SYNC_FAILED
+  ROSTER_CHANGE_DETECTED
+}
+
+enum NotificationChannel {
+  IN_APP
+  PUSH
+  EMAIL
+}
+
+model Notification {
+  id        String            @id @default(cuid())
+  manager   Manager           @relation(fields: [managerId], references: [id])
+  managerId String
+  type      NotificationType
+  title     String
+  body      String
+  link      String?
+  relatedEntityType String?
+  relatedEntityId   String?
+  read      Boolean           @default(false)
+  createdAt DateTime          @default(now())
+
+  @@index([managerId, read])
+}
+
+model NotificationPreference {
+  id        String              @id @default(cuid())
+  manager   Manager             @relation(fields: [managerId], references: [id])
+  managerId String
+  type      NotificationType
+  channel   NotificationChannel
+  enabled   Boolean             @default(false)
+
+  @@unique([managerId, type, channel])
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  manager   Manager  @relation(fields: [managerId], references: [id])
+  managerId String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Yahoo integration
+// ---------------------------------------------------------------------------
+
+enum SyncStatus {
+  NEVER_RUN
+  SUCCESS
+  FAILED
+  PARTIAL
+  RUNNING
+}
+
+model YahooConnection {
+  id            String     @id @default(cuid())
+  league        League     @relation(fields: [leagueId], references: [id])
+  leagueId      String     @unique
+  yahooGuid     String?
+  accessToken   String?
+  refreshToken  String?
+  tokenExpiresAt DateTime?
+  yahooLeagueKey String?
+  yahooGameKey   String?
+  lastSyncAttemptAt  DateTime?
+  lastSyncSuccessAt  DateTime?
+  lastSyncStatus     SyncStatus @default(NEVER_RUN)
+  lastSyncError      String?
+  lastSyncRecordCount Int?
+  syncIntervalMinutes Int      @default(180)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  syncLogs SyncLog[]
+}
+
+model SyncLog {
+  id            String   @id @default(cuid())
+  connection    YahooConnection @relation(fields: [connectionId], references: [id])
+  connectionId  String
+  startedAt     DateTime @default(now())
+  finishedAt    DateTime?
+  status        SyncStatus
+  recordsUpdated Int     @default(0)
+  error         String?
+  detail        Json?
+
+  @@index([connectionId])
+}
+
+// ---------------------------------------------------------------------------
+// Audit log (commissioner corrections)
+// ---------------------------------------------------------------------------
+
+model AuditLogEntry {
+  id          String   @id @default(cuid())
+  actorName   String
+  action      String
+  entityType  String
+  entityId    String?
+  isHistoricalCorrection Boolean @default(false)
+  before      Json?
+  after       Json?
+  createdAt   DateTime @default(now())
+
+  @@index([entityType, entityId])
+}

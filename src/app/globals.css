@@ -1,0 +1,83 @@
+@import "tailwindcss";
+
+:root {
+  --background: #0b0d0f;
+  --surface: #14171b;
+  --surface-raised: #1b1f24;
+  --border: #262b31;
+  --foreground: #eef1f4;
+  --muted: #8b939c;
+  --antler: #c9a15a;
+  --antler-strong: #e0b76b;
+  --antler-dim: #6b5730;
+  --red: #d9634b;
+  --orange: #e0925a;
+  --yellow: #d9bc55;
+  --green: #6faa6a;
+  --blue: #5a90c9;
+  --danger: #d9634b;
+  --success: #6faa6a;
+  --warn: #d9bc55;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-border: var(--border);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-antler: var(--antler);
+  --color-antler-strong: var(--antler-strong);
+  --color-antler-dim: var(--antler-dim);
+  --color-red: var(--red);
+  --color-orange: var(--orange);
+  --color-yellow: var(--yellow);
+  --color-green: var(--green);
+  --color-blue: var(--blue);
+  --color-danger: var(--danger);
+  --color-success: var(--success);
+  --color-warn: var(--warn);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-display: var(--font-display);
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+
+::selection {
+  background: var(--antler-dim);
+  color: var(--foreground);
+}
+
+.antler-rule {
+  background-image: linear-gradient(
+    90deg,
+    transparent,
+    var(--antler-dim) 20%,
+    var(--antler) 50%,
+    var(--antler-dim) 80%,
+    transparent
+  );
+  height: 1px;
+}
+
+/* Compact number formatting for dense tables on small screens */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 480px) {
+  .hide-xs {
+    display: none;
+  }
+}
