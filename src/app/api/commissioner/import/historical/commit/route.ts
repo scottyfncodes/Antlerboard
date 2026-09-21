@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getCurrentManager, requireCommissioner } from "@/lib/current-manager";
 import { clearLeagueOperationalData, pickContinuingCommissioner } from "@/lib/import/demo-cleanup";
+import { resolveTeamIdByManagerAndYear } from "@/lib/import/team-identity-resolution";
 import type { Prisma } from "@prisma/client";
 import type { ResolvedTeamSeasonRecord, ParsedTrade, ParsedPropBet, ParsedDraftDayEvent, ParsedFypdSection } from "@/lib/import/types";
 
@@ -142,12 +143,19 @@ async function runImport(
   let propBetsWritten = 0;
   for (const b of body.propBets) {
     if (!b.teamAName || !b.teamBName || !b.description) continue;
+    // The prop-bet sheet identifies each side by manager name, not team
+    // name (unlike the trades sheet, which uses real team names) - see
+    // resolveTeamIdByManagerAndYear.
+    const teamAId = await resolveTeamIdByManagerAndYear(tx, leagueId, b.teamAName, b.seasonYear);
+    const teamBId = await resolveTeamIdByManagerAndYear(tx, leagueId, b.teamBName, b.seasonYear);
     await tx.historicalPropBet.create({
       data: {
         leagueId,
         seasonYear: b.seasonYear,
         teamAName: b.teamAName,
+        teamAId,
         teamBName: b.teamBName,
+        teamBId,
         amount: b.amount,
         description: b.description,
         sourceRef: b.sourceRef,
