@@ -11,16 +11,16 @@ export function TopNav() {
   const pathname = usePathname();
 
   return (
-    <header className="hidden md:block sticky top-0 z-40 border-b border-border bg-surface/95 backdrop-blur">
-      <div className="mx-auto max-w-6xl px-6 py-3 flex items-center gap-8">
+    <header className="hidden lg:block sticky top-0 z-40 border-b border-border bg-surface/95 backdrop-blur">
+      <div className="mx-auto max-w-7xl px-6 py-3 flex items-center gap-3 xl:gap-6">
         <Link href="/" className="flex items-center gap-2 shrink-0">
           <AntlerMark className="h-7 w-7 text-antler" />
           <span className="font-display text-lg tracking-tight text-foreground">
             Antlerboard
           </span>
         </Link>
-        <nav>
-          <ul className="flex items-center gap-1">
+        <nav className="min-w-0 flex-1 overflow-x-auto [scrollbar-width:thin]">
+          <ul className="flex items-center gap-0.5 w-max">
             {NAV_ITEMS.map((item) => {
               const active =
                 item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
@@ -29,7 +29,7 @@ export function TopNav() {
                   <Link
                     href={item.href}
                     className={clsx(
-                      "px-3 py-2 rounded-md text-sm font-medium transition-colors",
+                      "block px-2.5 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap",
                       active
                         ? "bg-surface-raised text-antler-strong"
                         : "text-muted hover:text-foreground"
@@ -42,7 +42,7 @@ export function TopNav() {
             })}
           </ul>
         </nav>
-        <div className="ml-auto w-72">
+        <div className="w-44 xl:w-64 shrink-0">
           <SearchBox />
         </div>
       </div>

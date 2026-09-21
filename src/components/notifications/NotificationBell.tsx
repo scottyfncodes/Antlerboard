@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { Bell } from "lucide-react";
 import clsx from "clsx";
 import { timeAgo } from "@/lib/format";
 
@@ -55,12 +56,12 @@ export function NotificationBell() {
     <div ref={ref} className="relative">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="relative text-lg leading-none text-muted hover:text-foreground"
+        className="relative text-muted hover:text-foreground"
         aria-label="Notifications"
       >
-        {"\u{1F514}"}
+        <Bell className="h-5 w-5" strokeWidth={1.75} />
         {unreadCount > 0 && (
-          <span className="absolute -top-1 -right-1.5 min-w-[16px] rounded-full bg-red px-1 text-[10px] font-semibold leading-4 text-white text-center">
+          <span className="absolute -top-1.5 -right-1.5 min-w-[16px] rounded-full bg-red px-1 text-[10px] font-semibold leading-4 text-white text-center ring-2 ring-surface">
             {unreadCount > 9 ? "9+" : unreadCount}
           </span>
         )}

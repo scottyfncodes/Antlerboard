@@ -1,7 +1,10 @@
+import type { LucideIcon } from "lucide-react";
+import { Home, UserRound, ArrowLeftRight, Users, Shield, Lock, Sprout, Ban, Target, Trophy, Settings } from "lucide-react";
+
 export interface NavItem {
   href: string;
   label: string;
-  emoji: string;
+  icon: LucideIcon;
 }
 
 /**
@@ -11,20 +14,20 @@ export interface NavItem {
  * targets), so this list is deliberately short.
  */
 export const PRIMARY_NAV_ITEMS: NavItem[] = [
-  { href: "/", label: "Board", emoji: "\u{1F3E0}" },
-  { href: "/my-team", label: "My Team", emoji: "\u{1F9E2}" },
-  { href: "/trades", label: "Trades", emoji: "\u{1F504}" },
-  { href: "/players", label: "Players", emoji: "⚾" },
+  { href: "/", label: "Board", icon: Home },
+  { href: "/my-team", label: "My Team", icon: UserRound },
+  { href: "/trades", label: "Trades", icon: ArrowLeftRight },
+  { href: "/players", label: "Players", icon: Users },
 ];
 
 export const MORE_NAV_ITEMS: NavItem[] = [
-  { href: "/teams", label: "Teams", emoji: "\u{1F465}" },
-  { href: "/keepers", label: "Keepers", emoji: "\u{1F512}" },
-  { href: "/fypd", label: "FYPD", emoji: "\u{1F331}" },
-  { href: "/dpud", label: "DPUD", emoji: "\u{1F6AB}" },
-  { href: "/prop-bets", label: "Prop Bets", emoji: "\u{1F3AF}" },
-  { href: "/history", label: "History", emoji: "\u{1F3C6}" },
-  { href: "/commissioner", label: "Commissioner", emoji: "\u{2699}\u{FE0F}" },
+  { href: "/teams", label: "Teams", icon: Shield },
+  { href: "/keepers", label: "Keepers", icon: Lock },
+  { href: "/fypd", label: "FYPD", icon: Sprout },
+  { href: "/dpud", label: "DPUD", icon: Ban },
+  { href: "/prop-bets", label: "Prop Bets", icon: Target },
+  { href: "/history", label: "History", icon: Trophy },
+  { href: "/commissioner", label: "Commissioner", icon: Settings },
 ];
 
 /** Full flat list - used where space isn't a constraint (desktop top nav). */
