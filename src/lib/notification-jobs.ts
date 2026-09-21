@@ -88,7 +88,7 @@ export async function runDpudEndingSoonChecks(): Promise<{ notified: number }> {
         type: "DPUD_ENDING_SOON",
         title: `Ending soon: ${bet.title}`,
         body: `This bet resolves on ${bet.endDate.toDateString()}.`,
-        link: "/dpud",
+        link: "/prop-bets",
         relatedEntityType: "DpudBet",
         relatedEntityId: bet.id,
       });

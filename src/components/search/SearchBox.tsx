@@ -147,13 +147,13 @@ export function SearchBox({ autoFocus }: { autoFocus?: boolean }) {
           )}
 
           {results.dpudBets.length > 0 && (
-            <SearchGroup title="DPUD">
+            <SearchGroup title="Prop Bets">
               {results.dpudBets.map((b) => (
                 <button
                   key={b.id}
                   className="flex w-full items-center justify-between px-3 py-2 hover:bg-surface text-left"
                   onClick={() => {
-                    router.push(`/dpud`);
+                    router.push(`/prop-bets`);
                     setOpen(false);
                   }}
                 >

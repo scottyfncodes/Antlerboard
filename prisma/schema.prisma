@@ -37,6 +37,7 @@ model League {
   players  Player[]
   yahooConnection YahooConnection?
   settings LeagueSettings?
+  fypdDrafts FypdDraft[]
 }
 
 // Centralized league configuration (see also src/lib/config.ts for code
@@ -182,6 +183,8 @@ model Team {
   offersSent     Offer[]  @relation("OfferSendingTeam")
   offersReceived Offer[]  @relation("OfferReceivingTeam")
   standings      TeamStanding[]
+  fypdOrderSlots FypdDraftOrderSlot[]
+  fypdSelections FypdSelection[]
 
   @@unique([leagueId, yahooTeamId])
   @@index([leagueId])
@@ -203,6 +206,19 @@ model Player {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
+  // MLB draft pedigree - populated only for players eligible for C&A's
+  // FYPD (First-Year Player Draft), i.e. players taken in the U.S. amateur
+  // MLB draft. Deliberately kept on the same Player row rather than a
+  // separate "prospect" entity: a player is the same canonical identity
+  // whether they're pre-call-up (FYPD-only, no roster/keeper data yet) or
+  // already active on a C&A roster, which is exactly what lets keeper
+  // history, tags, and Yahoo linkage all resolve to one record instead of
+  // duplicating identity across systems.
+  mlbDraftYear        Int?
+  mlbDraftRound       Int?
+  mlbDraftOverallPick Int?
+  mlbOrganization     String?
+
   acquisitions   Acquisition[]
   keeperRecords  KeeperRecord[]
   draftPicks     DraftPick[]
@@ -211,6 +227,7 @@ model Player {
   tradeAssets    TradeAsset[]
   dpudSubjects   DpudBetPlayer[]
   targetedOffers Offer[]
+  fypdSelections FypdSelection[]
 
   @@unique([leagueId, yahooPlayerId])
   @@index([leagueId, name])
@@ -302,6 +319,92 @@ model DraftPick {
   isKeeperSlot Boolean  @default(false)
 
   @@unique([seasonId, overallPick])
+}
+
+// ---------------------------------------------------------------------------
+// FYPD (First-Year Player Draft) - a completely separate draft system from
+// the regular auction draft above. C&A's FYPD is a SNAKE draft of players
+// taken in the U.S. amateur MLB draft (never international amateurs/free
+// agents - see Player.mlbDraftYear etc.). Drafting a player here grants the
+// drafting team the *right* to call them up in their eligible call-up
+// season - it does not roster them. See DPUD below for why that
+// distinction matters once Yahoo sync exists.
+// ---------------------------------------------------------------------------
+
+enum FypdDraftStatus {
+  SETUP
+  IN_PROGRESS
+  PAUSED
+  COMPLETE
+}
+
+model FypdDraft {
+  id        String   @id @default(cuid())
+  league    League   @relation(fields: [leagueId], references: [id])
+  leagueId  String
+  year      Int
+  rounds    Int      @default(1)
+  status    FypdDraftStatus @default(SETUP)
+  // Next overall pick to be made - the source of truth for whose turn it
+  // is (fed into src/lib/fypd-snake-engine.ts alongside `order`).
+  currentOverallPick Int @default(1)
+  startedAt   DateTime?
+  completedAt DateTime?
+  notes       String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  order      FypdDraftOrderSlot[]
+  selections FypdSelection[]
+
+  @@unique([leagueId, year])
+}
+
+// The round-1 draft order (see src/lib/fypd-order-engine.ts for how this is
+// computed from standings + the 9th Brigade designation). Later rounds are
+// derived from this at read time via the snake engine, not stored per round.
+model FypdDraftOrderSlot {
+  id       String    @id @default(cuid())
+  draft    FypdDraft @relation(fields: [draftId], references: [id])
+  draftId  String
+  team     Team      @relation(fields: [teamId], references: [id])
+  teamId   String
+  slot     Int
+  reason   String
+
+  @@unique([draftId, teamId])
+  @@unique([draftId, slot])
+}
+
+// One row per pick actually made. `callUpYear`/`callUpExercised` are the
+// FYPD-specific ownership facts described above - deliberately distinct
+// from any Yahoo roster/waiver state, which lives entirely outside this
+// model. `isDpud` is commissioner-maintained until Yahoo sync exists to
+// compute it automatically (see project notes); it is never used as a
+// reason to delete this row - a call-up only ever sets
+// callUpExercised/isDpud, preserving the historical selection permanently.
+model FypdSelection {
+  id          String    @id @default(cuid())
+  draft       FypdDraft @relation(fields: [draftId], references: [id])
+  draftId     String
+  round       Int
+  pickInRound Int
+  overallPick Int
+  team        Team      @relation(fields: [teamId], references: [id])
+  teamId      String
+  player      Player    @relation(fields: [playerId], references: [id])
+  playerId    String
+  callUpYear  Int?
+  callUpExercised   Boolean  @default(false)
+  callUpExercisedAt DateTime?
+  isDpud      Boolean  @default(false)
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([draftId, overallPick])
+  @@unique([draftId, playerId])
+  @@index([teamId])
 }
 
 // ---------------------------------------------------------------------------

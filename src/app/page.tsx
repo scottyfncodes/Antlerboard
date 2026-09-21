@@ -3,7 +3,7 @@ import { getCurrentManager } from "@/lib/current-manager";
 import { CURRENT_SEASON_YEAR } from "@/lib/config";
 import { Card, EmptyState } from "@/components/ui/Card";
 import { Badge, DraftColorBadge, PlayerTagBadge } from "@/components/ui/Badge";
-import { formatDate, timeAgo, PLAYER_TAG_LABEL } from "@/lib/format";
+import { formatDate, formatDateTime, timeAgo, PLAYER_TAG_LABEL } from "@/lib/format";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
@@ -139,10 +139,10 @@ export default async function BoardPage() {
 
       <section className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card>
-          <h2 className="font-display text-lg mb-1">Keeper Deadline</h2>
+          <h2 className="font-display text-lg mb-1">Keeper Declaration Deadline</h2>
           {keeperDeadlineSeason?.keeperDeadline ? (
             <>
-              <p className="text-2xl font-display tabular">{formatDate(keeperDeadlineSeason.keeperDeadline)}</p>
+              <p className="text-2xl font-display tabular">{formatDateTime(keeperDeadlineSeason.keeperDeadline)}</p>
               <p className="text-xs text-muted mt-1">
                 Before the {keeperDeadlineSeason.year + 1} draft{keeperDeadlineSeason.draftDate && ` (${formatDate(keeperDeadlineSeason.draftDate)})`}.
               </p>

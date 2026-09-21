@@ -6,7 +6,7 @@ import { Card, EmptyState } from "@/components/ui/Card";
 import { PlayerTagBadge } from "@/components/ui/Badge";
 import { KeeperYearBadge } from "@/components/keepers/KeeperYearBadge";
 import { MyPlayerTagControl } from "@/components/my-team/MyPlayerTagControl";
-import { formatCost, formatDate, PLAYER_TAG_LABEL } from "@/lib/format";
+import { formatCost, formatDateTime, PLAYER_TAG_LABEL } from "@/lib/format";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
@@ -62,8 +62,8 @@ export default async function MyTeamPage() {
           <p className="font-display text-2xl mt-1 tabular">{expiring.length}</p>
         </Card>
         <Card>
-          <p className="text-xs text-muted">Keeper Deadline</p>
-          <p className="text-sm mt-1">{season?.keeperDeadline ? formatDate(season.keeperDeadline) : "Not set"}</p>
+          <p className="text-xs text-muted">Keeper Declaration Deadline</p>
+          <p className="text-sm mt-1">{season?.keeperDeadline ? formatDateTime(season.keeperDeadline) : "Not set"}</p>
         </Card>
       </section>
 

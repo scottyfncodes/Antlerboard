@@ -28,12 +28,12 @@ export function SeasonEditor({ seasons }: { seasons: SeasonRow[] }) {
 
   return (
     <div className="rounded-xl border border-border overflow-hidden overflow-x-auto">
-      <table className="w-full text-sm min-w-[520px]">
+      <table className="w-full text-sm min-w-[600px]">
         <thead>
           <tr className="bg-surface-raised text-left text-xs text-muted">
             <th className="px-3 py-2 font-medium">Season</th>
             <th className="px-3 py-2 font-medium">Status</th>
-            <th className="px-3 py-2 font-medium">Keeper Deadline</th>
+            <th className="px-3 py-2 font-medium">Keeper Declaration Deadline</th>
             <th className="px-3 py-2 font-medium">Draft Date</th>
             <th className="px-3 py-2 font-medium"></th>
           </tr>
@@ -48,6 +48,11 @@ export function SeasonEditor({ seasons }: { seasons: SeasonRow[] }) {
   );
 }
 
+/** `datetime-local`'s value format, truncated from a stored ISO string. */
+function toDatetimeLocal(iso: string | null): string {
+  return iso ? iso.slice(0, 16) : "";
+}
+
 function SeasonRowEditor({
   season,
   busy,
@@ -57,8 +62,8 @@ function SeasonRowEditor({
   busy: boolean;
   onSave: (id: string, keeperDeadline: string, draftDate: string) => void;
 }) {
-  const [keeperDeadline, setKeeperDeadline] = useState(season.keeperDeadline?.slice(0, 10) ?? "");
-  const [draftDate, setDraftDate] = useState(season.draftDate?.slice(0, 10) ?? "");
+  const [keeperDeadline, setKeeperDeadline] = useState(toDatetimeLocal(season.keeperDeadline));
+  const [draftDate, setDraftDate] = useState(toDatetimeLocal(season.draftDate));
 
   return (
     <tr className="border-t border-border">
@@ -66,7 +71,7 @@ function SeasonRowEditor({
       <td className="px-3 py-2 text-muted">{season.status}</td>
       <td className="px-3 py-2">
         <input
-          type="date"
+          type="datetime-local"
           value={keeperDeadline}
           onChange={(e) => setKeeperDeadline(e.target.value)}
           className="rounded-md border border-border bg-surface px-2 py-1 text-xs"
@@ -74,7 +79,7 @@ function SeasonRowEditor({
       </td>
       <td className="px-3 py-2">
         <input
-          type="date"
+          type="datetime-local"
           value={draftDate}
           onChange={(e) => setDraftDate(e.target.value)}
           className="rounded-md border border-border bg-surface px-2 py-1 text-xs"

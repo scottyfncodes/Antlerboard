@@ -51,7 +51,7 @@ export async function POST(req: Request) {
     type: "DPUD_NEW_BET",
     title: `New DPUD bet: ${title}`,
     body: description,
-    link: "/dpud",
+    link: "/prop-bets",
     relatedEntityType: "DpudBet",
     relatedEntityId: bet.id,
   });

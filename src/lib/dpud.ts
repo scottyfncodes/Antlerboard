@@ -27,7 +27,7 @@ export async function optIntoBet(betId: string, managerId: string) {
     type: "DPUD_OPT_IN",
     title: `${manager?.name ?? "Someone"} opted into your bet`,
     body: bet.title,
-    link: "/dpud",
+    link: "/prop-bets",
     relatedEntityType: "DpudBet",
     relatedEntityId: betId,
   });
@@ -46,7 +46,7 @@ export async function resolveBet(betId: string, result: string | undefined, winn
     type: "DPUD_RESOLVED",
     title: `Resolved: ${bet.title}`,
     body: result ?? "The bet has been resolved.",
-    link: "/dpud",
+    link: "/prop-bets",
     relatedEntityType: "DpudBet",
     relatedEntityId: betId,
   });
