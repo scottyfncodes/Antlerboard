@@ -36,6 +36,8 @@ interface CommitSummary {
   propBetsWritten: number;
   draftDaysWritten: number;
   fypdBatchesWritten: number;
+  demoCleanup: { managersDeleted: number; teamsDeleted: number; playersDeleted: number; seasonsDeleted: number } | null;
+  newCommissionerName: string | null;
 }
 
 type Step = "upload" | "review" | "done";
@@ -61,6 +63,7 @@ export function HistoricalImportWizard() {
   const [error, setError] = useState<string | null>(null);
   const [commitSummary, setCommitSummary] = useState<CommitSummary | null>(null);
   const [managerFilter, setManagerFilter] = useState("all");
+  const [clearDemoData, setClearDemoData] = useState(true);
 
   async function onFile(file: File) {
     setBusy(true);
@@ -84,7 +87,7 @@ export function HistoricalImportWizard() {
     const res = await fetch("/api/commissioner/import/historical/commit", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(preview),
+      body: JSON.stringify({ ...preview, clearDemoData }),
     });
     const data = await res.json();
     setBusy(false);
@@ -200,6 +203,26 @@ export function HistoricalImportWizard() {
           />
         </section>
 
+        <div className="rounded-xl border border-red/40 bg-red/10 p-4">
+          <label className="flex items-start gap-2.5 text-sm cursor-pointer">
+            <input
+              type="checkbox"
+              checked={clearDemoData}
+              onChange={(e) => setClearDemoData(e.target.checked)}
+              className="mt-0.5"
+            />
+            <span>
+              <span className="font-medium text-foreground">Also remove Antlerboard&apos;s existing demo league</span>{" "}
+              <span className="text-muted">
+                - the 10 fictional teams/managers/players it ships with, plus anything else currently in this league
+                (transactions, DPUD bets, notifications, etc). League config itself is kept. This only needs to
+                happen once, on the import that replaces the demo data with your real history - leave it unchecked
+                if you&apos;re re-running an import after the real data is already in place.
+              </span>
+            </span>
+          </label>
+        </div>
+
         <div className="flex gap-2">
           <button onClick={() => setStep("upload")} className="rounded-md border border-border px-3 py-2 text-sm text-muted hover:text-foreground">
             Back
@@ -222,6 +245,15 @@ export function HistoricalImportWizard() {
       <p className="text-muted">{commitSummary?.teamSeasonsWritten} team-season records written.</p>
       <p className="text-muted">{commitSummary?.tradesWritten} historical trades, {commitSummary?.propBetsWritten} historical prop bets.</p>
       <p className="text-muted">{commitSummary?.draftDaysWritten} draft-day record(s), {commitSummary?.fypdBatchesWritten} FYPD batch(es) staged for review.</p>
+      {commitSummary?.demoCleanup && (
+        <p className="text-muted">
+          Demo data removed: {commitSummary.demoCleanup.managersDeleted} managers, {commitSummary.demoCleanup.teamsDeleted} teams,{" "}
+          {commitSummary.demoCleanup.playersDeleted} players, {commitSummary.demoCleanup.seasonsDeleted} seasons.
+        </p>
+      )}
+      {commitSummary?.newCommissionerName && (
+        <p className="text-muted">Commissioner access carried over to <strong>{commitSummary.newCommissionerName}</strong>.</p>
+      )}
     </div>
   );
 }

@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getCurrentManager, requireCommissioner } from "@/lib/current-manager";
+import { clearLeagueOperationalData, pickContinuingCommissioner } from "@/lib/import/demo-cleanup";
+import type { Prisma } from "@prisma/client";
 import type { ResolvedTeamSeasonRecord, ParsedTrade, ParsedPropBet, ParsedDraftDayEvent, ParsedFypdSection } from "@/lib/import/types";
 
 const MANAGER_SHEETS = ["Aaron", "Andrew", "Ed", "Hugo", "Jorge", "Kurt", "MattyJ", "Michael", "Neel", "Scott", "Tyler", "Zach"];
@@ -11,6 +13,14 @@ interface CommitBody {
   propBets: ParsedPropBet[];
   draftDayEvents: ParsedDraftDayEvent[];
   fypdSections: ParsedFypdSection[];
+  /**
+   * When true, wipes the league's current teams/managers/players/seasons
+   * before writing the import - see clearLeagueOperationalData. Meant for
+   * the one-time switch from Antlerboard's fictional demo league to a
+   * commissioner's real history, not for re-running an import that's
+   * already landed.
+   */
+  clearDemoData?: boolean;
 }
 
 /**
@@ -21,12 +31,10 @@ interface CommitBody {
  * server-validated preview step, not because client input is trusted in
  * general.
  *
- * Deliberately additive: creates/updates Manager, Team, and
- * TeamSeasonRecord rows, but never deletes or renames anything that
- * already exists (e.g. the demo league's fictional teams are left
- * alone - see project notes on why merging or removing them is a
- * separate, explicit decision, not something a historical import should
- * do as a side effect).
+ * Runs as a single transaction: an optional demo-data wipe (see
+ * clearDemoData above) followed by the actual import, so a failure
+ * partway through never leaves the league emptied out with no real data
+ * written.
  */
 export async function POST(req: Request) {
   if (!(await requireCommissioner())) {
@@ -40,14 +48,29 @@ export async function POST(req: Request) {
   const body = (await req.json()) as CommitBody;
   const attributedSeasons = body.teamSeasons.filter((r) => r.seasonYear !== null && r.attribution !== "unattributed");
 
+  const result = await prisma.$transaction(
+    async (tx) => await runImport(tx, league.id, commissioner?.name ?? null, body, attributedSeasons),
+    { timeout: 60_000, maxWait: 15_000 }
+  );
+
+  return NextResponse.json(result);
+}
+
+async function runImport(
+  tx: Prisma.TransactionClient,
+  leagueId: string,
+  outgoingCommissionerName: string | null,
+  body: CommitBody,
+  attributedSeasons: ResolvedTeamSeasonRecord[]
+) {
+  const demoCleanup = body.clearDemoData ? await clearLeagueOperationalData(tx, leagueId) : null;
+
   const managerCache = new Map<string, string>(); // name -> id
   async function getOrCreateManager(name: string): Promise<string> {
     if (managerCache.has(name)) return managerCache.get(name)!;
     const active = MANAGER_SHEETS.includes(name);
-    const existing = await prisma.manager.findFirst({ where: { leagueId: league!.id, name } });
-    const manager =
-      existing ??
-      (await prisma.manager.create({ data: { leagueId: league!.id, name, active } }));
+    const existing = await tx.manager.findFirst({ where: { leagueId, name } });
+    const manager = existing ?? (await tx.manager.create({ data: { leagueId, name, active } }));
     managerCache.set(name, manager.id);
     return manager.id;
   }
@@ -55,10 +78,8 @@ export async function POST(req: Request) {
   const teamCache = new Map<string, string>(); // managerSheetName -> teamId
   async function getOrCreateTeam(managerSheetName: string, currentTeamName: string, currentManagerId: string): Promise<string> {
     if (teamCache.has(managerSheetName)) return teamCache.get(managerSheetName)!;
-    const existing = await prisma.team.findFirst({ where: { leagueId: league!.id, managerId: currentManagerId } });
-    const team =
-      existing ??
-      (await prisma.team.create({ data: { leagueId: league!.id, name: currentTeamName, managerId: currentManagerId } }));
+    const existing = await tx.team.findFirst({ where: { leagueId, managerId: currentManagerId } });
+    const team = existing ?? (await tx.team.create({ data: { leagueId, name: currentTeamName, managerId: currentManagerId } }));
     teamCache.set(managerSheetName, team.id);
     return team.id;
   }
@@ -77,7 +98,7 @@ export async function POST(req: Request) {
 
     for (const r of records) {
       const seasonManagerId = await getOrCreateManager(r.resolvedManagerName);
-      await prisma.teamSeasonRecord.upsert({
+      await tx.teamSeasonRecord.upsert({
         where: { teamId_seasonYear: { teamId, seasonYear: r.seasonYear! } },
         create: {
           teamId,
@@ -101,9 +122,9 @@ export async function POST(req: Request) {
   let tradesWritten = 0;
   for (const t of body.trades) {
     if (!t.teamAName || !t.teamBName) continue;
-    await prisma.historicalTrade.create({
+    await tx.historicalTrade.create({
       data: {
-        leagueId: league.id,
+        leagueId,
         seasonYear: t.seasonYear,
         tradeDate: t.tradeDate ? new Date(t.tradeDate) : null,
         teamAName: t.teamAName,
@@ -121,9 +142,9 @@ export async function POST(req: Request) {
   let propBetsWritten = 0;
   for (const b of body.propBets) {
     if (!b.teamAName || !b.teamBName || !b.description) continue;
-    await prisma.historicalPropBet.create({
+    await tx.historicalPropBet.create({
       data: {
-        leagueId: league.id,
+        leagueId,
         seasonYear: b.seasonYear,
         teamAName: b.teamAName,
         teamBName: b.teamBName,
@@ -138,15 +159,15 @@ export async function POST(req: Request) {
   let draftDaysWritten = 0;
   for (const d of body.draftDayEvents) {
     if (!d.seasonYear) continue;
-    const season = await prisma.season.upsert({
-      where: { leagueId_year: { leagueId: league.id, year: d.seasonYear } },
-      create: { leagueId: league.id, year: d.seasonYear, status: "COMPLETE" },
+    const season = await tx.season.upsert({
+      where: { leagueId_year: { leagueId, year: d.seasonYear } },
+      create: { leagueId, year: d.seasonYear, status: "COMPLETE" },
       update: {},
     });
     const notesParts = [d.attendeesRaw ? `Attendees: ${d.attendeesRaw}` : null, d.scheduleRaw ? `Schedule:\n${d.scheduleRaw}` : null].filter(
       Boolean
     );
-    await prisma.draftDayDetails.upsert({
+    await tx.draftDayDetails.upsert({
       where: { seasonId: season.id },
       create: {
         seasonId: season.id,
@@ -163,9 +184,9 @@ export async function POST(req: Request) {
 
   let fypdBatchesWritten = 0;
   for (const s of body.fypdSections) {
-    await prisma.fypdImportBatch.create({
+    await tx.fypdImportBatch.create({
       data: {
-        leagueId: league.id,
+        leagueId,
         label: s.label,
         sourceSheet: s.sourceSheet,
         rawPicks: s.picks as unknown as object,
@@ -177,12 +198,27 @@ export async function POST(req: Request) {
     fypdBatchesWritten++;
   }
 
-  await prisma.auditLogEntry.create({
+  // A demo-data wipe clears isCommissioner off every manager in the
+  // league - reassign it now so /commissioner routes don't lock everyone
+  // out the moment this transaction commits (see pickContinuingCommissioner).
+  let newCommissionerName: string | null = null;
+  if (demoCleanup) {
+    const realManagerNames = MANAGER_SHEETS.filter((name) => managerCache.has(name));
+    newCommissionerName = pickContinuingCommissioner(outgoingCommissionerName, realManagerNames);
+    if (newCommissionerName) {
+      await tx.manager.update({
+        where: { id: managerCache.get(newCommissionerName)! },
+        data: { isCommissioner: true },
+      });
+    }
+  }
+
+  await tx.auditLogEntry.create({
     data: {
-      actorName: commissioner?.name ?? "Unknown",
+      actorName: outgoingCommissionerName ?? "Unknown",
       action: "HISTORICAL_WORKBOOK_IMPORT",
       entityType: "League",
-      entityId: league.id,
+      entityId: leagueId,
       isHistoricalCorrection: false,
       after: {
         teamSeasonsWritten,
@@ -190,15 +226,19 @@ export async function POST(req: Request) {
         propBetsWritten,
         draftDaysWritten,
         fypdBatchesWritten,
-      },
+        demoCleanup,
+        newCommissionerName,
+      } as unknown as object,
     },
   });
 
-  return NextResponse.json({
+  return {
     teamSeasonsWritten,
     tradesWritten,
     propBetsWritten,
     draftDaysWritten,
     fypdBatchesWritten,
-  });
+    demoCleanup,
+    newCommissionerName,
+  };
 }
