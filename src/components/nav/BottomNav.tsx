@@ -4,15 +4,17 @@ import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Menu } from "lucide-react";
-import { PRIMARY_NAV_ITEMS, MORE_NAV_ITEMS } from "./nav-items";
+import { PRIMARY_NAV_ITEMS, MORE_NAV_ITEMS, visibleNavItems } from "./nav-items";
 import clsx from "clsx";
+import type { CurrentManagerSummary } from "@/lib/auth/types";
 
-export function BottomNav() {
+export function BottomNav({ currentManager }: { currentManager: CurrentManagerSummary }) {
   const pathname = usePathname();
   const [moreOpen, setMoreOpen] = useState(false);
+  const moreItems = visibleNavItems(MORE_NAV_ITEMS, currentManager.role);
 
   const isActive = (href: string) => (href === "/" ? pathname === "/" : pathname.startsWith(href));
-  const moreActive = MORE_NAV_ITEMS.some((item) => isActive(item.href));
+  const moreActive = moreItems.some((item) => isActive(item.href));
 
   return (
     <>
@@ -26,7 +28,7 @@ export function BottomNav() {
       {moreOpen && (
         <div className="fixed bottom-16 inset-x-0 z-50 border-t border-border bg-surface lg:hidden rounded-t-xl overflow-hidden">
           <ul className="grid grid-cols-4 gap-1 p-3">
-            {MORE_NAV_ITEMS.map((item) => (
+            {moreItems.map((item) => (
               <li key={item.href}>
                 <Link
                   href={item.href}

@@ -13,7 +13,7 @@ export default async function HistoricalImportPage() {
     return (
       <div className="space-y-4">
         <PageHeader title="Import League History" />
-        <EmptyState title="Commissioner access required" subtitle="Switch to the commissioner from the Commissioner Mode page." />
+        <EmptyState title="Commissioner access required" subtitle="You're not signed in as the league commissioner." />
       </div>
     );
   }

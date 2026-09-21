@@ -1,8 +1,13 @@
 import { NextResponse } from "next/server";
 import { randomBytes } from "crypto";
 import { buildAuthorizationUrl, isYahooConfigured } from "@/lib/yahoo/client";
+import { requireCommissioner } from "@/lib/current-manager";
 
 export async function GET() {
+  if (!(await requireCommissioner())) {
+    return NextResponse.json({ error: "Commissioner access required" }, { status: 403 });
+  }
+
   if (!isYahooConfigured()) {
     return NextResponse.json(
       { error: "Yahoo OAuth is not configured. Set YAHOO_CLIENT_ID/YAHOO_CLIENT_SECRET/YAHOO_REDIRECT_URI." },

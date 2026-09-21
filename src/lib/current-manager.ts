@@ -1,43 +1,43 @@
 /**
- * Antlerboard is a small private-league tool, not a multi-tenant SaaS - see
- * spec section 42 (do not overbuild). Rather than a full auth system, each
- * browser remembers which manager it's acting as via a signed-free cookie
- * (there is nothing secret to protect beyond "don't let just anyone flip
- * the commissioner switch", which the /commissioner routes guard
- * separately). This is a deliberate, documented limitation - see the final
- * audit report - not an oversight.
+ * The authenticated-manager guard used by every Server Component page and,
+ * indirectly, every commissioner-only API route (see requireCommissioner()).
+ *
+ * Each of the 12 C&A managers authenticates with their own 4-digit PIN (see
+ * src/lib/auth/*) and gets a signed session cookie identifying them - see
+ * src/middleware.ts, which is what actually keeps a logged-out browser off
+ * every page in the first place. This module is the second, independent
+ * check: even if middleware were ever bypassed or misconfigured, no
+ * commissioner-only action executes without requireCommissioner() itself
+ * loading the manager's row fresh from the database and checking
+ * isCommissioner - the tab being hidden in the nav is not the security
+ * boundary.
+ *
+ * `tokenOverride` exists only so tests can exercise this exact
+ * authorization logic (real DB row, real signed token, real role check)
+ * without needing a full Next.js request context - next/headers' cookies()
+ * only works inside one. Every real caller omits it and gets the cookie
+ * from the current request as normal.
  */
 
 import { cookies } from "next/headers";
 import { prisma } from "./db";
+import { SESSION_COOKIE_NAME, verifySessionToken } from "./auth/session";
 
-const COOKIE_NAME = "antlerboard_manager_id";
+export async function getCurrentManager(tokenOverride?: string | null) {
+  const token = tokenOverride !== undefined ? tokenOverride : (await cookies()).get(SESSION_COOKIE_NAME)?.value;
+  const session = await verifySessionToken(token);
+  if (!session) return null;
 
-export async function getCurrentManager() {
-  const cookieStore = await cookies();
-  const managerId = cookieStore.get(COOKIE_NAME)?.value;
-
-  if (managerId) {
-    const manager = await prisma.manager.findUnique({
-      where: { id: managerId },
-      include: { teams: true },
-    });
-    if (manager) return manager;
-  }
-
-  // Default to the commissioner so a fresh browser always has someone
-  // "logged in" for demo purposes.
-  const commissioner = await prisma.manager.findFirst({
-    where: { isCommissioner: true },
+  const manager = await prisma.manager.findUnique({
+    where: { id: session.managerId },
     include: { teams: true },
   });
-  return commissioner;
-}
-
-export async function requireCommissioner() {
-  const manager = await getCurrentManager();
-  if (!manager?.isCommissioner) return null;
+  if (!manager || !manager.active) return null;
   return manager;
 }
 
-export { COOKIE_NAME as MANAGER_COOKIE_NAME };
+export async function requireCommissioner(tokenOverride?: string | null) {
+  const manager = await getCurrentManager(tokenOverride);
+  if (!manager?.isCommissioner) return null;
+  return manager;
+}

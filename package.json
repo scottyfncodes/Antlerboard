@@ -12,7 +12,8 @@
     "test:watch": "vitest",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "auth:generate-pins": "tsx scripts/generate-pins.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

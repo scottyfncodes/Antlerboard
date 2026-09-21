@@ -1,8 +1,7 @@
 import { prisma } from "@/lib/db";
 import { getCurrentManager } from "@/lib/current-manager";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { Card, EmptyState } from "@/components/ui/Card";
-import { ManagerSwitcher } from "@/components/commissioner/ManagerSwitcher";
+import { EmptyState } from "@/components/ui/Card";
 import { TeamEditor } from "@/components/commissioner/TeamEditor";
 import { SeasonEditor } from "@/components/commissioner/SeasonEditor";
 import Link from "next/link";
@@ -24,11 +23,8 @@ export default async function CommissionerPage() {
         <PageHeader title="Commissioner Mode" />
         <EmptyState
           title="Commissioner access required"
-          subtitle={`You're currently acting as ${manager?.name ?? "no one"}. Switch to the commissioner below to continue.`}
+          subtitle={`You're signed in as ${manager?.name ?? "an unrecognized manager"}, who isn't the league commissioner. Ask the commissioner if you need something changed here.`}
         />
-        <Card>
-          <ManagerSwitcher />
-        </Card>
       </div>
     );
   }
@@ -36,10 +32,6 @@ export default async function CommissionerPage() {
   return (
     <div className="space-y-8">
       <PageHeader title="Commissioner Mode" subtitle="League administration, historical corrections, and data management." />
-
-      <Card>
-        <ManagerSwitcher />
-      </Card>
 
       <section className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <Link href="/commissioner/yahoo" className="rounded-xl border border-border bg-surface p-4 hover:border-antler-dim">

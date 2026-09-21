@@ -2,13 +2,15 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { NAV_ITEMS } from "./nav-items";
+import { NAV_ITEMS, visibleNavItems } from "./nav-items";
 import clsx from "clsx";
 import { AntlerMark } from "./AntlerMark";
 import { SearchBox } from "../search/SearchBox";
+import type { CurrentManagerSummary } from "@/lib/auth/types";
 
-export function TopNav() {
+export function TopNav({ currentManager }: { currentManager: CurrentManagerSummary }) {
   const pathname = usePathname();
+  const items = visibleNavItems(NAV_ITEMS, currentManager.role);
 
   return (
     <header className="hidden lg:block sticky top-0 z-40 border-b border-border bg-surface/95 backdrop-blur">
@@ -21,7 +23,7 @@ export function TopNav() {
         </Link>
         <nav className="min-w-0 flex-1 overflow-x-auto [scrollbar-width:thin]">
           <ul className="flex items-center gap-0.5 w-max">
-            {NAV_ITEMS.map((item) => {
+            {items.map((item) => {
               const active =
                 item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
               return (

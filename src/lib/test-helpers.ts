@@ -30,6 +30,13 @@ export async function makePlayer(leagueId: string, name: string) {
   return prisma.player.create({ data: { leagueId, name, positions: ["OF"] } });
 }
 
+export async function makePinCredential(managerId: string, pin: string) {
+  const { hashPin } = await import("./auth/pin");
+  return prisma.managerCredential.create({
+    data: { managerId, provider: "pin", secretHash: hashPin(pin) },
+  });
+}
+
 /** Wipes every table this test suite touches. Call in afterEach/afterAll. */
 export async function resetDatabase() {
   const tables = [
@@ -37,6 +44,8 @@ export async function resetDatabase() {
     "SyncLog",
     "YahooConnection",
     "PushSubscription",
+    "LoginAttempt",
+    "ManagerCredential",
     "NotificationPreference",
     "Notification",
     "DpudParticipant",

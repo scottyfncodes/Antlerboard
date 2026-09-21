@@ -167,8 +167,48 @@ model Manager {
   dpudParticipants     DpudParticipant[]
   offers               Offer[] @relation("OfferSender")
   teamSeasonRecords    TeamSeasonRecord[]
+  credentials          ManagerCredential[]
 
   @@index([leagueId])
+}
+
+// ---------------------------------------------------------------------------
+// Authentication
+// ---------------------------------------------------------------------------
+
+// Provider-independent credential record: a manager authenticates via one
+// or more providers (today: "pin"; later: "yahoo" once OAuth is wired up to
+// associate an existing manager with their Yahoo account). Role is not
+// duplicated here - it's read straight off Manager.isCommissioner, since a
+// manager's commissioner status doesn't vary by how they signed in.
+model ManagerCredential {
+  id             String   @id @default(cuid())
+  manager        Manager  @relation(fields: [managerId], references: [id])
+  managerId      String
+  provider       String   // "pin" | "yahoo" (future)
+  // Salted scrypt hash for provider = "pin" (format: "scrypt:<saltHex>:<hashHex>").
+  // Never populated with plaintext. Null for providers that don't use a secret
+  // (e.g. a future "yahoo" row identifies via providerUserId instead).
+  secretHash     String?
+  // External identity for provider = "yahoo" (the Yahoo GUID). Unused today.
+  providerUserId String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([managerId, provider])
+  @@index([provider])
+}
+
+// Brute-force protection for PIN login, bucketed by a hash of the caller's
+// IP (see src/lib/auth/rate-limit.ts). Deliberately not keyed by manager,
+// since the whole point of a 4-digit PIN is that the login attempt doesn't
+// reveal which manager it was aimed at until it succeeds.
+model LoginAttempt {
+  id          String    @id @default(cuid())
+  key         String    @unique
+  failCount   Int       @default(0)
+  lockedUntil DateTime?
+  updatedAt   DateTime  @updatedAt
 }
 
 model Team {

@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { exchangeCodeForToken } from "@/lib/yahoo/client";
 import { prisma } from "@/lib/db";
+import { requireCommissioner } from "@/lib/current-manager";
 
 export async function GET(req: NextRequest) {
+  if (!(await requireCommissioner())) {
+    return NextResponse.redirect(new URL("/commissioner/yahoo?error=commissioner_required", req.url));
+  }
+
   const code = req.nextUrl.searchParams.get("code");
   const state = req.nextUrl.searchParams.get("state");
   const expectedState = req.cookies.get("yahoo_oauth_state")?.value;
