@@ -97,6 +97,117 @@ async function syncTeamsAndStandings(leagueId: string, leagueKey: string): Promi
   return { section: "teams+standings", recordsUpdated: updated };
 }
 
+/**
+ * Syncs each Yahoo-linked team's roster into the Player table, keyed on the
+ * stable Yahoo `player_key` (not display name - names change, and Yahoo
+ * returns different display contexts for the same player across seasons).
+ *
+ * Matching order:
+ *   1. Already linked (Player.yahooPlayerId === player_key) - refresh the
+ *      Yahoo-owned fields (name, mlbTeam, positions) in place.
+ *   2. Not linked yet, but an existing C&A player with an exact name match
+ *      and no yahooPlayerId - claim it rather than creating a duplicate
+ *      (covers players entered manually or via CSV import before Yahoo was
+ *      connected).
+ *   3. Otherwise, create a new Player row.
+ *
+ * `notes` (commissioner-owned) and every relation (tags, keeper records,
+ * acquisitions, trades, DPUD) are never touched here - only the
+ * Yahoo-owned identity columns are written.
+ *
+ * Isolated per-team: one team's roster request failing (rate limit,
+ * temporary Yahoo outage) does not block the others from syncing.
+ */
+async function syncPlayers(leagueId: string): Promise<SyncSectionResult> {
+  const teams = await prisma.team.findMany({ where: { leagueId, yahooTeamId: { not: null } } });
+
+  let updated = 0;
+  const perTeamErrors: string[] = [];
+
+  for (const team of teams) {
+    try {
+      const data = await yahooFantasyGet(leagueId, `/team/${team.yahooTeamId}/roster`);
+      const teamField = fantasyContent(data).team;
+      const rosterContainer = toArray(teamField).find(
+        (n) => n && typeof n === "object" && "roster" in (n as object)
+      ) as { roster?: unknown } | undefined;
+      const roster = mergeMeta(rosterContainer?.roster) as { players?: unknown };
+
+      for (const entry of toArray(roster.players)) {
+        const playerArray = (entry as { player?: unknown })?.player;
+        if (!playerArray) continue;
+        const [metaPart] = toArray(playerArray);
+        const meta = mergeMeta(metaPart);
+
+        const yahooPlayerId = meta.player_key ? String(meta.player_key) : undefined;
+        if (!yahooPlayerId) continue;
+
+        // Unlike most Yahoo sub-resources, `name` comes back as an
+        // already-flat {full, first, last, ...} object rather than the
+        // usual array-of-single-key-field shape - mergeMeta's generic
+        // object handling would misparse a flat object (it treats an
+        // unrecognized plain object as a values-only list), so it's read
+        // directly here, with the array shape as a defensive fallback in
+        // case a future Yahoo API version wraps it after all.
+        const nameField = meta.name;
+        const name =
+          nameField && typeof nameField === "object" && "full" in (nameField as object)
+            ? String((nameField as { full: unknown }).full)
+            : String(mergeMeta(nameField).full ?? "Unknown Player");
+        const mlbTeam = meta.editorial_team_abbr ? String(meta.editorial_team_abbr).toUpperCase() : null;
+        // Each entry here is already a flat single-key object (e.g.
+        // {position: "OF"}) from Yahoo's <position> list, not the
+        // multi-field shape mergeMeta is for - read it directly.
+        const positions = toArray(meta.eligible_positions)
+          .map((p) => (p as { position?: unknown })?.position)
+          .filter((p): p is string => typeof p === "string" && p.length > 0);
+
+        let player = await prisma.player.findFirst({ where: { leagueId, yahooPlayerId } });
+
+        if (!player) {
+          player = await prisma.player.findFirst({
+            where: { leagueId, yahooPlayerId: null, name: { equals: name, mode: "insensitive" } },
+          });
+        }
+
+        if (player) {
+          const changed =
+            player.yahooPlayerId !== yahooPlayerId ||
+            player.name !== name ||
+            player.mlbTeam !== mlbTeam ||
+            (positions.length > 0 && JSON.stringify(player.positions) !== JSON.stringify(positions));
+
+          if (changed) {
+            await prisma.player.update({
+              where: { id: player.id },
+              data: {
+                yahooPlayerId,
+                name,
+                mlbTeam,
+                ...(positions.length > 0 ? { positions } : {}),
+              },
+            });
+          }
+        } else {
+          await prisma.player.create({
+            data: { leagueId, yahooPlayerId, name, mlbTeam, positions },
+          });
+        }
+
+        updated++;
+      }
+    } catch (err) {
+      perTeamErrors.push(`${team.name}: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
+  }
+
+  return {
+    section: "players",
+    recordsUpdated: updated,
+    error: perTeamErrors.length > 0 ? perTeamErrors.join("; ") : undefined,
+  };
+}
+
 async function syncTransactions(leagueId: string, leagueKey: string): Promise<SyncSectionResult> {
   let updated = 0;
   const data = await yahooFantasyGet(leagueId, `/league/${leagueKey}/transactions`);
@@ -178,6 +289,7 @@ export async function runYahooSync(leagueId: string): Promise<SyncResult> {
   };
 
   await runSection(() => syncTeamsAndStandings(leagueId, connection.yahooLeagueKey!));
+  await runSection(() => syncPlayers(leagueId));
   await runSection(() => syncTransactions(leagueId, connection.yahooLeagueKey!));
 
   const totalRecordsUpdated = sections.reduce((sum, s) => sum + s.recordsUpdated, 0);
