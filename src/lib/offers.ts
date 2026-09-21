@@ -1,5 +1,6 @@
 /**
- * "Make Me an Offer" state machine, extracted from the API route for the
+ * Trade-offer state machine (an "Open to Discuss" tag leads here once a
+ * manager sends a concrete offer), extracted from the API route for the
  * same reason as src/lib/trades.ts: one place to test and reuse.
  */
 
@@ -64,7 +65,7 @@ export async function acceptOffer(id: string) {
           seasonId: season.id,
           seasonYear: CURRENT_SEASON_YEAR,
           type: "TRADE",
-          notes: "Make Me an Offer accepted",
+          notes: "Trade offer accepted",
         },
       });
       await tx.transactionPlayer.create({ data: { transactionId: txn.id, playerId: move.playerId } });

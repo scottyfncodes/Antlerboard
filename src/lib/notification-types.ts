@@ -12,7 +12,7 @@ export const NOTIFICATION_TYPE_META: NotificationTypeMeta[] = [
   { type: "TRADE_ACCEPTED", label: "Trade accepted", category: "League Activity" },
   { type: "TRADE_REJECTED", label: "Trade rejected", category: "League Activity" },
   { type: "OFFER_RECEIVED", label: "Offer received", category: "League Activity" },
-  { type: "OFFER_ACTIVITY", label: "Activity on a player I tagged Make Me an Offer", category: "League Activity" },
+  { type: "OFFER_ACTIVITY", label: "Activity on a player I tagged Open to Discuss", category: "League Activity" },
   { type: "PLAYER_CHANGED_TEAMS", label: "Relevant player changes teams", category: "League Activity" },
 
   { type: "KEEPER_DEADLINE_APPROACHING", label: "Keeper deadline approaching", category: "Keeper" },

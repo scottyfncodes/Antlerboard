@@ -13,7 +13,7 @@ export default async function BoardPage() {
 
   const [season, standings, keeperDeadlineSeason, recentTrades, recentTransactions, expiringKeepers, availablePlayers, recentDpud, yahoo, unreadCount] =
     await Promise.all([
-      prisma.season.findFirst({ where: { year: CURRENT_SEASON_YEAR } }),
+      prisma.season.findFirst({ where: { year: CURRENT_SEASON_YEAR }, include: { draftDayDetails: true } }),
       prisma.teamStanding.findMany({
         where: { season: { year: CURRENT_SEASON_YEAR } },
         orderBy: { rank: "asc" },
@@ -137,7 +137,7 @@ export default async function BoardPage() {
         </Card>
       </section>
 
-      <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <section className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card>
           <h2 className="font-display text-lg mb-1">Keeper Deadline</h2>
           {keeperDeadlineSeason?.keeperDeadline ? (
@@ -152,6 +152,24 @@ export default async function BoardPage() {
           )}
           <Link href="/keepers" className="inline-block mt-3 text-xs text-antler hover:text-antler-strong">
             Open Keeper Board &rarr;
+          </Link>
+        </Card>
+
+        <Card>
+          <h2 className="font-display text-lg mb-1">Draft Day</h2>
+          {season?.draftDate ? (
+            <>
+              <p className="text-2xl font-display tabular">{formatDate(season.draftDate)}</p>
+              <p className="text-xs text-muted mt-1">
+                {season.draftDayDetails?.draftTime && `${season.draftDayDetails.draftTime} · `}
+                {season.draftDayDetails?.venue ?? "Live auction draft"}
+              </p>
+            </>
+          ) : (
+            <p className="text-sm text-muted">No draft date set for {CURRENT_SEASON_YEAR} yet.</p>
+          )}
+          <Link href={`/history/draft/${CURRENT_SEASON_YEAR}`} className="inline-block mt-3 text-xs text-antler hover:text-antler-strong">
+            Draft Day Details &rarr;
           </Link>
         </Card>
 

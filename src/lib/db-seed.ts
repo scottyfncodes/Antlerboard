@@ -5,7 +5,7 @@
  * that exercises every scenario called out in the project spec: a year-1
  * keeper, a year-4 keeper, a year-5 keeper, a forced redraft, a dropped
  * player, a reacquired waiver player, every player tag, an accepted trade
- * and a live proposal, a Make Me an Offer flow, DPUD bets in every status,
+ * and a live proposal, an Open to Discuss flow, DPUD bets in every status,
  * a browsable draft history, the full 2020-2028 draft-color cycle
  * (including the 2027 skip), and a mix of read/unread notifications.
  *
@@ -336,10 +336,10 @@ export async function runSeed(): Promise<void> {
   await addAcquisition("Corbin Carroll", 2024, "Twelve-Point Turnaround", "DRAFT", 20);
   await tagPlayer("Corbin Carroll", "Twelve-Point Turnaround", "ON_THE_TABLE", "Open to the right offer.");
 
-  // 9. Make Me an Offer
+  // 9. Open to Discuss
   await createPlayer("Gunnar Henderson", "BAL", ["SS", "3B"]);
   await addAcquisition("Gunnar Henderson", 2023, "Antler Alliance", "DRAFT", 16);
-  await tagPlayer("Gunnar Henderson", "Antler Alliance", "MAKE_ME_AN_OFFER", "Blow me away.");
+  await tagPlayer("Gunnar Henderson", "Antler Alliance", "OPEN_TO_DISCUSS", "Willing to talk - reach out.");
 
   // A couple more Available / plain keepers for market variety
   await createPlayer("Elly De La Cruz", "CIN", ["SS"]);
@@ -400,7 +400,7 @@ export async function runSeed(): Promise<void> {
         tagRoll === 0
           ? "ON_THE_TABLE"
           : tagRoll === 1
-            ? "MAKE_ME_AN_OFFER"
+            ? "OPEN_TO_DISCUSS"
             : tagRoll === 2
               ? "NEEDS_DECISION"
               : "KEEPING";
@@ -411,7 +411,9 @@ export async function runSeed(): Promise<void> {
   // -------------------------------------------------------------------
   // Draft board: build DraftPick rows from every DRAFT-method acquisition
   // recorded above, grouped by season, in a stable shuffled order so the
-  // "board" looks like a real snake draft rather than alphabetical.
+  // "board" reads like real auction nomination order rather than
+  // alphabetical. C&A runs a live auction draft, not a snake draft -
+  // round/pick/overallPick here are nomination sequence, not draft slots.
   // -------------------------------------------------------------------
 
   console.log("Building draft board...");
@@ -448,7 +450,7 @@ export async function runSeed(): Promise<void> {
   }
 
   // -------------------------------------------------------------------
-  // Trades + Make Me an Offer
+  // Trades + trade offers
   // -------------------------------------------------------------------
 
   console.log("Seeding trades and offers...");
@@ -528,7 +530,7 @@ export async function runSeed(): Promise<void> {
       playersOffered: [playerIdByName.get("Elly De La Cruz")!],
       playersRequested: [playerIdByName.get("Gunnar Henderson")!],
       draftPicksOffered: ["2027 3rd round pick"],
-      message: "He's tagged Make Me an Offer, so here's an offer.",
+      message: "Saw he's Open to Discuss - would you consider this?",
       status: "PENDING",
     },
   });

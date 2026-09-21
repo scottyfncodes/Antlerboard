@@ -34,7 +34,7 @@ export function Badge({
 const TAG_VARIANT: Record<string, keyof typeof VARIANT_CLASSES> = {
   KEEPING: "green",
   ON_THE_TABLE: "blue",
-  MAKE_ME_AN_OFFER: "antler",
+  OPEN_TO_DISCUSS: "antler",
   AVAILABLE: "default",
   NEEDS_DECISION: "yellow",
   FORCED_BACK: "red",

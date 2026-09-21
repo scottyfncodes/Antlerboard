@@ -90,8 +90,28 @@ model Season {
   trades        Trade[]
   dpudBets      DpudBet[]
   standings     TeamStanding[]
+  draftDayDetails DraftDayDetails?
 
   @@unique([leagueId, year])
+}
+
+// Commissioner-maintained reference info for a season's live auction draft -
+// deliberately separate from the auction *results* (DraftPick) below, which
+// come from what actually happened. Every field is optional: a commissioner
+// fills in whatever is known, and none of it depends on Yahoo (Yahoo has no
+// concept of an auction draft's venue, budget, or house rules).
+model DraftDayDetails {
+  id        String   @id @default(cuid())
+  season    Season   @relation(fields: [seasonId], references: [id])
+  seasonId  String   @unique
+  draftTime String?
+  venue     String?
+  format    String?
+  auctionBudget Int?
+  nominationOrderNotes String?
+  rulesNotes String?
+  commissionerNotes String?
+  updatedAt DateTime @updatedAt
 }
 
 // Cached from Yahoo (source of truth for live standings). Populated by the
@@ -261,6 +281,10 @@ model KeeperRecord {
   @@index([teamId])
 }
 
+// C&A runs a live annual auction draft, not a snake draft - round/pick/
+// overallPick record nomination order (the sequence players came up for
+// bid), not a conventional draft-slot position, and `cost` is the winning
+// auction price. This is auction activity history, not pick-slot history.
 model DraftPick {
   id         String   @id @default(cuid())
   season     Season   @relation(fields: [seasonId], references: [id])
@@ -418,7 +442,11 @@ model Offer {
 enum PlayerTagType {
   KEEPING
   ON_THE_TABLE
-  MAKE_ME_AN_OFFER
+  // Renamed from MAKE_ME_AN_OFFER - C&A wants managers to say what they're
+  // open to discussing, not solicit blind offers. See migration
+  // rename_open_to_discuss_tag, which renames the enum value in place so
+  // existing tagged rows keep their meaning under the new name.
+  OPEN_TO_DISCUSS
   AVAILABLE
   NEEDS_DECISION
   FORCED_BACK

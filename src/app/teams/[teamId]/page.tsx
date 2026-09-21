@@ -177,7 +177,7 @@ export default async function TeamDetailPage({ params }: { params: Promise<{ tea
               <thead>
                 <tr className="bg-surface-raised text-left text-xs text-muted">
                   <th className="px-2 py-2 font-medium">Season</th>
-                  <th className="px-2 py-2 font-medium">Rd.Pick</th>
+                  <th className="px-2 py-2 font-medium">Nom.</th>
                   <th className="px-2 py-2 font-medium">Player</th>
                   <th className="px-2 py-2 font-medium">Cost</th>
                 </tr>

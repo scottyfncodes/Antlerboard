@@ -63,7 +63,7 @@ export function PlayerFilters({
         <option value="">Any Tag</option>
         <option value="KEEPING">Keeping</option>
         <option value="ON_THE_TABLE">On the Table</option>
-        <option value="MAKE_ME_AN_OFFER">Make Me an Offer</option>
+        <option value="OPEN_TO_DISCUSS">Open to Discuss</option>
         <option value="AVAILABLE">Available</option>
         <option value="NEEDS_DECISION">Needs Decision</option>
         <option value="FORCED_BACK">Forced Back</option>

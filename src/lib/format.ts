@@ -34,7 +34,7 @@ export const DRAFT_COLOR_HEX: Record<string, string> = {
 export const PLAYER_TAG_LABEL: Record<string, string> = {
   KEEPING: "Keeping",
   ON_THE_TABLE: "On the Table",
-  MAKE_ME_AN_OFFER: "Make Me an Offer",
+  OPEN_TO_DISCUSS: "Open to Discuss",
   AVAILABLE: "Available",
   NEEDS_DECISION: "Needs Decision",
   FORCED_BACK: "Forced Back",
@@ -44,7 +44,7 @@ export const PLAYER_TAG_LABEL: Record<string, string> = {
 export const PLAYER_TAG_COLOR: Record<string, string> = {
   KEEPING: "var(--color-green)",
   ON_THE_TABLE: "var(--color-blue)",
-  MAKE_ME_AN_OFFER: "var(--color-antler)",
+  OPEN_TO_DISCUSS: "var(--color-antler)",
   AVAILABLE: "var(--color-muted)",
   NEEDS_DECISION: "var(--color-yellow)",
   FORCED_BACK: "var(--color-red)",

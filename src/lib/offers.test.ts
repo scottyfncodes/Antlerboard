@@ -35,7 +35,7 @@ async function makePendingOffer() {
   return { offer, sendingTeam, receivingTeam, targetPlayer, offeredPlayer };
 }
 
-describe("Make Me an Offer lifecycle", () => {
+describe("Trade offer lifecycle", () => {
   it("accepting an offer swaps the players between teams", async () => {
     const { offer, sendingTeam, receivingTeam, targetPlayer, offeredPlayer } = await makePendingOffer();
 

@@ -14,7 +14,7 @@ export default async function TradesPage() {
   const manager = await getCurrentManager();
   const myTeamId = manager?.teams?.[0]?.id;
 
-  const [trades, offers, mmoPlayers] = await Promise.all([
+  const [trades, offers, openToDiscussPlayers] = await Promise.all([
     prisma.trade.findMany({
       orderBy: { updatedAt: "desc" },
       include: {
@@ -29,7 +29,7 @@ export default async function TradesPage() {
       include: { sendingTeam: true, receivingTeam: true, targetPlayer: true },
     }),
     prisma.playerTag.findMany({
-      where: { tag: "MAKE_ME_AN_OFFER" },
+      where: { tag: "OPEN_TO_DISCUSS" },
       include: { player: true, team: true },
     }),
   ]);
@@ -91,21 +91,25 @@ export default async function TradesPage() {
       </section>
 
       <section>
-        <h2 className="font-display text-lg mb-3">Make Me an Offer</h2>
-        <p className="text-sm text-muted mb-3">Players whose managers explicitly want offers.</p>
-        {mmoPlayers.length === 0 ? (
-          <EmptyState title="No one is asking for offers right now" />
+        <h2 className="font-display text-lg mb-3">Open to Discuss</h2>
+        <p className="text-sm text-muted mb-3">
+          Players their managers are willing to talk trades about - not a marketplace, just a starting point for a
+          real conversation. Reach out to the manager before sending an offer.
+        </p>
+        {openToDiscussPlayers.length === 0 ? (
+          <EmptyState title="No one has flagged a player for discussion right now" />
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-            {mmoPlayers.map((mmo) => (
-              <Card key={mmo.id} className="flex items-center justify-between">
+            {openToDiscussPlayers.map((otd) => (
+              <Card key={otd.id} className="flex items-center justify-between">
                 <div>
-                  <Link href={`/players/${mmo.playerId}`} className="font-medium hover:text-antler-strong">
-                    {mmo.player.name}
+                  <Link href={`/players/${otd.playerId}`} className="font-medium hover:text-antler-strong">
+                    {otd.player.name}
                   </Link>
-                  <p className="text-xs text-muted">{mmo.team.name}</p>
+                  <p className="text-xs text-muted">{otd.team.name}</p>
+                  {otd.note && <p className="text-xs text-muted italic mt-0.5">&ldquo;{otd.note}&rdquo;</p>}
                 </div>
-                <PlayerTagBadge tag="MAKE_ME_AN_OFFER" label={PLAYER_TAG_LABEL.MAKE_ME_AN_OFFER} />
+                <PlayerTagBadge tag="OPEN_TO_DISCUSS" label={PLAYER_TAG_LABEL.OPEN_TO_DISCUSS} />
               </Card>
             ))}
           </div>

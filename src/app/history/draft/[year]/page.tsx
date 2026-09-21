@@ -2,7 +2,9 @@ import { prisma } from "@/lib/db";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/Card";
 import { DraftColorBadge } from "@/components/ui/Badge";
+import { DraftDayDetailsCard } from "@/components/draft/DraftDayDetailsCard";
 import { getDraftColor } from "@/lib/draft-color-engine";
+import { getCurrentManager } from "@/lib/current-manager";
 import { formatCost } from "@/lib/format";
 import Link from "next/link";
 
@@ -13,17 +15,21 @@ export default async function DraftBoardPage({ params }: { params: Promise<{ yea
   const year = Number(yearParam);
   const colorResult = getDraftColor(year);
 
-  const picks = await prisma.draftPick.findMany({
-    where: { seasonYear: year },
-    orderBy: { overallPick: "asc" },
-    include: { team: true, player: true },
-  });
+  const [picks, season, manager] = await Promise.all([
+    prisma.draftPick.findMany({
+      where: { seasonYear: year },
+      orderBy: { overallPick: "asc" },
+      include: { team: true, player: true },
+    }),
+    prisma.season.findFirst({ where: { year }, include: { draftDayDetails: true } }),
+    getCurrentManager(),
+  ]);
 
   return (
     <div className="space-y-4">
       <PageHeader
-        title={`${year} Draft Board`}
-        subtitle={colorResult.skipped ? "Draft color cycle skipped this season." : undefined}
+        title={`${year} Draft`}
+        subtitle={colorResult.skipped ? "Draft color cycle skipped this season." : "Live auction draft - activity below is nomination order, not snake-draft pick slots."}
         actions={<DraftColorBadge color={colorResult.color} />}
       />
       <div className="flex gap-2 text-sm">
@@ -38,6 +44,16 @@ export default async function DraftBoardPage({ params }: { params: Promise<{ yea
         </Link>
       </div>
 
+      {season && (
+        <DraftDayDetailsCard
+          seasonId={season.id}
+          draftDate={season.draftDate?.toISOString() ?? null}
+          details={season.draftDayDetails}
+          canEdit={!!manager?.isCommissioner}
+        />
+      )}
+
+      <h2 className="font-display text-lg">Auction Activity</h2>
       {picks.length === 0 ? (
         <EmptyState title="No draft picks recorded for this season" />
       ) : (
@@ -45,7 +61,7 @@ export default async function DraftBoardPage({ params }: { params: Promise<{ yea
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-surface-raised text-left text-xs text-muted">
-                <th className="px-2 py-2 font-medium">Pick</th>
+                <th className="px-2 py-2 font-medium">Nom.</th>
                 <th className="px-2 py-2 font-medium hide-xs">Team</th>
                 <th className="px-2 py-2 font-medium">Player</th>
                 <th className="px-2 py-2 font-medium">Cost</th>

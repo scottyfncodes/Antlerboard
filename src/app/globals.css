@@ -1,14 +1,22 @@
 @import "tailwindcss";
 
+/*
+ * "Baseball After Dark" - nighttime stadium atmosphere (stadium lights,
+ * dark clubhouse, late-night scoreboard glow) expressed as a slightly
+ * deeper/warmer refinement of the existing dark theme, not a novelty
+ * re-skin. Density, contrast, and mobile usability come first; the
+ * atmosphere is a background layer (see body::before below), never
+ * something that competes with data for attention.
+ */
 :root {
-  --background: #0b0d0f;
+  --background: #0a0c0e;
   --surface: #14171b;
   --surface-raised: #1b1f24;
   --border: #262b31;
   --foreground: #eef1f4;
   --muted: #8b939c;
   --antler: #c9a15a;
-  --antler-strong: #e0b76b;
+  --antler-strong: #e6bd6e;
   --antler-dim: #6b5730;
   --red: #d9634b;
   --orange: #e0925a;
@@ -52,6 +60,27 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans), Arial, Helvetica, sans-serif;
   -webkit-tap-highlight-color: transparent;
+  position: relative;
+}
+
+/*
+ * A faint, fixed stadium-light glow - two soft cones from the top corners,
+ * like light towers over a night game - plus a subtle scoreboard-green
+ * vignette at the very bottom. Fixed and behind everything (z-index -1,
+ * no pointer events) so it never affects layout, scrolling, or contrast;
+ * it reads as atmosphere in peripheral vision, not as decoration you look
+ * directly at.
+ */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 60% 45% at 15% -15%, rgba(230, 189, 110, 0.14), transparent 60%),
+    radial-gradient(ellipse 60% 45% at 85% -15%, rgba(230, 189, 110, 0.1), transparent 60%),
+    radial-gradient(ellipse 80% 35% at 50% 115%, rgba(90, 144, 201, 0.08), transparent 60%);
 }
 
 ::selection {
