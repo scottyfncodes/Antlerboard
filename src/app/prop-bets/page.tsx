@@ -31,7 +31,7 @@ export default async function DpudPage() {
     <div className="space-y-8">
       <PageHeader
         title="Prop Bets"
-        subtitle="The league's own prop-bet marketplace. Not a sportsbook, just C&A being C&A. (Formerly called DPUD - that name now means something else, see the DPUD tab.)"
+        subtitle="The league's own prop-bet marketplace. Not a sportsbook, just C&A being C&A."
         actions={<CreateDpudForm />}
       />
 
