@@ -56,17 +56,6 @@ export default async function DpudPage() {
           ))}
         </div>
       )}
-
-      <Card>
-        <h2 className="font-display text-lg mb-2">Looking for the prop-bet game?</h2>
-        <p className="text-sm text-muted">
-          That used to live here under the same name. It moved to{" "}
-          <Link href="/prop-bets" className="text-antler hover:text-antler-strong">
-            Prop Bets
-          </Link>
-          .
-        </p>
-      </Card>
     </div>
   );
 }
