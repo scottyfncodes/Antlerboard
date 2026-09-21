@@ -12,7 +12,7 @@ export interface NavItem {
  */
 export const PRIMARY_NAV_ITEMS: NavItem[] = [
   { href: "/", label: "Board", emoji: "\u{1F3E0}" },
-  { href: "/my-team", label: "My Team", emoji: "\u{1F3D2}" },
+  { href: "/my-team", label: "My Team", emoji: "\u{1F9E2}" },
   { href: "/trades", label: "Trades", emoji: "\u{1F504}" },
   { href: "/players", label: "Players", emoji: "⚾" },
 ];
