@@ -131,7 +131,13 @@ export async function yahooFantasyGet(leagueId: string, path: string): Promise<u
   });
 
   if (!res.ok) {
-    throw new Error(`Yahoo API request failed (${res.status}): ${path}`);
+    // Yahoo's error body (e.g. "Fantasy Sports API not enabled for this
+    // application") is the actual diagnostic signal - swallowing it left
+    // every failure indistinguishable from every other by status code
+    // alone. Truncated defensively since it's occasionally a full HTML
+    // page rather than the usual short JSON/XML error payload.
+    const body = await res.text().catch(() => "");
+    throw new Error(`Yahoo API request failed (${res.status}): ${path}${body ? ` - ${body.slice(0, 500)}` : ""}`);
   }
   return res.json();
 }
