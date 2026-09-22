@@ -1,7 +1,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <rect width="128" height="128" rx="24" fill="#0b0d0f"/>
-  <g transform="translate(64,64)" stroke="#c9a15a" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" fill="none">
-    <path d="M-28 40 V6 L-44 -14 M-28 16 L-40 2 M-28 6 L-12 -14 V-40 M-12 -14 L4 -34"/>
-    <path d="M28 40 V6 L44 -14 M28 16 L40 2 M28 6 L12 -14 V-40 M12 -14 L-4 -34"/>
+  <defs>
+    <radialGradient id="ab-ball" cx="38%" cy="32%" r="80%">
+      <stop offset="0%" stop-color="#f7f0e3"/>
+      <stop offset="100%" stop-color="#ddccaa"/>
+    </radialGradient>
+  </defs>
+  <rect width="128" height="128" rx="26" fill="#0a0c0e"/>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M52 50V30L38 14M52 40L41 30" stroke="#6b5730" stroke-width="7"/>
+    <path d="M76 50V30L90 14M76 40L87 30" stroke="#6b5730" stroke-width="7"/>
+    <path d="M52 50V30L38 14M52 40L41 30" stroke="#e6bd6e" stroke-width="2.75"/>
+    <path d="M76 50V30L90 14M76 40L87 30" stroke="#e6bd6e" stroke-width="2.75"/>
+  </g>
+  <circle cx="64" cy="70" r="30" fill="url(#ab-ball)" stroke="#6b5730" stroke-width="2.5"/>
+  <g fill="none" stroke="#c1523c" stroke-width="3.25" stroke-linecap="round">
+    <path d="M40 56Q64 70 40 90"/>
+    <path d="M88 56Q64 70 88 90"/>
   </g>
 </svg>

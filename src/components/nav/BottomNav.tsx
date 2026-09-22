@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Menu } from "lucide-react";
 import { PRIMARY_NAV_ITEMS, MORE_NAV_ITEMS, visibleNavItems } from "./nav-items";
+import { HomeBadge } from "./HomeBadge";
 import clsx from "clsx";
 import type { CurrentManagerSummary } from "@/lib/auth/types";
 
@@ -47,12 +48,19 @@ export function BottomNav({ currentManager }: { currentManager: CurrentManagerSu
         </div>
       )}
       <nav
-        className="fixed bottom-0 inset-x-0 z-40 border-t border-border bg-surface/95 backdrop-blur supports-[backdrop-filter]:bg-surface/80 lg:hidden"
+        className="fixed bottom-0 inset-x-0 z-40 border-t border-border bg-surface/95 backdrop-blur supports-[backdrop-filter]:bg-surface/80 shadow-[0_-2px_10px_rgba(0,0,0,0.25)] lg:hidden"
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       >
         <ul className="grid grid-cols-5">
           {PRIMARY_NAV_ITEMS.map((item) => {
             const active = isActive(item.href);
+            if (item.href === "/") {
+              return (
+                <li key={item.href}>
+                  <HomeBadge active={active} />
+                </li>
+              );
+            }
             return (
               <li key={item.href}>
                 <Link

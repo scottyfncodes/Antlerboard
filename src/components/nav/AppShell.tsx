@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Search } from "lucide-react";
 import { TopNav } from "./TopNav";
 import { BottomNav } from "./BottomNav";
-import { AntlerMark } from "./AntlerMark";
+import { AntlerboardMark } from "@/components/brand/AntlerboardMark";
 import { NotificationBell } from "../notifications/NotificationBell";
 import { AuthStatus } from "../auth/AuthStatus";
 import type { CurrentManagerSummary } from "@/lib/auth/types";
@@ -18,13 +18,13 @@ export function AppShell({
     <div className="min-h-dvh flex flex-col">
       <TopNav currentManager={currentManager} />
       <header
-        className="lg:hidden sticky top-0 z-40 border-b border-border bg-surface/95 backdrop-blur"
+        className="lg:hidden sticky top-0 z-40 border-b border-border bg-surface/95 backdrop-blur shadow-[0_2px_8px_rgba(0,0,0,0.25)]"
         style={{ paddingTop: "env(safe-area-inset-top)" }}
       >
         <div className="flex items-center gap-2 px-4 h-14">
           <Link href="/" className="flex items-center gap-2">
-            <AntlerMark className="h-6 w-6 text-antler" />
-            <span className="font-display text-base tracking-tight">Antlerboard</span>
+            <AntlerboardMark className="h-7 w-7" />
+            <span className="font-display text-base font-semibold tracking-tight">Antlerboard</span>
           </Link>
           <div className="ml-auto flex items-center gap-4">
             <Link href="/search" className="text-muted hover:text-foreground" aria-label="Search">

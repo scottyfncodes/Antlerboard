@@ -18,6 +18,11 @@
   --antler: #c9a15a;
   --antler-strong: #e6bd6e;
   --antler-dim: #6b5730;
+  /* Warm cream - the Antlerboard mark's baseball, and anywhere else a
+     baseball-heritage "hide" tone reads better than pure white. Not a
+     general-purpose light color - this is a dark-theme-only app. */
+  --cream: #f2e9d8;
+  --cream-dim: #ddccaa;
   --red: #d9634b;
   --orange: #e0925a;
   --yellow: #d9bc55;
@@ -38,6 +43,8 @@
   --color-antler: var(--antler);
   --color-antler-strong: var(--antler-strong);
   --color-antler-dim: var(--antler-dim);
+  --color-cream: var(--cream);
+  --color-cream-dim: var(--cream-dim);
   --color-red: var(--red);
   --color-orange: var(--orange);
   --color-yellow: var(--yellow);

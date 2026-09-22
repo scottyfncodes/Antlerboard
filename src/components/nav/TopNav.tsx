@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { NAV_ITEMS, visibleNavItems } from "./nav-items";
 import clsx from "clsx";
-import { AntlerMark } from "./AntlerMark";
+import { AntlerboardMark } from "@/components/brand/AntlerboardMark";
 import { SearchBox } from "../search/SearchBox";
 import type { CurrentManagerSummary } from "@/lib/auth/types";
 
@@ -13,11 +13,11 @@ export function TopNav({ currentManager }: { currentManager: CurrentManagerSumma
   const items = visibleNavItems(NAV_ITEMS, currentManager.role);
 
   return (
-    <header className="hidden lg:block sticky top-0 z-40 border-b border-border bg-surface/95 backdrop-blur">
+    <header className="hidden lg:block sticky top-0 z-40 border-b border-border bg-surface/95 backdrop-blur shadow-[0_2px_8px_rgba(0,0,0,0.25)]">
       <div className="mx-auto max-w-7xl px-6 py-3 flex items-center gap-3 xl:gap-6">
         <Link href="/" className="flex items-center gap-2 shrink-0">
-          <AntlerMark className="h-7 w-7 text-antler" />
-          <span className="font-display text-lg tracking-tight text-foreground">
+          <AntlerboardMark className="h-8 w-8" />
+          <span className="font-display text-lg font-semibold tracking-tight text-foreground">
             Antlerboard
           </span>
         </Link>
@@ -33,7 +33,7 @@ export function TopNav({ currentManager }: { currentManager: CurrentManagerSumma
                     className={clsx(
                       "block px-2.5 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap",
                       active
-                        ? "bg-surface-raised text-antler-strong"
+                        ? "bg-surface-raised text-antler-strong shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_0_8px_-2px_rgba(230,189,110,0.35)]"
                         : "text-muted hover:text-foreground"
                     )}
                   >
