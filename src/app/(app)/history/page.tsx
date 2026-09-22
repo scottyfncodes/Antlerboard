@@ -5,21 +5,15 @@ import { DraftColorBadge } from "@/components/ui/Badge";
 import { getDraftColorRange } from "@/lib/draft-color-engine";
 import { getPlayerHistoryEvents } from "@/lib/keeper-sync";
 import { buildStints } from "@/lib/keeper-engine";
-import { formatDate } from "@/lib/format";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
 export default async function HistoryPage() {
-  const [seasons, dpudHistory, multiAcqPlayers] = await Promise.all([
+  const [seasons, multiAcqPlayers] = await Promise.all([
     prisma.season.findMany({
       orderBy: { year: "desc" },
       include: { champion: { include: { manager: true } } },
-    }),
-    prisma.dpudBet.findMany({
-      where: { status: "COMPLETE" },
-      orderBy: { updatedAt: "desc" },
-      include: { creator: true },
     }),
     prisma.player.findMany({
       where: { acquisitions: { some: {} } },
@@ -127,24 +121,6 @@ export default async function HistoryPage() {
               </Card>
             ))}
           </div>
-        )}
-      </section>
-
-      <section>
-        <h2 className="font-display text-lg mb-3">DPUD Results Archive</h2>
-        {dpudHistory.length === 0 ? (
-          <EmptyState title="No resolved bets yet" />
-        ) : (
-          <ul className="divide-y divide-border rounded-xl border border-border overflow-hidden">
-            {dpudHistory.map((b) => (
-              <li key={b.id} className="px-4 py-3 text-sm flex items-center justify-between">
-                <span>
-                  {b.title} <span className="text-muted">by {b.creator.name}</span>
-                </span>
-                <span className="text-xs text-muted">{formatDate(b.endDate)}</span>
-              </li>
-            ))}
-          </ul>
         )}
       </section>
     </div>
