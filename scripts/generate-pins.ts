@@ -42,7 +42,7 @@ async function main() {
   }
 
   console.log("\nDistribute each PIN privately and individually, then close this terminal:\n");
-  console.table(result.rows);
+  console.table(result.rows.map(({ name, role, pin, status }) => ({ name, role, pin, status })));
 }
 
 main()

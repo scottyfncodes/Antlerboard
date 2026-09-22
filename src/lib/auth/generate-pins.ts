@@ -10,6 +10,7 @@ import { prisma } from "@/lib/db";
 import { generatePinExcluding, generateUniquePins, hashPin } from "./pin";
 
 export interface GeneratedPinRow {
+  managerId: string;
   name: string;
   role: "manager" | "commissioner";
   pin: string;
@@ -54,7 +55,13 @@ export async function generatePins(options: { resetAll?: boolean; resetName?: st
     }
     const pin = generatePinExcluding([]);
     await storePin(manager.id, pin);
-    rows.push({ name: manager.name, role: manager.isCommissioner ? "commissioner" : "manager", pin, status: "reset" });
+    rows.push({
+      managerId: manager.id,
+      name: manager.name,
+      role: manager.isCommissioner ? "commissioner" : "manager",
+      pin,
+      status: "reset",
+    });
     return { ok: true, rows };
   }
 
@@ -66,6 +73,7 @@ export async function generatePins(options: { resetAll?: boolean; resetName?: st
   const pins = generateUniquePins(targets.length);
   targets.forEach((manager, i) => {
     rows.push({
+      managerId: manager.id,
       name: manager.name,
       role: manager.isCommissioner ? "commissioner" : "manager",
       pin: pins[i],
@@ -73,8 +81,7 @@ export async function generatePins(options: { resetAll?: boolean; resetName?: st
     });
   });
   for (const row of rows) {
-    const manager = targets.find((m) => m.name === row.name)!;
-    await storePin(manager.id, row.pin);
+    await storePin(row.managerId, row.pin);
   }
 
   return { ok: true, rows };

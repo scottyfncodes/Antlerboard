@@ -33,7 +33,11 @@ export default async function CommissionerPage() {
     <div className="space-y-8">
       <PageHeader title="Commissioner Mode" subtitle="League administration, historical corrections, and data management." />
 
-      <section className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <Link href="/commissioner/pins" className="rounded-xl border border-border bg-surface p-4 hover:border-antler-dim">
+          <p className="font-display text-lg">Manager PINs</p>
+          <p className="text-sm text-muted mt-1">Generate or reset sign-in PINs.</p>
+        </Link>
         <Link href="/commissioner/yahoo" className="rounded-xl border border-border bg-surface p-4 hover:border-antler-dim">
           <p className="font-display text-lg">Yahoo Integration</p>
           <p className="text-sm text-muted mt-1">Connect, select league, sync now.</p>
