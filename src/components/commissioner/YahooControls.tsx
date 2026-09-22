@@ -120,6 +120,9 @@ export function YahooControls({
             </li>
           ))}
         </ul>
+        <button onClick={disconnect} className="rounded-md border border-border px-3 py-1.5 text-sm text-muted hover:text-foreground">
+          Disconnect
+        </button>
       </div>
     );
   }
