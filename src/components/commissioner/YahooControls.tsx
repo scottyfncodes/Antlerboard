@@ -2,13 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { DiscoveredLeague } from "@/app/api/yahoo/leagues/route";
-
-interface LeagueDiagnostic {
-  queried: string;
-  gamesFound: number;
-  message: string;
-}
+import type { DiscoveredLeague, LeagueDiagnostic } from "@/app/api/yahoo/leagues/route";
 
 export function YahooControls({
   connected,
@@ -87,9 +81,20 @@ export function YahooControls({
       <div className="space-y-2">
         <p className="text-sm text-muted">Connected. Pick the Claw & Antler League from your Yahoo leagues:</p>
         {loadingLeagues && <p className="text-sm text-muted">Loading your leagues…</p>}
-        {loadError && <p className="text-sm text-red">Couldn&apos;t load leagues: {loadError}</p>}
-        {leagues && leagues.length === 0 && diagnostic && (
-          <p className="text-sm text-muted">{diagnostic.message}</p>
+        {diagnostic?.reason === "app_not_authorized" ? (
+          <div className="rounded-md border border-yellow/40 bg-yellow/10 px-3 py-2 text-sm text-yellow">
+            <p>{diagnostic.message}</p>
+            {diagnostic.helpUrl && (
+              <a href={diagnostic.helpUrl} target="_blank" rel="noopener noreferrer" className="mt-1 inline-block underline">
+                Open Yahoo&apos;s confirmation form
+              </a>
+            )}
+          </div>
+        ) : (
+          <>
+            {loadError && <p className="text-sm text-red">Couldn&apos;t load leagues: {loadError}</p>}
+            {diagnostic && <p className="text-sm text-muted">{diagnostic.message}</p>}
+          </>
         )}
         <ul className="space-y-1.5">
           {sorted?.map((l) => (

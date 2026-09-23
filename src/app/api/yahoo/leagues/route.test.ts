@@ -4,15 +4,23 @@ import { makeLeagueWithSeason, resetDatabase } from "@/lib/test-helpers";
 vi.mock("@/lib/yahoo/client", () => ({
   yahooFantasyGet: vi.fn(),
 }));
+vi.mock("@/lib/current-manager", () => ({
+  requireCommissioner: vi.fn(),
+}));
 
 import { yahooFantasyGet } from "@/lib/yahoo/client";
+import { requireCommissioner } from "@/lib/current-manager";
+import { YahooApiError } from "@/lib/yahoo/errors";
 import { GET } from "./route";
 
 const mockedGet = vi.mocked(yahooFantasyGet);
+const mockedRequireCommissioner = vi.mocked(requireCommissioner);
 
 beforeEach(async () => {
   await resetDatabase();
   mockedGet.mockReset();
+  mockedRequireCommissioner.mockReset();
+  mockedRequireCommissioner.mockResolvedValue({ id: "commish" } as Awaited<ReturnType<typeof requireCommissioner>>);
 });
 afterAll(resetDatabase);
 
@@ -170,6 +178,39 @@ describe("GET /api/yahoo/leagues", () => {
 
     expect(body.leagues).toEqual([]);
     expect(body.error).toMatch(/unauthorized/);
+    expect(body.diagnostic.reason).toBe("request_failed");
+  });
+
+  it("explains Yahoo's app-not-authorized 403 with a link to the Client ID confirmation form", async () => {
+    await makeLeagueWithSeason();
+    mockedGet.mockRejectedValue(
+      new YahooApiError(403, "/users;use_login=1/games;game_keys=mlb/leagues", "This application is not authorized to perform this action.")
+    );
+
+    const res = await GET();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(body.leagues).toEqual([]);
+    expect(body.diagnostic.reason).toBe("app_not_authorized");
+    expect(body.diagnostic.helpUrl).toBe("https://sports.yahoo.com/developer/application-confirmation/");
+  });
+
+  it("treats a 403 with a different reason as a generic failure, not app-not-authorized", async () => {
+    await makeLeagueWithSeason();
+    mockedGet.mockRejectedValue(new YahooApiError(403, "/users;use_login=1/games;game_keys=mlb/leagues", "Forbidden"));
+
+    const body = await (await GET()).json();
+    expect(body.diagnostic.reason).toBe("request_failed");
+  });
+
+  it("rejects non-commissioners without calling Yahoo", async () => {
+    await makeLeagueWithSeason();
+    mockedRequireCommissioner.mockResolvedValue(null);
+
+    const res = await GET();
+    expect(res.status).toBe(403);
+    expect(mockedGet).not.toHaveBeenCalled();
   });
 
   it("never includes token or credential data in the response", async () => {

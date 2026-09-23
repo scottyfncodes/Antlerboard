@@ -3,6 +3,8 @@ import { prisma } from "@/lib/db";
 import { yahooFantasyGet } from "@/lib/yahoo/client";
 import { toArray, mergeMeta, fantasyContent } from "@/lib/yahoo/parse";
 import { isLikelyClawAndAntler } from "@/lib/yahoo/league-match";
+import { YahooApiError } from "@/lib/yahoo/errors";
+import { requireCommissioner } from "@/lib/current-manager";
 
 export interface DiscoveredLeague {
   key: string;
@@ -21,6 +23,16 @@ export interface DiscoveredLeague {
   isLikelyClawAndAntler: boolean;
 }
 
+export interface LeagueDiagnostic {
+  reason: "no_game" | "no_leagues" | "app_not_authorized" | "request_failed";
+  queried: string;
+  gamesFound: number;
+  message: string;
+  helpUrl?: string;
+}
+
+const YAHOO_APP_CONFIRMATION_URL = "https://sports.yahoo.com/developer/application-confirmation/";
+
 // `mlb` is Yahoo's alias for "the current MLB fantasy game" - it resolves
 // server-side to whichever game_key is live right now, so this always asks
 // for the current season without us having to know/guess the numeric id.
@@ -37,6 +49,10 @@ const QUERY_PATH = "/users;use_login=1/games;game_keys=mlb/leagues";
  * 500 - see the `diagnostic` field on the response.
  */
 export async function GET() {
+  if (!(await requireCommissioner())) {
+    return NextResponse.json({ error: "Commissioner access required" }, { status: 403 });
+  }
+
   const league = await prisma.league.findFirst();
   if (!league) return NextResponse.json({ error: "No league configured" }, { status: 500 });
 
@@ -93,31 +109,50 @@ export async function GET() {
 
     const likelyMatchKey = leagues.find((l) => l.isLikelyClawAndAntler)?.key ?? null;
 
-    return NextResponse.json({
-      leagues,
-      likelyMatchKey,
-      diagnostic:
-        leagues.length === 0
+    let diagnostic: LeagueDiagnostic | null = null;
+    if (leagues.length === 0) {
+      diagnostic =
+        gamesFound === 0
           ? {
+              reason: "no_game",
               queried: QUERY_PATH,
               gamesFound,
               message:
-                gamesFound === 0
-                  ? "Yahoo didn't return a current MLB fantasy game for this account - this Yahoo login may not have an active MLB fantasy season."
-                  : "Yahoo found the current MLB season, but this account isn't a member of any leagues in it. Make sure you're logged into the Yahoo account that's actually in the Claw & Antler League.",
+                "Yahoo didn't return a current MLB fantasy game for this account - this Yahoo login may not have an active MLB fantasy season.",
             }
-          : null,
-    });
+          : {
+              reason: "no_leagues",
+              queried: QUERY_PATH,
+              gamesFound,
+              message:
+                "Yahoo found the current MLB season, but this account isn't a member of any leagues in it. Make sure you're logged into the Yahoo account that's actually in the Claw & Antler League.",
+            };
+    }
+
+    return NextResponse.json({ leagues, likelyMatchKey, diagnostic });
   } catch (err) {
+    const diagnostic: LeagueDiagnostic =
+      err instanceof YahooApiError && err.isAppNotAuthorized
+        ? {
+            reason: "app_not_authorized",
+            queried: QUERY_PATH,
+            gamesFound: 0,
+            message:
+              "Yahoo login worked, but Yahoo hasn't enabled Fantasy Sports API access for this app's Client ID yet. Submit the app's Client ID on Yahoo's Fantasy API confirmation form, then Disconnect and Connect Yahoo again once Yahoo confirms.",
+            helpUrl: YAHOO_APP_CONFIRMATION_URL,
+          }
+        : {
+            reason: "request_failed",
+            queried: QUERY_PATH,
+            gamesFound: 0,
+            message: "The request to Yahoo's Fantasy API failed - see error for detail.",
+          };
+
     return NextResponse.json(
       {
         leagues: [],
         likelyMatchKey: null,
-        diagnostic: {
-          queried: QUERY_PATH,
-          gamesFound: 0,
-          message: "The request to Yahoo's Fantasy API failed - see error for detail.",
-        },
+        diagnostic,
         error: err instanceof Error ? err.message : "Failed to load Yahoo leagues",
       },
       { status: 200 }
