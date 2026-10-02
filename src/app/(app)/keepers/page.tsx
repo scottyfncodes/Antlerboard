@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
 import { CURRENT_SEASON_YEAR } from "@/lib/config";
-import { PageHeader } from "@/components/ui/PageHeader";
+import { LeagueHeader } from "@/components/league/LeagueHeader";
 import { EmptyState } from "@/components/ui/Card";
 import { KeeperYearBadge } from "@/components/keepers/KeeperYearBadge";
 import { KeeperFilters } from "@/components/keepers/KeeperFilters";
@@ -51,9 +51,9 @@ export default async function KeeperBoardPage({
 
   return (
     <div className="space-y-4">
-      <PageHeader
-        title="Keeper Board"
-        subtitle="All 10 keeper slots for every team. Year 4 and Year 5 are flagged so nobody gets surprised."
+      <LeagueHeader
+        active="keepers"
+        description="All 10 keeper slots for every team. Year 4 and Year 5 are flagged so nobody gets surprised."
       />
       <KeeperFilters teams={teams} />
 

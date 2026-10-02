@@ -89,8 +89,8 @@ export default async function BoardPage() {
         <Card className="md:col-span-2">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-display text-lg">Standings</h2>
-            <Link href="/teams" className="text-xs text-antler hover:text-antler-strong">
-              All teams &rarr;
+            <Link href="/league" className="text-xs text-antler hover:text-antler-strong">
+              Full standings &rarr;
             </Link>
           </div>
           {standings.length === 0 ? (

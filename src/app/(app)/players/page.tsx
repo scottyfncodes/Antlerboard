@@ -3,10 +3,9 @@ import { CURRENT_SEASON_YEAR } from "@/lib/config";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/Card";
 import { PlayerFilters } from "@/components/players/PlayerFilters";
-import { KeeperYearBadge } from "@/components/keepers/KeeperYearBadge";
+import { PlayerRow, PlayerSection } from "@/components/players/PlayerRow";
 import { PlayerTagBadge } from "@/components/ui/Badge";
-import { formatCost, PLAYER_TAG_LABEL } from "@/lib/format";
-import Link from "next/link";
+import { PLAYER_TAG_LABEL } from "@/lib/format";
 import type { Prisma, PlayerTagType } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
@@ -58,7 +57,7 @@ export default async function PlayerMarketPage({
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Player Market"
+        title="Players"
         subtitle="Everyone rostered in C&A - who's keeping, who's on the table, and what they'd cost you."
       />
       <PlayerFilters teams={teams} positions={POSITIONS} />
@@ -66,50 +65,22 @@ export default async function PlayerMarketPage({
       {rows.length === 0 ? (
         <EmptyState title="No players match those filters" />
       ) : (
-        <div className="rounded-xl border border-border overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-surface-raised text-left text-xs text-muted">
-                <th className="px-2 py-2 font-medium">Player</th>
-                <th className="px-2 py-2 font-medium hide-xs">Team</th>
-                <th className="px-2 py-2 font-medium hide-xs">Pos</th>
-                <th className="px-2 py-2 font-medium">Cost</th>
-                <th className="px-2 py-2 font-medium">Keeper Year</th>
-                <th className="px-2 py-2 font-medium hide-xs">Years Left</th>
-                <th className="px-2 py-2 font-medium">Tag</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map(({ player, record }) => {
-                const tag = player.tags.find((t) => t.teamId === record!.teamId);
-                return (
-                  <tr key={player.id} className="border-t border-border">
-                    <td className="px-2 py-2">
-                      <Link href={`/players/${player.id}`} className="hover:text-antler-strong font-medium">
-                        {player.name}
-                      </Link>
-                      <span className="text-muted ml-1 text-xs hide-xs">{player.mlbTeam}</span>
-                    </td>
-                    <td className="px-2 py-2 hide-xs">
-                      <Link href={`/teams/${record!.teamId}`} className="text-muted hover:text-antler-strong">
-                        {record!.team.name}
-                      </Link>
-                    </td>
-                    <td className="px-2 py-2 hide-xs text-muted">{player.positions.join("/")}</td>
-                    <td className="px-2 py-2 tabular">{formatCost(record!.keeperCost)}</td>
-                    <td className="px-2 py-2">
-                      <KeeperYearBadge keeperYear={record!.keeperYear} status={record!.status} />
-                    </td>
-                    <td className="px-2 py-2 hide-xs tabular">{record!.yearsRemaining}</td>
-                    <td className="px-2 py-2">
-                      {tag && <PlayerTagBadge tag={tag.tag} label={PLAYER_TAG_LABEL[tag.tag]} />}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <PlayerSection title="Rostered players" count={rows.length} right={<span>Cost · Clock</span>}>
+          {rows.map(({ player, record }) => {
+            const tag = player.tags.find((t) => t.teamId === record!.teamId);
+            return (
+              <PlayerRow
+                key={player.id}
+                player={player}
+                meta={record!.team.name}
+                cost={record!.keeperCost}
+                keeperYear={record!.keeperYear}
+                keeperStatus={record!.status}
+                trailing={tag && <PlayerTagBadge tag={tag.tag} label={PLAYER_TAG_LABEL[tag.tag]} />}
+              />
+            );
+          })}
+        </PlayerSection>
       )}
     </div>
   );
