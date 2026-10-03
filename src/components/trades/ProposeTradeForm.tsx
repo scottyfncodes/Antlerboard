@@ -15,7 +15,16 @@ interface TeamOption {
   roster: RosterPlayer[];
 }
 
-export function ProposeTradeForm({ teams, defaultTeamId }: { teams: TeamOption[]; defaultTeamId?: string }) {
+export function ProposeTradeForm({
+  teams,
+  ownTeamIds,
+  defaultTeamId,
+}: {
+  teams: TeamOption[];
+  /** "Your Team" is limited to these - the API rejects trades you aren't part of. */
+  ownTeamIds: string[];
+  defaultTeamId?: string;
+}) {
   const router = useRouter();
   const [teamAId, setTeamAId] = useState(defaultTeamId ?? teams[0]?.id ?? "");
   const [teamBId, setTeamBId] = useState(teams.find((t) => t.id !== defaultTeamId)?.id ?? teams[1]?.id ?? "");
@@ -29,6 +38,7 @@ export function ProposeTradeForm({ teams, defaultTeamId }: { teams: TeamOption[]
 
   const teamA = teams.find((t) => t.id === teamAId);
   const teamB = teams.find((t) => t.id === teamBId);
+  const ownTeams = useMemo(() => teams.filter((t) => ownTeamIds.includes(t.id)), [teams, ownTeamIds]);
   const otherTeams = useMemo(() => teams.filter((t) => t.id !== teamAId), [teams, teamAId]);
 
   function toggle(list: string[], setList: (v: string[]) => void, id: string) {
@@ -77,7 +87,7 @@ export function ProposeTradeForm({ teams, defaultTeamId }: { teams: TeamOption[]
             }}
             className="mt-1 w-full rounded-md border border-border bg-surface px-2 py-1.5 text-sm"
           >
-            {teams.map((t) => (
+            {ownTeams.map((t) => (
               <option key={t.id} value={t.id}>
                 {t.name}
               </option>

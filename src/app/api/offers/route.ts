@@ -2,9 +2,14 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getCurrentManager } from "@/lib/current-manager";
 import { notifyManagers } from "@/lib/notifications";
+import { isOfferParty, visibleOffersWhere } from "@/lib/trade-access";
 
 export async function GET() {
+  const manager = await getCurrentManager();
+  if (!manager) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+
   const offers = await prisma.offer.findMany({
+    where: visibleOffersWhere(manager),
     orderBy: { createdAt: "desc" },
     include: {
       sendingTeam: true,
@@ -12,18 +17,26 @@ export async function GET() {
       targetPlayer: true,
     },
   });
-  return NextResponse.json({ offers });
+  return NextResponse.json({
+    offers: offers.map((o) => (isOfferParty(o, manager) ? o : { ...o, message: null })),
+  });
 }
 
 export async function POST(req: Request) {
   const manager = await getCurrentManager();
-  if (!manager) return NextResponse.json({ error: "No current manager" }, { status: 400 });
+  if (!manager) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
 
   const body = await req.json();
   const { targetPlayerId, sendingTeamId, receivingTeamId, playersOffered, playersRequested, draftPicksOffered, message } = body;
 
   if (!sendingTeamId || !receivingTeamId) {
     return NextResponse.json({ error: "Both teams are required" }, { status: 400 });
+  }
+  if (!manager.teams.some((t) => t.id === sendingTeamId)) {
+    return NextResponse.json({ error: "You can only send offers from your own team" }, { status: 403 });
+  }
+  if (sendingTeamId === receivingTeamId) {
+    return NextResponse.json({ error: "Pick a different team to send the offer to" }, { status: 400 });
   }
 
   const offer = await prisma.offer.create({

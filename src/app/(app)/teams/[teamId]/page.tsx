@@ -7,11 +7,13 @@ import { KeeperYearBadge } from "@/components/keepers/KeeperYearBadge";
 import { formatCost, timeAgo, PLAYER_TAG_LABEL } from "@/lib/format";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { getCurrentManager } from "@/lib/current-manager";
+import { visibleTradesWhere } from "@/lib/trade-access";
 
 export const dynamic = "force-dynamic";
 
 export default async function TeamDetailPage({ params }: { params: Promise<{ teamId: string }> }) {
-  const { teamId } = await params;
+  const [{ teamId }, viewer] = await Promise.all([params, getCurrentManager()]);
 
   const team = await prisma.team.findUnique({
     where: { id: teamId },
@@ -33,7 +35,9 @@ export default async function TeamDetailPage({ params }: { params: Promise<{ tea
       include: { players: { include: { player: true } } },
     }),
     prisma.trade.findMany({
-      where: { OR: [{ teamAId: teamId }, { teamBId: teamId }] },
+      // Another team's open negotiations are private to them - only show
+      // the ones this viewer is allowed to see (accepted, or their own).
+      where: { AND: [{ OR: [{ teamAId: teamId }, { teamBId: teamId }] }, visibleTradesWhere(viewer)] },
       orderBy: { updatedAt: "desc" },
       include: { teamA: true, teamB: true },
     }),

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { getCurrentManager } from "@/lib/current-manager";
+import { visibleTradesWhere } from "@/lib/trade-access";
 
 export async function GET(req: NextRequest) {
   const q = req.nextUrl.searchParams.get("q")?.trim() ?? "";
@@ -7,6 +9,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ players: [], teams: [], managers: [], trades: [], dpudBets: [] });
   }
 
+  const viewer = await getCurrentManager();
   const [players, teams, managers, trades, dpudBets] = await Promise.all([
     prisma.player.findMany({
       where: { name: { contains: q, mode: "insensitive" } },
@@ -31,6 +34,7 @@ export async function GET(req: NextRequest) {
     }),
     prisma.trade.findMany({
       where: {
+        AND: visibleTradesWhere(viewer),
         OR: [
           { teamA: { name: { contains: q, mode: "insensitive" } } },
           { teamB: { name: { contains: q, mode: "insensitive" } } },

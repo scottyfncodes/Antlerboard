@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { getCurrentManager } from "@/lib/current-manager";
+import { isOfferParty, offerActionDenial, tradeActionDenial, visibleOffersWhere, visibleTradesWhere } from "@/lib/trade-access";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Card, EmptyState } from "@/components/ui/Card";
 import { Badge, PlayerTagBadge } from "@/components/ui/Badge";
@@ -12,10 +13,10 @@ export const dynamic = "force-dynamic";
 
 export default async function TradesPage() {
   const manager = await getCurrentManager();
-  const myTeamId = manager?.teams?.[0]?.id;
 
   const [trades, offers, openToDiscussPlayers] = await Promise.all([
     prisma.trade.findMany({
+      where: visibleTradesWhere(manager),
       orderBy: { updatedAt: "desc" },
       include: {
         teamA: true,
@@ -25,6 +26,7 @@ export default async function TradesPage() {
       },
     }),
     prisma.offer.findMany({
+      where: visibleOffersWhere(manager),
       orderBy: { createdAt: "desc" },
       include: { sendingTeam: true, receivingTeam: true, targetPlayer: true },
     }),
@@ -41,7 +43,7 @@ export default async function TradesPage() {
     <div className="space-y-8">
       <PageHeader
         title="Trade Center"
-        subtitle="Propose, counter, and track trades. Antlerboard records the C&A-side agreement - Yahoo roster moves still happen in Yahoo."
+        subtitle="Propose, counter, and track trades. Your negotiations are private to you and the other team - nobody else, commissioner included, sees them until a deal is accepted."
         actions={
           <Link href="/trades/new" className="rounded-md bg-antler px-3 py-2 text-sm font-medium text-[#1a1305] hover:bg-antler-strong">
             Propose a Trade
@@ -56,8 +58,8 @@ export default async function TradesPage() {
         ) : (
           <div className="space-y-3">
             {live.map((t) => {
-              const canRespond = !!myTeamId && (t.teamAId === myTeamId || t.teamBId === myTeamId) && t.proposerId !== manager?.id;
-              const canWithdraw = t.proposerId === manager?.id;
+              const canRespond = !!manager && t.status === "PROPOSED" && !tradeActionDenial(t, manager, "accept");
+              const canWithdraw = !!manager && t.status === "PROPOSED" && !tradeActionDenial(t, manager, "withdraw");
               return (
                 <Card key={t.id}>
                   <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -121,8 +123,8 @@ export default async function TradesPage() {
         ) : (
           <div className="space-y-3">
             {offers.map((o) => {
-              const canRespond = o.receivingTeamId === myTeamId && o.status === "PENDING";
-              const canWithdraw = o.sendingTeamId === myTeamId && o.status === "PENDING";
+              const canRespond = !!manager && !offerActionDenial(o, manager, "accept");
+              const canWithdraw = !!manager && !offerActionDenial(o, manager, "withdraw");
               return (
                 <Card key={o.id}>
                   <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -131,7 +133,7 @@ export default async function TradesPage() {
                         {o.sendingTeam.name} &rarr; {o.receivingTeam.name}
                         {o.targetPlayer && <span className="text-muted"> re: {o.targetPlayer.name}</span>}
                       </p>
-                      {o.message && <p className="text-sm text-muted mt-1 italic">&ldquo;{o.message}&rdquo;</p>}
+                      {o.message && isOfferParty(o, manager) && <p className="text-sm text-muted mt-1 italic">&ldquo;{o.message}&rdquo;</p>}
                     </div>
                     <div className="flex flex-col items-end gap-2">
                       <Badge
