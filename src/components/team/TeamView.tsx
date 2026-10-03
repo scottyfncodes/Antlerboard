@@ -8,6 +8,7 @@ import { PlayerRow, PlayerSection } from "@/components/players/PlayerRow";
 import { MyPlayerTagControl } from "@/components/my-team/MyPlayerTagControl";
 import { TeamHeader } from "./TeamHeader";
 import { groupHittersAndPitchers } from "@/lib/positions";
+import { visibleTradesWhere, type TradeViewer } from "@/lib/trade-access";
 import { formatCost, formatDateTime, timeAgo, PLAYER_TAG_LABEL } from "@/lib/format";
 
 export const TEAM_TABS = ["roster", "activity", "draft"] as const;
@@ -28,11 +29,13 @@ export async function TeamView({
   tab,
   basePath,
   isMine,
+  viewer,
 }: {
   teamId: string;
   tab: TeamTab;
   basePath: string;
   isMine: boolean;
+  viewer: TradeViewer | null;
 }) {
   const [team, season, roster, tags] = await Promise.all([
     prisma.team.findUnique({
@@ -124,13 +127,13 @@ export async function TeamView({
         </div>
       )}
 
-      {tab === "activity" && <TeamActivity teamId={teamId} />}
+      {tab === "activity" && <TeamActivity teamId={teamId} viewer={viewer} />}
       {tab === "draft" && <TeamDraft teamId={teamId} />}
     </div>
   );
 }
 
-async function TeamActivity({ teamId }: { teamId: string }) {
+async function TeamActivity({ teamId, viewer }: { teamId: string; viewer: TradeViewer | null }) {
   const [transactions, trades] = await Promise.all([
     prisma.transaction.findMany({
       where: { teams: { some: { teamId } } },
@@ -139,7 +142,9 @@ async function TeamActivity({ teamId }: { teamId: string }) {
       include: { players: { include: { player: true } } },
     }),
     prisma.trade.findMany({
-      where: { OR: [{ teamAId: teamId }, { teamBId: teamId }] },
+      // Another team's open negotiations are private to them - only show
+      // the ones this viewer is allowed to see (accepted, or their own).
+      where: { AND: [{ OR: [{ teamAId: teamId }, { teamBId: teamId }] }, visibleTradesWhere(viewer)] },
       orderBy: { updatedAt: "desc" },
       include: { teamA: true, teamB: true },
     }),

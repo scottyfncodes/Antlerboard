@@ -22,5 +22,5 @@ export default async function TeamDetailPage({
     redirect(sp.tab ? `/my-team?tab=${encodeURIComponent(sp.tab)}` : "/my-team");
   }
 
-  return <TeamView teamId={teamId} tab={parseTeamTab(sp.tab)} basePath={`/teams/${teamId}`} isMine={false} />;
+  return <TeamView teamId={teamId} tab={parseTeamTab(sp.tab)} basePath={`/teams/${teamId}`} isMine={false} viewer={manager} />;
 }

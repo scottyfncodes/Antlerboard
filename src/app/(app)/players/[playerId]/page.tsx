@@ -13,12 +13,14 @@ import {
   didPlayerResetKeeperClock,
 } from "@/lib/keeper-engine";
 import Link from "next/link";
+import { getCurrentManager } from "@/lib/current-manager";
+import { visibleTradesWhere } from "@/lib/trade-access";
 import { notFound } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
 export default async function PlayerProfilePage({ params }: { params: Promise<{ playerId: string }> }) {
-  const { playerId } = await params;
+  const [{ playerId }, viewer] = await Promise.all([params, getCurrentManager()]);
 
   const player = await prisma.player.findUnique({
     where: { id: playerId },
@@ -39,7 +41,7 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
       orderBy: { transaction: { date: "desc" } },
     }),
     prisma.tradeAsset.findMany({
-      where: { playerId },
+      where: { playerId, trade: visibleTradesWhere(viewer) },
       include: { trade: { include: { teamA: true, teamB: true } } },
     }),
     prisma.draftPick.findMany({

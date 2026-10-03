@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { getCurrentManager } from "@/lib/current-manager";
+import { visibleTradesWhere } from "@/lib/trade-access";
 import { CURRENT_SEASON_YEAR } from "@/lib/config";
 import { Card, EmptyState } from "@/components/ui/Card";
 import { Badge, DraftColorBadge, PlayerTagBadge } from "@/components/ui/Badge";
@@ -22,7 +23,7 @@ export default async function BoardPage() {
       }),
       prisma.season.findFirst({ where: { year: CURRENT_SEASON_YEAR } }),
       prisma.trade.findMany({
-        where: { status: { in: ["PROPOSED", "COUNTERED", "ACCEPTED"] } },
+        where: { AND: [{ status: { in: ["PROPOSED", "COUNTERED", "ACCEPTED"] } }, visibleTradesWhere(manager)] },
         orderBy: { updatedAt: "desc" },
         take: 4,
         include: { teamA: true, teamB: true },

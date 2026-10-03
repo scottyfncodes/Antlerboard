@@ -21,5 +21,5 @@ export default async function MyTeamPage({ searchParams }: { searchParams: Promi
     );
   }
 
-  return <TeamView teamId={team.id} tab={parseTeamTab(sp.tab)} basePath="/my-team" isMine />;
+  return <TeamView teamId={team.id} tab={parseTeamTab(sp.tab)} basePath="/my-team" isMine viewer={manager} />;
 }
