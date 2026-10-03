@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getCurrentManager } from "@/lib/current-manager";
-import { notifyManagers } from "@/lib/notifications";
-import { CURRENT_SEASON_YEAR } from "@/lib/config";
-import { isTradeParty, visibleTradesWhere } from "@/lib/trade-access";
+import { createTrade, counterTrade, TradeActionError } from "@/lib/trades";
+import { isTradeParty, resolveTradeAction, visibleTradesWhere } from "@/lib/trade-access";
+import type { TradeAssetInput } from "@/lib/trade-proposal";
 
 export async function GET() {
   const manager = await getCurrentManager();
@@ -13,94 +13,68 @@ export async function GET() {
     where: visibleTradesWhere(manager),
     orderBy: { updatedAt: "desc" },
     include: {
-      teamA: { include: { manager: true } },
-      teamB: { include: { manager: true } },
+      participants: { include: { team: { include: { manager: true } } } },
       proposer: true,
       assets: { include: { player: true } },
     },
   });
-  // Notes are part of the negotiation - only the two sides see them, even on an accepted trade.
+  // Notes are part of the negotiation - only the teams in it see them, even on an accepted trade.
   return NextResponse.json({
     trades: trades.map((t) => (isTradeParty(t, manager) ? t : { ...t, notes: null })),
   });
 }
 
-interface AssetInput {
-  fromTeamId: string;
-  toTeamId: string;
-  assetType: "PLAYER" | "DRAFT_PICK";
-  playerId?: string;
-  draftPickDescription?: string;
-}
-
+/**
+ * Propose a trade between 2-4 teams, or - with `counterOfTradeId` - counter
+ * an open trade you're a receiving party in. Your own team is always the
+ * proposing side; you can't propose a deal you aren't part of.
+ */
 export async function POST(req: Request) {
   const manager = await getCurrentManager();
   if (!manager) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
 
-  const body = await req.json();
-  const { teamAId, teamBId, notes, assets } = body as {
-    teamAId: string;
-    teamBId: string;
+  const body = (await req.json()) as {
+    teamIds?: string[];
+    proposingTeamId?: string;
+    assets?: TradeAssetInput[];
     notes?: string;
-    assets: AssetInput[];
+    counterOfTradeId?: string;
   };
-
-  if (!teamAId || !teamBId || teamAId === teamBId) {
-    return NextResponse.json({ error: "Two different teams are required" }, { status: 400 });
-  }
-  if (!assets || assets.length === 0) {
-    return NextResponse.json({ error: "At least one asset is required" }, { status: 400 });
-  }
-  // You can only propose trades your own team is part of, and every asset
-  // has to move between the two teams in the deal.
+  const teamIds = Array.isArray(body.teamIds) ? body.teamIds : [];
   const myTeamIds = manager.teams.map((t) => t.id);
-  if (!myTeamIds.includes(teamAId) && !myTeamIds.includes(teamBId)) {
+  const proposingTeamId = body.proposingTeamId ?? teamIds.find((id) => myTeamIds.includes(id));
+  if (!proposingTeamId || !myTeamIds.includes(proposingTeamId)) {
     return NextResponse.json({ error: "You can only propose trades involving your own team" }, { status: 403 });
   }
-  const parties = [teamAId, teamBId];
-  const badAsset = assets.some(
-    (a) => !parties.includes(a.fromTeamId) || !parties.includes(a.toTeamId) || a.fromTeamId === a.toTeamId
-  );
-  if (badAsset) {
-    return NextResponse.json({ error: "Every asset must move between the two teams in the trade" }, { status: 400 });
+
+  const input = {
+    proposerId: manager.id,
+    proposingTeamId,
+    teamIds,
+    assets: Array.isArray(body.assets) ? body.assets : [],
+    notes: body.notes,
+  };
+
+  try {
+    if (body.counterOfTradeId) {
+      const original = await prisma.trade.findUnique({
+        where: { id: body.counterOfTradeId },
+        select: { proposerId: true, status: true, participants: { select: { teamId: true, isProposer: true, response: true } } },
+      });
+      if (!original) return NextResponse.json({ error: "Trade not found" }, { status: 404 });
+      const access = resolveTradeAction(original, manager, "counter");
+      if (access.denial) return NextResponse.json({ error: access.denial.error }, { status: access.denial.status });
+      if (access.teamId !== proposingTeamId) {
+        return NextResponse.json({ error: "Counter from the team that's in the original trade" }, { status: 400 });
+      }
+      const trade = await counterTrade(body.counterOfTradeId, input);
+      return NextResponse.json({ trade });
+    }
+
+    const trade = await createTrade(input);
+    return NextResponse.json({ trade });
+  } catch (err) {
+    if (err instanceof TradeActionError) return NextResponse.json({ error: err.message }, { status: 400 });
+    throw err;
   }
-
-  const season = await prisma.season.findFirst({ where: { year: CURRENT_SEASON_YEAR } });
-  if (!season) return NextResponse.json({ error: "No current season" }, { status: 500 });
-
-  const trade = await prisma.trade.create({
-    data: {
-      seasonId: season.id,
-      seasonYear: CURRENT_SEASON_YEAR,
-      teamAId,
-      teamBId,
-      proposerId: manager.id,
-      notes,
-      status: "PROPOSED",
-      assets: {
-        create: assets.map((a) => ({
-          fromTeamId: a.fromTeamId,
-          toTeamId: a.toTeamId,
-          assetType: a.assetType,
-          playerId: a.playerId,
-          draftPickDescription: a.draftPickDescription,
-        })),
-      },
-    },
-    include: { teamA: { include: { manager: true } }, teamB: { include: { manager: true } } },
-  });
-
-  const receivingManagerId =
-    trade.teamA.managerId === manager.id ? trade.teamB.managerId : trade.teamA.managerId;
-
-  await notifyManagers([receivingManagerId], {
-    type: "TRADE_PROPOSED",
-    title: `Trade proposed: ${trade.teamA.name} ↔ ${trade.teamB.name}`,
-    body: notes || "A new trade proposal is waiting on you in the Trade Center.",
-    link: "/trades",
-    relatedEntityType: "Trade",
-    relatedEntityId: trade.id,
-  });
-
-  return NextResponse.json({ trade });
 }

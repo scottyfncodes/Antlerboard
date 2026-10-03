@@ -2,41 +2,59 @@ import { describe, it, expect, beforeEach, afterAll } from "vitest";
 import { prisma } from "./db";
 import { makeLeagueWithSeason, makeManagerAndTeam, makePlayer, resetDatabase } from "./test-helpers";
 import {
+  canPerformTradeAction,
   isTradeParty,
   offerActionDenial,
-  tradeActionDenial,
+  resolveTradeAction,
   visibleOffersWhere,
   visibleTradesWhere,
 } from "./trade-access";
 
 const viewer = (id: string, ...teamIds: string[]) => ({ id, teams: teamIds.map((t) => ({ id: t })) });
-const trade = (status = "PROPOSED") => ({ teamAId: "teamA", teamBId: "teamB", proposerId: "mgrA", status });
+/** A proposed by mgrA; B and (optionally) C are the other sides. */
+const trade = (status = "PROPOSED", extra: { teamId: string; response: string }[] = []) => ({
+  proposerId: "mgrA",
+  status,
+  participants: [
+    { teamId: "teamA", isProposer: true, response: "ACCEPTED" },
+    { teamId: "teamB", isProposer: false, response: "PENDING" },
+    ...extra.map((e) => ({ ...e, isProposer: false })),
+  ],
+});
 const offer = (status = "PENDING") => ({ sendingTeamId: "teamA", receivingTeamId: "teamB", sendingManagerId: "mgrA", status });
 
-describe("tradeActionDenial", () => {
-  it("lets only the other side respond", () => {
-    expect(tradeActionDenial(trade(), viewer("mgrB", "teamB"), "accept")).toBeNull();
-    expect(tradeActionDenial(trade(), viewer("mgrB", "teamB"), "reject")).toBeNull();
-    expect(tradeActionDenial(trade(), viewer("mgrB", "teamB"), "counter")).toBeNull();
-    expect(tradeActionDenial(trade(), viewer("mgrA", "teamA"), "accept")?.status).toBe(403);
+describe("resolveTradeAction", () => {
+  it("lets only the other sides respond, acting as their own team", () => {
+    expect(resolveTradeAction(trade(), viewer("mgrB", "teamB"), "accept")).toEqual({ teamId: "teamB" });
+    expect(resolveTradeAction(trade(), viewer("mgrB", "teamB"), "reject")).toEqual({ teamId: "teamB" });
+    expect(resolveTradeAction(trade(), viewer("mgrB", "teamB"), "counter")).toEqual({ teamId: "teamB" });
+    expect(resolveTradeAction(trade(), viewer("mgrA", "teamA"), "accept").denial?.status).toBe(403);
   });
 
   it("lets only the proposer withdraw", () => {
-    expect(tradeActionDenial(trade(), viewer("mgrA", "teamA"), "withdraw")).toBeNull();
-    expect(tradeActionDenial(trade(), viewer("mgrB", "teamB"), "withdraw")?.status).toBe(403);
+    expect(resolveTradeAction(trade(), viewer("mgrA", "teamA"), "withdraw").denial).toBeUndefined();
+    expect(resolveTradeAction(trade(), viewer("mgrB", "teamB"), "withdraw").denial?.status).toBe(403);
   });
 
   it("treats outsiders - including the commissioner - as if the trade doesn't exist", () => {
-    const commissioner = viewer("commish", "teamC");
+    const commissioner = viewer("commish", "teamZ");
     for (const action of ["accept", "reject", "counter", "withdraw"] as const) {
-      expect(tradeActionDenial(trade(), commissioner, action)).toEqual({ status: 404, error: "Trade not found" });
+      expect(resolveTradeAction(trade(), commissioner, action).denial).toEqual({ status: 404, error: "Trade not found" });
     }
   });
 
   it("refuses to act on a trade that is no longer open", () => {
     for (const status of ["ACCEPTED", "REJECTED", "WITHDRAWN", "COUNTERED"]) {
-      expect(tradeActionDenial(trade(status), viewer("mgrB", "teamB"), "accept")?.status).toBe(409);
+      expect(resolveTradeAction(trade(status), viewer("mgrB", "teamB"), "accept").denial?.status).toBe(409);
     }
+  });
+
+  it("in a three-team trade, a team that already accepted can't accept again but can still back out", () => {
+    const t = trade("PROPOSED", [{ teamId: "teamC", response: "ACCEPTED" }]);
+    expect(resolveTradeAction(t, viewer("mgrC", "teamC"), "accept").denial?.status).toBe(409);
+    expect(resolveTradeAction(t, viewer("mgrC", "teamC"), "reject")).toEqual({ teamId: "teamC" });
+    expect(canPerformTradeAction(t, viewer("mgrB", "teamB"), "accept")).toBe(true);
+    expect(canPerformTradeAction(t, null, "accept")).toBe(false);
   });
 });
 
@@ -52,10 +70,12 @@ describe("offerActionDenial", () => {
 });
 
 describe("isTradeParty", () => {
-  it("is false for a missing viewer or an uninvolved team", () => {
-    expect(isTradeParty(trade(), null)).toBe(false);
-    expect(isTradeParty(trade(), viewer("commish", "teamC"))).toBe(false);
-    expect(isTradeParty(trade(), viewer("mgrB", "teamB"))).toBe(true);
+  it("covers every team in the deal and nobody else", () => {
+    const t = trade("PROPOSED", [{ teamId: "teamC", response: "PENDING" }]);
+    expect(isTradeParty(t, null)).toBe(false);
+    expect(isTradeParty(t, viewer("commish", "teamZ"))).toBe(false);
+    expect(isTradeParty(t, viewer("mgrB", "teamB"))).toBe(true);
+    expect(isTradeParty(t, viewer("mgrC", "teamC"))).toBe(true);
   });
 });
 
@@ -74,10 +94,14 @@ describe("visibility filters against the database", () => {
         data: {
           seasonId: season.id,
           seasonYear: season.year,
-          teamAId: a.team.id,
-          teamBId: b.team.id,
           proposerId: a.manager.id,
           status,
+          participants: {
+            create: [
+              { teamId: a.team.id, isProposer: true, response: "ACCEPTED" },
+              { teamId: b.team.id, response: status === "ACCEPTED" ? "ACCEPTED" : "PENDING" },
+            ],
+          },
           assets: { create: [{ fromTeamId: a.team.id, toTeamId: b.team.id, assetType: "PLAYER", playerId: player.id }] },
         },
       });

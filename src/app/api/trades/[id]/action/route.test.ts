@@ -28,10 +28,14 @@ async function setup() {
     data: {
       seasonId: season.id,
       seasonYear: season.year,
-      teamAId: a.team.id,
-      teamBId: b.team.id,
       proposerId: a.manager.id,
       status: "PROPOSED",
+      participants: {
+        create: [
+          { teamId: a.team.id, isProposer: true, response: "ACCEPTED" },
+          { teamId: b.team.id, response: "PENDING" },
+        ],
+      },
       assets: { create: [{ fromTeamId: a.team.id, toTeamId: b.team.id, assetType: "PLAYER", playerId: player.id }] },
     },
   });

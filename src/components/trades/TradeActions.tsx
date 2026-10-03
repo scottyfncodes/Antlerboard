@@ -1,35 +1,48 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 export function TradeActions({
   tradeId,
-  canRespond,
+  canAccept,
+  canReject,
+  canCounter,
   canWithdraw,
 }: {
   tradeId: string;
-  canRespond: boolean;
+  canAccept: boolean;
+  canReject: boolean;
+  canCounter: boolean;
   canWithdraw: boolean;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  async function act(action: string) {
+  async function act(action: "accept" | "reject" | "withdraw") {
     setBusy(true);
-    await fetch(`/api/trades/${tradeId}/action`, {
+    setError(null);
+    const res = await fetch(`/api/trades/${tradeId}/action`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action }),
     });
     setBusy(false);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setError(data.error ?? "Something went wrong.");
+    }
     router.refresh();
   }
 
+  if (!canAccept && !canReject && !canCounter && !canWithdraw) return null;
+
   return (
-    <div className="flex gap-2">
-      {canRespond && (
-        <>
+    <div className="flex flex-col items-end gap-1">
+      <div className="flex flex-wrap justify-end gap-2">
+        {canAccept && (
           <button
             disabled={busy}
             onClick={() => act("accept")}
@@ -37,13 +50,16 @@ export function TradeActions({
           >
             Accept
           </button>
-          <button
-            disabled={busy}
-            onClick={() => act("counter")}
+        )}
+        {canCounter && (
+          <Link
+            href={`/trades/new?counter=${tradeId}`}
             className="rounded-md border border-border px-2.5 py-1 text-xs hover:border-antler-dim"
           >
             Counter
-          </button>
+          </Link>
+        )}
+        {canReject && (
           <button
             disabled={busy}
             onClick={() => act("reject")}
@@ -51,17 +67,18 @@ export function TradeActions({
           >
             Reject
           </button>
-        </>
-      )}
-      {canWithdraw && (
-        <button
-          disabled={busy}
-          onClick={() => act("withdraw")}
-          className="rounded-md border border-border px-2.5 py-1 text-xs text-muted hover:text-foreground"
-        >
-          Withdraw
-        </button>
-      )}
+        )}
+        {canWithdraw && (
+          <button
+            disabled={busy}
+            onClick={() => act("withdraw")}
+            className="rounded-md border border-border px-2.5 py-1 text-xs text-muted hover:text-foreground"
+          >
+            Withdraw
+          </button>
+        )}
+      </div>
+      {error && <p className="text-xs text-red">{error}</p>}
     </div>
   );
 }

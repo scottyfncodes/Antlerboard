@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getCurrentManager } from "@/lib/current-manager";
 import { visibleTradesWhere } from "@/lib/trade-access";
+import { tradeTitle } from "@/lib/trades";
 
 export async function GET(req: NextRequest) {
   const q = req.nextUrl.searchParams.get("q")?.trim() ?? "";
@@ -35,13 +36,10 @@ export async function GET(req: NextRequest) {
     prisma.trade.findMany({
       where: {
         AND: visibleTradesWhere(viewer),
-        OR: [
-          { teamA: { name: { contains: q, mode: "insensitive" } } },
-          { teamB: { name: { contains: q, mode: "insensitive" } } },
-        ],
+        participants: { some: { team: { name: { contains: q, mode: "insensitive" } } } },
       },
       take: 5,
-      include: { teamA: true, teamB: true },
+      include: { participants: { include: { team: true } } },
     }),
     prisma.dpudBet.findMany({
       where: { title: { contains: q, mode: "insensitive" } },
@@ -68,7 +66,7 @@ export async function GET(req: NextRequest) {
     })),
     trades: trades.map((t) => ({
       id: t.id,
-      label: `${t.teamA.name} ↔ ${t.teamB.name}`,
+      label: tradeTitle(t.participants),
       status: t.status,
     })),
     dpudBets: dpudBets.map((b) => ({ id: b.id, title: b.title, status: b.status })),

@@ -9,6 +9,7 @@ import { MyPlayerTagControl } from "@/components/my-team/MyPlayerTagControl";
 import { TeamHeader } from "./TeamHeader";
 import { groupHittersAndPitchers } from "@/lib/positions";
 import { visibleTradesWhere, type TradeViewer } from "@/lib/trade-access";
+import { tradeTitle } from "@/lib/trades";
 import { formatCost, formatDateTime, timeAgo, PLAYER_TAG_LABEL } from "@/lib/format";
 
 export const TEAM_TABS = ["roster", "activity", "draft"] as const;
@@ -144,9 +145,9 @@ async function TeamActivity({ teamId, viewer }: { teamId: string; viewer: TradeV
     prisma.trade.findMany({
       // Another team's open negotiations are private to them - only show
       // the ones this viewer is allowed to see (accepted, or their own).
-      where: { AND: [{ OR: [{ teamAId: teamId }, { teamBId: teamId }] }, visibleTradesWhere(viewer)] },
+      where: { AND: [{ participants: { some: { teamId } } }, visibleTradesWhere(viewer)] },
       orderBy: { updatedAt: "desc" },
-      include: { teamA: true, teamB: true },
+      include: { participants: { include: { team: true } } },
     }),
   ]);
 
@@ -177,7 +178,7 @@ async function TeamActivity({ teamId, viewer }: { teamId: string; viewer: TradeV
               <li key={t.id}>
                 <Link href="/trades" className="flex items-center justify-between gap-3 px-3 py-2.5 hover:bg-surface-raised">
                   <span className="min-w-0 truncate">
-                    {t.teamA.name} &harr; {t.teamB.name}
+                    {tradeTitle(t.participants)}
                   </span>
                   <Badge variant={t.status === "ACCEPTED" ? "green" : "default"}>{t.status}</Badge>
                 </Link>

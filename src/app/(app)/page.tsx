@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { getCurrentManager } from "@/lib/current-manager";
 import { visibleTradesWhere } from "@/lib/trade-access";
+import { tradeTitle } from "@/lib/trades";
 import { CURRENT_SEASON_YEAR } from "@/lib/config";
 import { Card, EmptyState } from "@/components/ui/Card";
 import { Badge, DraftColorBadge, PlayerTagBadge } from "@/components/ui/Badge";
@@ -26,7 +27,7 @@ export default async function BoardPage() {
         where: { AND: [{ status: { in: ["PROPOSED", "COUNTERED", "ACCEPTED"] } }, visibleTradesWhere(manager)] },
         orderBy: { updatedAt: "desc" },
         take: 4,
-        include: { teamA: true, teamB: true },
+        include: { participants: { include: { team: true } } },
       }),
       prisma.transaction.findMany({
         orderBy: { date: "desc" },
@@ -224,7 +225,7 @@ export default async function BoardPage() {
               {recentTrades.map((t) => (
                 <li key={t.id} className="text-sm flex items-center justify-between">
                   <span>
-                    {t.teamA.name} &harr; {t.teamB.name}
+                    {tradeTitle(t.participants)}
                   </span>
                   <Badge variant={t.status === "ACCEPTED" ? "green" : "default"}>{t.status}</Badge>
                 </li>

@@ -1,12 +1,13 @@
 import { prisma } from "@/lib/db";
 import { getCurrentManager } from "@/lib/current-manager";
-import { isOfferParty, offerActionDenial, tradeActionDenial, visibleOffersWhere, visibleTradesWhere } from "@/lib/trade-access";
+import { isOfferParty, offerActionDenial, visibleOffersWhere, visibleTradesWhere } from "@/lib/trade-access";
+import { tradeTitle } from "@/lib/trades";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Card, EmptyState } from "@/components/ui/Card";
 import { Badge, PlayerTagBadge } from "@/components/ui/Badge";
-import { TradeActions } from "@/components/trades/TradeActions";
+import { TradeCard } from "@/components/trades/TradeCard";
 import { OfferActions } from "@/components/trades/OfferActions";
-import { PLAYER_TAG_LABEL, timeAgo } from "@/lib/format";
+import { PLAYER_TAG_LABEL } from "@/lib/format";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
@@ -19,8 +20,7 @@ export default async function TradesPage() {
       where: visibleTradesWhere(manager),
       orderBy: { updatedAt: "desc" },
       include: {
-        teamA: true,
-        teamB: true,
+        participants: { include: { team: true } },
         proposer: true,
         assets: { include: { player: true } },
       },
@@ -36,14 +36,15 @@ export default async function TradesPage() {
     }),
   ]);
 
-  const live = trades.filter((t) => t.status === "PROPOSED" || t.status === "COUNTERED");
-  const history = trades.filter((t) => t.status === "ACCEPTED" || t.status === "REJECTED" || t.status === "WITHDRAWN");
+  // A COUNTERED trade has been replaced by its counter-offer, so it's history.
+  const live = trades.filter((t) => t.status === "PROPOSED");
+  const history = trades.filter((t) => t.status !== "PROPOSED");
 
   return (
     <div className="space-y-8">
       <PageHeader
         title="Trade Center"
-        subtitle="Propose, counter, and track trades. Your negotiations are private to you and the other team - nobody else, commissioner included, sees them until a deal is accepted."
+        subtitle="Propose, counter, and track trades - with one team or up to three at once. Your negotiations are private to the teams in them - nobody else, commissioner included, sees them until a deal is accepted."
         actions={
           <Link href="/trades/new" className="rounded-md bg-antler px-3 py-2 text-sm font-medium text-[#1a1305] hover:bg-antler-strong">
             Propose a Trade
@@ -57,37 +58,9 @@ export default async function TradesPage() {
           <EmptyState title="No open proposals" />
         ) : (
           <div className="space-y-3">
-            {live.map((t) => {
-              const canRespond = !!manager && t.status === "PROPOSED" && !tradeActionDenial(t, manager, "accept");
-              const canWithdraw = !!manager && t.status === "PROPOSED" && !tradeActionDenial(t, manager, "withdraw");
-              return (
-                <Card key={t.id}>
-                  <div className="flex items-start justify-between gap-4 flex-wrap">
-                    <div>
-                      <p className="font-medium">
-                        {t.teamA.name} &harr; {t.teamB.name}
-                      </p>
-                      <p className="text-xs text-muted mt-0.5">
-                        Proposed by {t.proposer.name} · {timeAgo(t.createdAt)}
-                      </p>
-                      <ul className="mt-2 text-sm space-y-0.5">
-                        {t.assets.map((a) => (
-                          <li key={a.id}>
-                            {a.player?.name ?? a.draftPickDescription} &rarr;{" "}
-                            {a.toTeamId === t.teamAId ? t.teamA.name : t.teamB.name}
-                          </li>
-                        ))}
-                      </ul>
-                      {t.notes && <p className="text-sm text-muted mt-2 italic">&ldquo;{t.notes}&rdquo;</p>}
-                    </div>
-                    <div className="flex flex-col items-end gap-2">
-                      <Badge variant={t.status === "COUNTERED" ? "yellow" : "default"}>{t.status}</Badge>
-                      <TradeActions tradeId={t.id} canRespond={canRespond} canWithdraw={canWithdraw && !canRespond} />
-                    </div>
-                  </div>
-                </Card>
-              );
-            })}
+            {live.map((t) => (
+              <TradeCard key={t.id} trade={t} viewer={manager} />
+            ))}
           </div>
         )}
       </section>
@@ -159,9 +132,7 @@ export default async function TradesPage() {
           <ul className="divide-y divide-border rounded-xl border border-border overflow-hidden">
             {history.map((t) => (
               <li key={t.id} className="px-4 py-3 flex items-center justify-between text-sm">
-                <span>
-                  {t.teamA.name} &harr; {t.teamB.name}
-                </span>
+                <span className="min-w-0 truncate">{tradeTitle(t.participants)}</span>
                 <Badge variant={t.status === "ACCEPTED" ? "green" : "default"}>{t.status}</Badge>
               </li>
             ))}

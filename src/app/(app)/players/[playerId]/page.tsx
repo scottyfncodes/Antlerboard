@@ -15,6 +15,7 @@ import {
 import Link from "next/link";
 import { getCurrentManager } from "@/lib/current-manager";
 import { visibleTradesWhere } from "@/lib/trade-access";
+import { tradeTitle } from "@/lib/trades";
 import { notFound } from "next/navigation";
 
 export const dynamic = "force-dynamic";
@@ -42,7 +43,7 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
     }),
     prisma.tradeAsset.findMany({
       where: { playerId, trade: visibleTradesWhere(viewer) },
-      include: { trade: { include: { teamA: true, teamB: true } } },
+      include: { trade: { include: { participants: { include: { team: true } } } } },
     }),
     prisma.draftPick.findMany({
       where: { playerId },
@@ -185,7 +186,7 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
               {tradeAssets.map((a) => (
                 <li key={a.id} className="flex items-center justify-between">
                   <span>
-                    {a.trade.teamA.name} ↔ {a.trade.teamB.name}
+                    {tradeTitle(a.trade.participants)}
                   </span>
                   <Badge variant={a.trade.status === "ACCEPTED" ? "green" : "default"}>{a.trade.status}</Badge>
                 </li>
