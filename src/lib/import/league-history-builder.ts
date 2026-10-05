@@ -35,7 +35,7 @@ import {
 } from "../keeper-engine";
 import type { AuctionRow, ManagerSeasonBlock, YahooTransaction } from "./league-history-types";
 import type { ParsedTrade } from "./types";
-import { matchPlayerName, normalizePlayerName } from "./player-names";
+import { editDistance, matchPlayerName, normalizePlayerName } from "./player-names";
 import type { FranchiseResolver } from "./team-aliases";
 
 // ---------------------------------------------------------------------------
@@ -248,11 +248,16 @@ class PlayerRegistry {
     if (m) return m.value;
     const n = normalizePlayerName(raw);
     if (n.fullKey.split(" ").length === 1) {
-      // "Shaw" / "Gunnar": unique last name, then unique first name, on this roster only.
+      // "Shaw" / "Gunnar": unique last name, then unique first name, on this
+      // roster only; a one-letter typo in a longer last name ("Dovall") too.
       const byLast = candidates.filter((p) => normalizePlayerName(p.name).lastKey === n.fullKey);
       if (byLast.length === 1) return byLast[0];
       const byFirst = candidates.filter((p) => normalizePlayerName(p.name).fullKey.split(" ")[0] === n.fullKey);
       if (byFirst.length === 1) return byFirst[0];
+      if (n.fullKey.length >= 5) {
+        const near = candidates.filter((p) => editDistance(normalizePlayerName(p.name).lastKey, n.fullKey) <= 1);
+        if (near.length === 1) return near[0];
+      }
     }
     return null;
   }
@@ -532,6 +537,12 @@ export function buildLeagueHistory(input: BuilderInput): LeagueHistoryPreview {
         } else if (found && found.where === "elsewhere") {
           player = found.player;
           const holder = franchiseHolding(prevRosters, player.key)!;
+          // The workbook's end-of-year column is maintained into the
+          // offseason, so if the keeping team's prior-season list already
+          // names the player, the move is an offseason trade that simply
+          // never made the trade log - not a mystery.
+          const priorEoy = (blocksBySeason.get(season - 1) ?? []).find((b) => b.managerSheetName === k.franchise)?.eoyRoster ?? [];
+          const corroborated = priorEoy.some((row) => matchPlayerName(row.name, [{ name: player.name, value: true }]) !== null);
           events.push({
             playerKey: player.key,
             kind: "TRADED",
@@ -540,7 +551,11 @@ export function buildLeagueHistory(input: BuilderInput): LeagueHistoryPreview {
             franchise: k.franchise,
             preseason: true,
             sourceRef: k.ref,
-            flags: [`Kept by ${k.franchise} in ${season} but finished ${season - 1} with ${holder}; no trade recorded - treated as an unrecorded offseason trade.`],
+            flags: [
+              corroborated
+                ? `Offseason trade missing from the trade log: ${holder} -> ${k.franchise} before the ${season} deadline (${k.franchise}'s ${season - 1} end-of-year roster already lists the player). Clock carried.`
+                : `Kept by ${k.franchise} in ${season} but finished ${season - 1} with ${holder}; nothing in Yahoo, the trade log or the end-of-year rosters explains the move - treated as an unrecorded offseason trade.`,
+            ],
           });
         } else {
           player = found?.player ?? registry.resolveOrCreateByName(k.name, { positions: k.positions, mlbTeam: k.mlbTeam, sourceRef: k.ref });
