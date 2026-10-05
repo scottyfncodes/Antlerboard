@@ -52,8 +52,7 @@ model LeagueSettings {
   leagueId                  String   @unique
   keeperSlotCount           Int      @default(10)
   maxConsecutiveKeeperYears Int      @default(5)
-  keeperCostIncrementPerYear Int     @default(1)
-  teamCount                 Int      @default(10)
+  teamCount                 Int      @default(12)
   updatedAt                 DateTime @updatedAt
 }
 
@@ -381,12 +380,15 @@ enum AcquisitionMethod {
   DRAFT
   WAIVER
   FREE_AGENT
+  // An FYPD prospect called up to the active roster. Free on Yahoo, but the
+  // keeper clock starts here with an assumed $4 base (see config.ts).
+  FYPD
   TRADE
 }
 
 // One row per time a player entered a team's roster from *outside* the
-// league's C&A keeper chain (DRAFT / WAIVER / FREE_AGENT), or moved between
-// two rostered teams via TRADE. DRAFT/WAIVER/FREE_AGENT start a brand new
+// league's C&A keeper chain (DRAFT / WAIVER / FREE_AGENT / FYPD), or moved
+// between two rostered teams via TRADE. The first four start a brand new
 // keeper "stint" (tenure resets to zero); TRADE carries the existing stint's
 // tenure and cost forward untouched. See src/lib/keeper-engine.ts.
 model Acquisition {
@@ -404,10 +406,16 @@ model Acquisition {
   draftRound Int?
   draftPick  Int?
   notes     String?
+  // Where this row came from, when it was imported rather than entered live
+  // (e.g. "yahoo:404.l.3033.tr.763", "auction:2024", "workbook:Scott/2026").
+  // Lets a re-import find and refresh its own rows without touching
+  // commissioner-entered ones.
+  sourceRef String?
   createdAt DateTime          @default(now())
 
   @@index([playerId])
   @@index([teamId])
+  @@index([sourceRef])
 }
 
 enum KeeperStatus {

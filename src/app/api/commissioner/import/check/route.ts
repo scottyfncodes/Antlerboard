@@ -14,7 +14,7 @@ interface RawRow {
   draftPick?: string;
 }
 
-const VALID_METHODS = new Set(["DRAFT", "WAIVER", "FREE_AGENT", "TRADE"]);
+const VALID_METHODS = new Set(["DRAFT", "WAIVER", "FREE_AGENT", "FYPD", "TRADE"]);
 
 export async function POST(req: Request) {
   if (!(await requireCommissioner())) {
@@ -39,7 +39,7 @@ export async function POST(req: Request) {
       if (!teamName) errors.push("Missing team name");
       else if (!teamByName.has(teamName.toLowerCase())) errors.push(`Unknown C&A team "${teamName}"`);
       if (!row.season || Number.isNaN(season)) errors.push("Season must be a number");
-      if (!method || !VALID_METHODS.has(method)) errors.push("Method must be DRAFT, WAIVER, FREE_AGENT, or TRADE");
+      if (!method || !VALID_METHODS.has(method)) errors.push("Method must be DRAFT, WAIVER, FREE_AGENT, FYPD, or TRADE");
       if (row.cost && Number.isNaN(cost)) errors.push("Cost must be a number");
 
       let conflict: string | undefined;

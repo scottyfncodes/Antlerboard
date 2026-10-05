@@ -2,12 +2,14 @@ import { describe, it, expect } from "vitest";
 import {
   getKeeperYear,
   getKeeperCost,
+  getProjectedKeeperCost,
   getYearsRemaining,
   getForcedRedraftSeason,
   isKeeperEligible,
   didPlayerResetKeeperClock,
   getContinuousKeeperHistory,
   buildStints,
+  computeKeeperCost,
   type PlayerHistoryEvent,
 } from "./keeper-engine";
 
@@ -18,36 +20,37 @@ const drafted2021: PlayerHistoryEvent[] = [
 describe("keeper-engine: basic year progression", () => {
   it("treats the acquisition season as keeper year 0, not a keeper year", () => {
     expect(getKeeperYear(drafted2021, 2021)).toBe(0);
+    expect(getKeeperCost(drafted2021, 2021)).toBe(20);
   });
 
-  it("year 1: the season immediately after acquisition", () => {
+  it("year 1: the season immediately after acquisition costs base + 1", () => {
     expect(getKeeperYear(drafted2021, 2022)).toBe(1);
-    expect(getKeeperCost(drafted2021, 2022)).toBe(20);
+    expect(getKeeperCost(drafted2021, 2022)).toBe(21);
     expect(getYearsRemaining(drafted2021, 2022)).toBe(4);
   });
 
-  it("year 2", () => {
+  it("year 2 adds +3 (base + 4)", () => {
     expect(getKeeperYear(drafted2021, 2023)).toBe(2);
-    expect(getKeeperCost(drafted2021, 2023)).toBe(21);
+    expect(getKeeperCost(drafted2021, 2023)).toBe(24);
     expect(getYearsRemaining(drafted2021, 2023)).toBe(3);
   });
 
-  it("year 3", () => {
+  it("year 3 adds +5 (base + 9)", () => {
     expect(getKeeperYear(drafted2021, 2024)).toBe(3);
-    expect(getKeeperCost(drafted2021, 2024)).toBe(22);
+    expect(getKeeperCost(drafted2021, 2024)).toBe(29);
     expect(getYearsRemaining(drafted2021, 2024)).toBe(2);
   });
 
-  it("year 4 (visually flagged in the UI as the second-to-last year)", () => {
+  it("year 4 adds +7 (base + 16), visually flagged in the UI as the second-to-last year", () => {
     expect(getKeeperYear(drafted2021, 2025)).toBe(4);
-    expect(getKeeperCost(drafted2021, 2025)).toBe(23);
+    expect(getKeeperCost(drafted2021, 2025)).toBe(36);
     expect(getYearsRemaining(drafted2021, 2025)).toBe(1);
     expect(isKeeperEligible(drafted2021, 2025)).toBe(true);
   });
 
-  it("year 5 (max) - still eligible to be kept for this final year", () => {
+  it("year 5 (max) adds +9 (base + 25) - still eligible to be kept for this final year", () => {
     expect(getKeeperYear(drafted2021, 2026)).toBe(5);
-    expect(getKeeperCost(drafted2021, 2026)).toBe(24);
+    expect(getKeeperCost(drafted2021, 2026)).toBe(45);
     expect(getYearsRemaining(drafted2021, 2026)).toBe(0);
     expect(isKeeperEligible(drafted2021, 2026)).toBe(true);
   });
@@ -58,38 +61,50 @@ describe("keeper-engine: basic year progression", () => {
     expect(getKeeperYear(drafted2021, 2027)).toBe(6);
   });
 
-  it("matches the section-18 worked example exactly", () => {
-    // 2021 acquisition -> 2022 Keeper1 -> ... -> 2026 Keeper5 -> forced back into 2027 draft
-    for (const [season, expectedYear] of [
-      [2021, 0],
-      [2022, 1],
-      [2023, 2],
-      [2024, 3],
-      [2025, 4],
-      [2026, 5],
-    ] as const) {
-      expect(getKeeperYear(drafted2021, season)).toBe(expectedYear);
-    }
-    expect(getForcedRedraftSeason(drafted2021)).toBe(2027);
+  it("matches the league's own ladder on a real example ($66 -> 67, 70, 75, 82, 91)", () => {
+    expect([1, 2, 3, 4, 5].map((y) => computeKeeperCost(66, y))).toEqual([67, 70, 75, 82, 91]);
+  });
+
+  it("projects next season's keeper cost from the current season's stint", () => {
+    expect(getProjectedKeeperCost(drafted2021, 2022)).toBe(21);
+    expect(getProjectedKeeperCost(drafted2021, 2026)).toBe(45);
+    expect(getProjectedKeeperCost(drafted2021, 2027)).toBeNull(); // would be year 6
+    expect(getProjectedKeeperCost(drafted2021, 2021)).toBeNull(); // not rostered in 2020
   });
 });
 
-describe("keeper-engine: waiver acquisitions", () => {
+describe("keeper-engine: FAAB / waiver acquisitions", () => {
   const waiverPickup: PlayerHistoryEvent[] = [
     { type: "ACQUIRED", season: 2024, method: "WAIVER", cost: 4, teamId: "teamB" },
   ];
 
-  it("first keeper cost is waiver cost + 1", () => {
+  it("base price is the winning bid itself - first keeper year is bid + 1", () => {
+    expect(getKeeperCost(waiverPickup, 2024)).toBe(4);
     expect(getKeeperCost(waiverPickup, 2025)).toBe(5);
   });
 
-  it("acquisition-season cost reflects the raw waiver cost, not +1", () => {
-    expect(getKeeperCost(waiverPickup, 2024)).toBe(4);
+  it("cost climbs the same ladder afterwards", () => {
+    expect(getKeeperCost(waiverPickup, 2026)).toBe(8);
+    expect(getKeeperYear(waiverPickup, 2026)).toBe(2);
+  });
+});
+
+describe("keeper-engine: FYPD call-ups", () => {
+  const callUp: PlayerHistoryEvent[] = [
+    { type: "ACQUIRED", season: 2025, method: "FYPD", cost: 0, teamId: "teamC" },
+  ];
+
+  it("is free in the call-up season but keeps at the assumed $4 base + 1 = $5", () => {
+    expect(getKeeperCost(callUp, 2025)).toBe(0);
+    expect(getKeeperCost(callUp, 2026)).toBe(5);
+    expect(getKeeperCost(callUp, 2027)).toBe(8);
   });
 
-  it("cost progression continues normally in later keeper years", () => {
-    expect(getKeeperCost(waiverPickup, 2026)).toBe(6);
-    expect(getKeeperYear(waiverPickup, 2026)).toBe(2);
+  it("ignores whatever FAAB amount happened to be entered on Yahoo for the call-up", () => {
+    const paidFive: PlayerHistoryEvent[] = [
+      { type: "ACQUIRED", season: 2025, method: "FYPD", cost: 5, teamId: "teamC" },
+    ];
+    expect(getKeeperCost(paidFive, 2026)).toBe(5);
   });
 });
 
@@ -110,7 +125,7 @@ describe("keeper-engine: drop = complete reset", () => {
   });
 
   it("old tenure does not affect the new forced-redraft season", () => {
-    // Old stint (2022 draft) would have forced back in 2027; new stint
+    // Old stint (2022 draft) would have forced back in 2028; new stint
     // (2025 waiver) should force back in 2031.
     expect(getForcedRedraftSeason(droppedAndReacquired)).toBe(2031);
   });
@@ -124,32 +139,81 @@ describe("keeper-engine: drop = complete reset", () => {
   });
 
   it("has no keeper data for seasons between the drop and reacquisition gap", () => {
-    // Dropped exactly in 2025 and reacquired the same season in this
-    // fixture; a season strictly between two stints with a real gap
-    // should report null.
     const gapEvents: PlayerHistoryEvent[] = [
       { type: "ACQUIRED", season: 2021, method: "DRAFT", cost: 10, teamId: "teamA" },
       { type: "DROPPED", season: 2023 },
       { type: "ACQUIRED", season: 2025, method: "FREE_AGENT", cost: 1, teamId: "teamD" },
     ];
+    expect(getKeeperYear(gapEvents, 2023)).toBe(2); // kept into 2023, dropped during it
     expect(getKeeperYear(gapEvents, 2024)).toBeNull();
     expect(getKeeperCost(gapEvents, 2024)).toBeNull();
   });
 
-  it("preserves old keeper history in the full timeline as historical information", () => {
+  it("preserves old keeper history in the full timeline, through the season of the drop", () => {
     const history = getContinuousKeeperHistory(droppedAndReacquired, 2026);
     const stintIndexes = new Set(history.map((h) => h.stintIndex));
     expect(stintIndexes.size).toBe(2);
 
-    const oldStintSeasons = history
-      .filter((h) => h.stintIndex === 0)
-      .map((h) => h.season);
-    expect(oldStintSeasons).toEqual([2022, 2023, 2024]);
+    const oldStint = history.filter((h) => h.stintIndex === 0);
+    expect(oldStint.map((h) => h.season)).toEqual([2022, 2023, 2024, 2025]);
+    expect(oldStint.at(-1)?.droppedThisSeason).toBe(true);
+    expect(oldStint.at(-2)?.droppedThisSeason).toBe(false);
 
     const newStintSeasons = history
       .filter((h) => h.stintIndex === 1)
       .map((h) => h.season);
     expect(newStintSeasons).toEqual([2025, 2026]);
+  });
+
+  it("treats 'not kept into next season' as a drop recorded against the season just finished", () => {
+    const notKept: PlayerHistoryEvent[] = [
+      { type: "ACQUIRED", season: 2023, method: "DRAFT", cost: 12, teamId: "teamA" },
+      { type: "DROPPED", season: 2024, date: new Date("2024-12-31") },
+    ];
+    expect(getKeeperYear(notKept, 2024)).toBe(1);
+    expect(getKeeperYear(notKept, 2025)).toBeNull();
+    expect(getForcedRedraftSeason(notKept)).toBeNull();
+  });
+});
+
+describe("keeper-engine: dated events resolve in-season churn", () => {
+  const churn: PlayerHistoryEvent[] = [
+    { type: "ACQUIRED", season: 2023, method: "DRAFT", cost: 9, teamId: "teamA", date: new Date("2023-03-25") },
+    { type: "DROPPED", season: 2023, date: new Date("2023-06-10") },
+    { type: "ACQUIRED", season: 2023, method: "WAIVER", cost: 2, teamId: "teamB", date: new Date("2023-07-02") },
+  ];
+
+  it("the re-adding team owns the player for that season, at the new base cost", () => {
+    const stints = buildStints(churn);
+    expect(stints).toHaveLength(2);
+    expect(stints[0].endSeason).toBe(2023);
+    expect(stints[1].endSeason).toBeNull();
+    expect(getKeeperCost(churn, 2024)).toBe(3);
+    expect(getContinuousKeeperHistory(churn, 2024).filter((h) => h.season === 2023).map((h) => h.teamId)).toEqual([
+      "teamA",
+      "teamB",
+    ]);
+  });
+
+  it("a dated drop before a dated trade in the same season leaves the trade with nothing to apply to", () => {
+    const events: PlayerHistoryEvent[] = [
+      { type: "ACQUIRED", season: 2023, method: "DRAFT", cost: 9, teamId: "teamA", date: new Date("2023-03-25") },
+      { type: "DROPPED", season: 2023, date: new Date("2023-06-10") },
+      { type: "TRADED", season: 2023, teamId: "teamZ", date: new Date("2023-08-01") },
+    ];
+    const stints = buildStints(events);
+    expect(stints).toHaveLength(1);
+    expect(stints[0].teamBySeason.get(2023)).toBe("teamA");
+  });
+
+  it("undated events keep the legacy DROPPED -> ACQUIRED -> TRADED order", () => {
+    const events: PlayerHistoryEvent[] = [
+      { type: "TRADED", season: 2024, teamId: "teamB" },
+      { type: "ACQUIRED", season: 2024, method: "WAIVER", cost: 1, teamId: "teamA" },
+    ];
+    const stints = buildStints(events);
+    expect(stints).toHaveLength(1);
+    expect(stints[0].teamBySeason.get(2024)).toBe("teamB");
   });
 });
 
@@ -166,7 +230,7 @@ describe("keeper-engine: trades continue the clock instead of resetting it", () 
   });
 
   it("cost keeps progressing across the trade, unaffected by the team change", () => {
-    expect(getKeeperCost(tradedMidStint, 2025)).toBe(32);
+    expect(getKeeperCost(tradedMidStint, 2025)).toBe(39);
   });
 
   it("does not count as a clock reset", () => {
@@ -176,6 +240,9 @@ describe("keeper-engine: trades continue the clock instead of resetting it", () 
   it("reports the correct team for seasons before and after the trade", () => {
     const stints = buildStints(tradedMidStint);
     expect(stints).toHaveLength(1);
+    const history = getContinuousKeeperHistory(tradedMidStint, 2025);
+    expect(history.find((h) => h.season === 2023)?.teamId).toBe("teamA");
+    expect(history.find((h) => h.season === 2024)?.teamId).toBe("teamB");
   });
 });
 

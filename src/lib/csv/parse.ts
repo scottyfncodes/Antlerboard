@@ -56,7 +56,7 @@ export const IMPORT_FIELDS = [
   { key: "positions", label: "Positions (slash or comma separated)", required: false },
   { key: "teamName", label: "C&A Team Name", required: true },
   { key: "season", label: "Season Year", required: true },
-  { key: "method", label: "Acquisition Method (DRAFT/WAIVER/FREE_AGENT/TRADE)", required: true },
+  { key: "method", label: "Acquisition Method (DRAFT/WAIVER/FREE_AGENT/FYPD/TRADE)", required: true },
   { key: "cost", label: "Cost", required: false },
   { key: "draftRound", label: "Draft Round", required: false },
   { key: "draftPick", label: "Draft Pick", required: false },

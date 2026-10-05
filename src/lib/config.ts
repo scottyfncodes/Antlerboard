@@ -22,16 +22,46 @@ export const KEEPER_SLOT_COUNT = 10;
 export const MAX_CONSECUTIVE_KEEPER_YEARS = 5;
 
 /**
- * How keeper cost increases for each additional consecutive keeper year
- * beyond the first. The league's historical data does not unambiguously
- * fix an exact progression formula, so this is intentionally a single
- * configurable knob (linear increment) rather than a guessed formula.
- * A commissioner can adjust this constant (or override per-player via
- * commissioner mode) if C&A's actual convention turns out to differ.
+ * The keeper cost ladder, confirmed by the commissioner and by the league's
+ * own history (e.g. a $66 player kept at 67, 70, 75, 82): each consecutive
+ * keeper year adds the next step to the player's base price. Base price is
+ * the auction cost or the winning FAAB bid - there is no extra bump for a
+ * waiver pickup. Year 1 = base + 1, year 2 = base + 4, year 3 = base + 9,
+ * year 4 = base + 16, year 5 = base + 25. See keeperCostIncrement().
  */
-export const KEEPER_COST_INCREMENT_PER_YEAR = 1;
+export const KEEPER_COST_LADDER: readonly number[] = [1, 3, 5, 7, 9];
 
-export const DEFAULT_TEAM_COUNT = 10;
+/** Cumulative increase over base price for a given keeper year (1-5). */
+export function keeperCostIncrement(keeperYear: number): number {
+  let total = 0;
+  for (let y = 1; y <= keeperYear && y <= KEEPER_COST_LADDER.length; y++) {
+    total += KEEPER_COST_LADDER[y - 1];
+  }
+  return total;
+}
+
+/**
+ * FYPD (First-Year Player Draft) prospects are called up to the active
+ * roster for $0, but their keeper clock starts at the call-up with an
+ * assumed base of $4 - so the first year they're kept costs $5, then the
+ * normal ladder applies. See src/lib/keeper-engine.ts.
+ */
+export const FYPD_CALL_UP_BASE_COST = 4;
+
+export const DEFAULT_TEAM_COUNT = 12;
+
+/** Live auction budget per team each season, before keeper costs come off. */
+export const AUCTION_BUDGET = 300;
+
+/** In-season FAAB (free agent acquisition budget) per team per season. */
+export const FAAB_BUDGET = 200;
+export const FAAB_MIN_BID = 1;
+export const FAAB_PROCESSING_DAYS = ["Sunday", "Tuesday", "Thursday"] as const;
+
+/** Roster limits: active spots plus separate IL and NA (minor-league) slots. */
+export const ROSTER_ACTIVE_SLOTS = 27;
+export const ROSTER_IL_SLOTS = 5;
+export const ROSTER_NA_SLOTS = 4;
 
 /** The five-color draft cycle, in cycle order. */
 export const DRAFT_COLOR_CYCLE = ["RED", "ORANGE", "YELLOW", "GREEN", "BLUE"] as const;

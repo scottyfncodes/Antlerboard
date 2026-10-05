@@ -26,7 +26,7 @@ describe("keeper-sync (engine <-> database bridge)", () => {
     expect(records.map((r) => r.seasonYear)).toEqual([2021, 2022, 2023, 2024, 2025, 2026]);
     expect(records.map((r) => r.keeperYear)).toEqual([0, 1, 2, 3, 4, 5]);
     expect(records[records.length - 1].status).toBe("KEPT");
-    expect(records[records.length - 1].keeperCost).toBe(24); // 20 + (5-1)*1
+    expect(records[records.length - 1].keeperCost).toBe(45); // 20 + 25 (year 5 on the ladder)
   });
 
   it("reads DROP transactions back out as reset events", async () => {

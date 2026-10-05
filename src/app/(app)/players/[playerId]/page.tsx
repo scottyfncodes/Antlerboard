@@ -17,6 +17,13 @@ import { notFound } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
+const ACQUISITION_LABEL: Record<string, string> = {
+  DRAFT: "Drafted",
+  WAIVER: "Added via FAAB",
+  FREE_AGENT: "Signed as free agent",
+  FYPD: "Called up from FYPD",
+};
+
 export default async function PlayerProfilePage({ params }: { params: Promise<{ playerId: string }> }) {
   const { playerId } = await params;
 
@@ -137,10 +144,11 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
                     <span className="w-12 tabular text-muted">{row.season}</span>
                     <span className="flex-1">
                       {row.keeperYear === 0
-                        ? `${row.acquisitionMethod === "DRAFT" ? "Drafted" : row.acquisitionMethod === "WAIVER" ? "Added off waivers" : "Signed as free agent"}`
+                        ? ACQUISITION_LABEL[row.acquisitionMethod]
                         : row.status === "FORCED_BACK"
                           ? "Forced back into the draft"
                           : `Kept — Year ${row.keeperYear}`}
+                      {row.droppedThisSeason && <span className="text-muted"> · dropped during the season</span>}
                     </span>
                     <span className="tabular text-muted">{row.cost !== null ? formatCost(row.cost) : ""}</span>
                     {row.keeperYear >= 4 && row.status === "KEPT" && (

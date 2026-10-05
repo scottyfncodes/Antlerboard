@@ -139,7 +139,6 @@ export async function runSeed(): Promise<void> {
         create: {
           keeperSlotCount: KEEPER_SLOT_COUNT,
           maxConsecutiveKeeperYears: 5,
-          keeperCostIncrementPerYear: 1,
           teamCount: DEFAULT_TEAM_COUNT,
         },
       },
