@@ -39,12 +39,16 @@ export function normalizePlayerName(raw: string): NormalizedPlayerName {
   // "Juan Soto (NYM - OF)" / "Juan Soto NYM - OF" / "José Ramírez(Cle - 2B,3B)"
   s = s.replace(/\s*\([^)]*\)\s*$/, "");
   s = s.replace(/\s+[A-Z]{2,3}\s*-\s*[A-Z0-9,/ ]+$/, "");
+  // "Bobby Miller LAD" / "Shohei Ohtani SP": a bare trailing team or position
+  // token after at least two name tokens.
+  s = s.replace(/^((?:\S+\s+)+\S+?)\s+(?:[A-Z]{2,3}|[A-Z0-9]{1,2}B|SS|OF|DH|SP|RP|C)$/, "$1");
   s = s.replace(/\s+/g, " ").trim();
   const display = s;
 
   const clean = stripAccents(s)
     .toLowerCase()
-    .replace(/[.,'’`]/g, " ")
+    .replace(/['’`]/g, "") // Ke'Bryan -> kebryan, O'Neill -> oneill
+    .replace(/[.,]/g, " ")
     .replace(/[^a-z0-9\- ]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -53,7 +57,9 @@ export function normalizePlayerName(raw: string): NormalizedPlayerName {
   const tokens = clean.split(" ").filter((t) => t && !SUFFIXES.has(t));
   const abbreviated = tokens.length >= 2 && tokens[0].length === 1;
   const first = tokens[0] ?? "";
-  const last = tokens.length >= 2 ? tokens.slice(1).join(" ") : first;
+  // Last token only, so "C.J. Cron" and "C.Cron" agree ("cron"), as do
+  // "Leo De Vries" and "L. De Vries" ("vries").
+  const last = tokens.length >= 2 ? tokens[tokens.length - 1] : first;
 
   return {
     display,
