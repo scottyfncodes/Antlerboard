@@ -151,7 +151,8 @@ const PITCHER_POSITIONS = new Set(["SP", "RP", "P", "LHP", "RHP"]);
 function isPitcherPositions(positions: string[]): boolean | null {
   if (positions.length === 0) return null;
   const pitcher = positions.some((p) => PITCHER_POSITIONS.has(p.toUpperCase()));
-  const hitter = positions.some((p) => !PITCHER_POSITIONS.has(p.toUpperCase()) && p.toUpperCase() !== "UTIL" && p.toUpperCase() !== "DH");
+  // Util / DH only ever describe a hitter (that is how Yahoo lists Ohtani's batting half).
+  const hitter = positions.some((p) => !PITCHER_POSITIONS.has(p.toUpperCase()));
   if (pitcher && !hitter) return true;
   if (hitter && !pitcher) return false;
   return null;
@@ -194,16 +195,22 @@ class PlayerRegistry {
     return player;
   }
 
-  /** Exact full-name match across everyone known, using positions / the Ohtani marker to split shared names. */
+  /**
+   * Exact full-name match across everyone known, using positions / the
+   * Ohtani marker to split shared names. A definite hitter never matches a
+   * definite pitcher of the same name, even when that pitcher is the only
+   * "Will Smith" seen so far - the other one may simply never have been
+   * added, dropped or traded on Yahoo.
+   */
   matchGlobalExact(raw: string, positions: string[] = []): HistoryPlayer | null {
     const n = normalizePlayerName(raw);
     let keys = [...(this.byFullKey.get(n.fullKey) ?? [])];
-    if (keys.length > 1) {
-      const wantPitcher = n.twoWayMarker === "P" ? true : n.twoWayMarker === "B" ? false : isPitcherPositions(positions);
-      if (wantPitcher !== null) {
-        const filtered = keys.filter((k) => isPitcherPositions(this.players.get(k)!.positions) === wantPitcher);
-        if (filtered.length >= 1) keys = filtered;
-      }
+    const wantPitcher = n.twoWayMarker === "P" ? true : n.twoWayMarker === "B" ? false : isPitcherPositions(positions);
+    if (wantPitcher !== null) {
+      keys = keys.filter((k) => {
+        const theirs = isPitcherPositions(this.players.get(k)!.positions);
+        return theirs === null || theirs === wantPitcher;
+      });
     }
     return keys.length === 1 ? this.players.get(keys[0])! : null;
   }
@@ -220,8 +227,11 @@ class PlayerRegistry {
       const byInitial = [...(this.byInitialKey.get(n.initialKey) ?? [])];
       if (byInitial.length === 1) return this.players.get(byInitial[0])!;
     }
-    const sharedName = (this.byFullKey.get(n.fullKey)?.size ?? 0) > 1;
-    const key = `n:${n.fullKey}${n.twoWayMarker ? `:${n.twoWayMarker}` : ""}`;
+    const sharedName = (this.byFullKey.get(n.fullKey)?.size ?? 0) > 0;
+    const pitcher = n.twoWayMarker === "P" ? true : n.twoWayMarker === "B" ? false : isPitcherPositions(hint.positions ?? []);
+    // Same name as someone already known: key the new identity by role so
+    // the hitter and the pitcher stay apart.
+    const key = `n:${n.fullKey}${sharedName && pitcher !== null ? (pitcher ? ":P" : ":H") : n.twoWayMarker ? `:${n.twoWayMarker}` : ""}`;
     const existing = this.players.get(key);
     if (existing) return existing;
     const player: HistoryPlayer = {
@@ -231,7 +241,7 @@ class PlayerRegistry {
       mlbTeam: hint.mlbTeam ?? null,
       positions: hint.positions ?? [],
       isFypdProspect: false,
-      flags: sharedName ? [`Name matches more than one Yahoo player and positions didn't settle it (${hint.sourceRef}).`] : [],
+      flags: sharedName ? [`Shares a name with another player; kept separate as a ${pitcher === true ? "pitcher" : pitcher === false ? "hitter" : "second player"} (${hint.sourceRef}).`] : [],
     };
     this.players.set(key, player);
     this.index(key, n.display);

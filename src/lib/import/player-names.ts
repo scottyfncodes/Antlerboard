@@ -18,6 +18,7 @@ const SUFFIXES = new Set(["jr", "sr", "ii", "iii", "iv", "v"]);
  */
 export const PLAYER_NICKNAMES: Record<string, string> = {
   ces: "Christian Encarnacion-Strand",
+  "michael h": "Michael Harris II",
 };
 
 export interface NormalizedPlayerName {
@@ -39,9 +40,10 @@ function stripAccents(s: string): string {
 export function normalizePlayerName(raw: string): NormalizedPlayerName {
   let s = PLAYER_NICKNAMES[raw.trim().toLowerCase()] ?? raw.trim();
   let twoWayMarker: "B" | "P" | null = null;
-  const marker = s.match(/\(\s*([BP])\s*\)/i);
+  // "(B)" / "(P)" in the workbook, "(Batter)" / "(Pitcher)" on Yahoo.
+  const marker = s.match(/\(\s*(B|H|P|Batter|Hitter|Pitcher)\s*\)/i);
   if (marker) {
-    twoWayMarker = marker[1].toUpperCase() as "B" | "P";
+    twoWayMarker = marker[1].toUpperCase().startsWith("P") ? "P" : "B";
     s = s.replace(marker[0], " ");
   }
   // "Juan Soto (NYM - OF)" / "Juan Soto NYM - OF" / "José Ramírez(Cle - 2B,3B)"
@@ -116,11 +118,21 @@ export function matchPlayerName<T>(raw: string, candidates: PlayerCandidate<T>[]
   const target = normalizePlayerName(raw);
   const normalized = candidates.map((c) => ({ c, n: normalizePlayerName(c.name) }));
 
-  const exact = normalized.filter(({ n }) => n.fullKey === target.fullKey);
+  // Two-way players: a "(P)" target wants the "(Pitcher)" entry; a "(B)"
+  // target wants the "(Batter)" entry or, failing that, the unmarked one
+  // (Yahoo leaves the hitter half unmarked).
+  const preferMarker = <T>(list: { c: PlayerCandidate<T>; n: NormalizedPlayerName }[]) => {
+    if (list.length <= 1 || !target.twoWayMarker) return list;
+    const same = list.filter(({ n }) => n.twoWayMarker === target.twoWayMarker);
+    if (same.length >= 1) return same;
+    return target.twoWayMarker === "B" ? list.filter(({ n }) => n.twoWayMarker === null) : list;
+  };
+
+  const exact = preferMarker(normalized.filter(({ n }) => n.fullKey === target.fullKey));
   if (exact.length === 1) return { value: exact[0].c.value, confidence: "exact" };
   if (exact.length > 1) return null;
 
-  const byInitial = normalized.filter(({ n }) => n.initialKey === target.initialKey);
+  const byInitial = preferMarker(normalized.filter(({ n }) => n.initialKey === target.initialKey));
   if (byInitial.length === 1) return { value: byInitial[0].c.value, confidence: "initial" };
   if (byInitial.length > 1) return null;
 
