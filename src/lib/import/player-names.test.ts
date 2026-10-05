@@ -22,6 +22,10 @@ describe("normalizePlayerName", () => {
     expect(normalizePlayerName("Bobby Witt Jr.").fullKey).toBe("bobby witt");
   });
 
+  it("expands league nicknames the commissioner confirmed", () => {
+    expect(normalizePlayerName("CES").fullKey).toBe("christian encarnacion-strand");
+  });
+
   it("keeps Ohtani's two-way marker separately", () => {
     const n = normalizePlayerName("S. Ohtani (B)");
     expect(n.twoWayMarker).toBe("B");

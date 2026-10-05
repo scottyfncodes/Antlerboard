@@ -12,6 +12,14 @@
 
 const SUFFIXES = new Set(["jr", "sr", "ii", "iii", "iv", "v"]);
 
+/**
+ * League shorthand that no roster name will ever match, confirmed by the
+ * commissioner. Keyed by the lowercased, trimmed source text.
+ */
+export const PLAYER_NICKNAMES: Record<string, string> = {
+  ces: "Christian Encarnacion-Strand",
+};
+
 export interface NormalizedPlayerName {
   /** Cleaned display form without the MLB-team/position tail. */
   display: string;
@@ -29,7 +37,7 @@ function stripAccents(s: string): string {
 }
 
 export function normalizePlayerName(raw: string): NormalizedPlayerName {
-  let s = raw.trim();
+  let s = PLAYER_NICKNAMES[raw.trim().toLowerCase()] ?? raw.trim();
   let twoWayMarker: "B" | "P" | null = null;
   const marker = s.match(/\(\s*([BP])\s*\)/i);
   if (marker) {
