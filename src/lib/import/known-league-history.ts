@@ -48,6 +48,19 @@ export const CONFIRMED_ORIGINALS = new Set(["Kurt", "Aaron", "Tyler"]);
 export const EXCLUDED_FRANCHISES = new Set(["Trey"]);
 
 /**
+ * Offseason trades that appear in no source (not the trade log, not Yahoo,
+ * not an end-of-year roster) but that the commissioner has confirmed
+ * happened. The import carries the keeper clock across them either way;
+ * listing them here only changes their flag from "unexplained" to
+ * "confirmed". Player names match the auction file / Yahoo spelling.
+ */
+export const CONFIRMED_UNLOGGED_TRADES: { season: number; playerName: string; from: string; to: string }[] = [
+  { season: 2023, playerName: "Vladimir Guerrero Jr.", from: "Jorge", to: "Hugo" },
+  { season: 2026, playerName: "Edward Cabrera", from: "MattyJ", to: "Aaron" },
+  { season: 2026, playerName: "Colson Montgomery", from: "MattyJ", to: "Tyler" },
+];
+
+/**
  * Resolves which manager actually ran a given season for a current
  * manager's sheet. Falls back to the sheet's own name when there's no
  * recorded handoff for it - i.e. an *inferred* continuous original

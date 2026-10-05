@@ -37,6 +37,7 @@ import type { AuctionRow, ManagerSeasonBlock, YahooTransaction } from "./league-
 import type { ParsedTrade } from "./types";
 import { editDistance, matchPlayerName, normalizePlayerName } from "./player-names";
 import type { FranchiseResolver } from "./team-aliases";
+import { CONFIRMED_UNLOGGED_TRADES } from "./known-league-history";
 
 // ---------------------------------------------------------------------------
 // Output types
@@ -553,6 +554,10 @@ export function buildLeagueHistory(input: BuilderInput): LeagueHistoryPreview {
           // never made the trade log - not a mystery.
           const priorEoy = (blocksBySeason.get(season - 1) ?? []).find((b) => b.managerSheetName === k.franchise)?.eoyRoster ?? [];
           const corroborated = priorEoy.some((row) => matchPlayerName(row.name, [{ name: player.name, value: true }]) !== null);
+          const playerKeyName = normalizePlayerName(player.name).fullKey;
+          const confirmed = CONFIRMED_UNLOGGED_TRADES.some(
+            (t) => t.season === season && t.from === holder && t.to === k.franchise && normalizePlayerName(t.playerName).fullKey === playerKeyName
+          );
           events.push({
             playerKey: player.key,
             kind: "TRADED",
@@ -562,7 +567,9 @@ export function buildLeagueHistory(input: BuilderInput): LeagueHistoryPreview {
             preseason: true,
             sourceRef: k.ref,
             flags: [
-              corroborated
+              confirmed
+                ? `Offseason trade confirmed by the commissioner: ${holder} -> ${k.franchise} before the ${season} deadline (not in the trade log). Clock carried.`
+                : corroborated
                 ? `Offseason trade missing from the trade log: ${holder} -> ${k.franchise} before the ${season} deadline (${k.franchise}'s ${season - 1} end-of-year roster already lists the player). Clock carried.`
                 : `Kept by ${k.franchise} in ${season} but finished ${season - 1} with ${holder}; nothing in Yahoo, the trade log or the end-of-year rosters explains the move - treated as an unrecorded offseason trade.`,
             ],
