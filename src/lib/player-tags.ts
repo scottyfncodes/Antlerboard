@@ -39,8 +39,8 @@ export async function setOwnPlayerTag(
   }
 
   const keeperRecord = await prisma.keeperRecord.findFirst({
-    where: { playerId, team: { managerId } },
-    orderBy: { seasonYear: "desc" },
+    where: { playerId, team: { managerId }, status: { not: "DROPPED" } },
+    orderBy: [{ seasonYear: "desc" }, { stintIndex: "desc" }],
   });
   if (!keeperRecord) {
     throw new PlayerTagActionError("That player is not on one of your rosters.");

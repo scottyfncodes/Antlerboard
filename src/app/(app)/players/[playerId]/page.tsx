@@ -34,6 +34,7 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
       keeperRecords: {
         where: { seasonYear: CURRENT_SEASON_YEAR },
         include: { team: true },
+        orderBy: { stintIndex: "desc" },
       },
     },
   });
@@ -62,7 +63,9 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
   const eligibleNow = isKeeperEligible(events, CURRENT_SEASON_YEAR);
   const resetOccurred = didPlayerResetKeeperClock(events);
 
-  const currentRecord = player.keeperRecords[0];
+  const latestRecord = player.keeperRecords[0];
+  // A row whose stint ended this season is history, not a roster spot.
+  const currentRecord = latestRecord && latestRecord.status !== "DROPPED" ? latestRecord : undefined;
   const teamIdForCurrentTag = currentRecord?.teamId;
   const currentTag = player.tags.find((t) => t.teamId === teamIdForCurrentTag);
 

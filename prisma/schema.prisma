@@ -223,6 +223,7 @@ model Team {
 
   acquisitions   Acquisition[]
   keeperRecords  KeeperRecord[]
+  keeperRecordsAtStart KeeperRecord[] @relation("KeeperRecordStartTeam")
   draftPicks     DraftPick[]
   playerTags     PlayerTag[]
   championSeasons Season[] @relation("SeasonChampion")
@@ -403,6 +404,9 @@ model Acquisition {
   method    AcquisitionMethod
   cost      Float             @default(0)
   date      DateTime          @default(now())
+  // For TRADE rows: completed before the season's keeper deadline, so the
+  // receiving team is the one that declared the keeper (see keeper-engine).
+  preseason Boolean           @default(false)
   draftRound Int?
   draftPick  Int?
   notes     String?
@@ -436,18 +440,31 @@ model KeeperRecord {
   seasonYear  Int
   player      Player       @relation(fields: [playerId], references: [id])
   playerId    String
+  // The team holding the player at the end of the season (or right now,
+  // for the current season) - after any in-season trades.
   team        Team         @relation(fields: [teamId], references: [id])
   teamId      String
+  // The team that kept or acquired the player going into the season - the
+  // one whose keeper slot and budget this row counted against. Differs from
+  // teamId only when the player was traded during the season.
+  startTeam   Team?        @relation("KeeperRecordStartTeam", fields: [startTeamId], references: [id])
+  startTeamId String?
   keeperYear  Int
   keeperCost  Float
   yearsRemaining Int
+  // DROPPED here means the stint ended during this season (dropped, or not
+  // kept into the next one) - the row is history, not a live roster spot.
   status      KeeperStatus
+  // A player dropped and re-added in the same season has two rows for it,
+  // one per stint; the later stint is the live one.
   stintIndex  Int          @default(0)
   commissionerOverride Boolean @default(false)
   updatedAt   DateTime     @updatedAt
 
-  @@unique([seasonId, playerId])
+  @@unique([seasonId, playerId, stintIndex])
   @@index([teamId])
+  @@index([startTeamId])
+  @@index([playerId])
 }
 
 // C&A runs a live annual auction draft, not a snake draft - round/pick/
@@ -469,8 +486,11 @@ model DraftPick {
   cost       Float?
   acquisitionType String @default("DRAFT")
   isKeeperSlot Boolean  @default(false)
+  // Import provenance (see Acquisition.sourceRef).
+  sourceRef  String?
 
   @@unique([seasonId, overallPick])
+  @@index([sourceRef])
 }
 
 // ---------------------------------------------------------------------------
@@ -584,12 +604,15 @@ model Transaction {
   isHistoricalCorrection Boolean @default(false)
   // Yahoo's transaction id, when this row originated from a Yahoo sync - keeps re-syncs idempotent.
   yahooTransactionId String? @unique
+  // Import provenance (see Acquisition.sourceRef).
+  sourceRef String?
   createdAt DateTime        @default(now())
 
   players TransactionPlayer[]
   teams   TransactionTeam[]
 
   @@index([seasonId])
+  @@index([sourceRef])
 }
 
 model TransactionPlayer {

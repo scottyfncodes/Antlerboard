@@ -30,7 +30,7 @@ export default async function MyTeamPage() {
   const [season, roster, tags] = await Promise.all([
     prisma.season.findFirst({ where: { year: CURRENT_SEASON_YEAR } }),
     prisma.keeperRecord.findMany({
-      where: { seasonYear: CURRENT_SEASON_YEAR, teamId: team.id },
+      where: { seasonYear: CURRENT_SEASON_YEAR, teamId: team.id, status: { not: "DROPPED" } },
       include: { player: true },
       orderBy: [{ keeperYear: "desc" }, { player: { name: "asc" } }],
     }),

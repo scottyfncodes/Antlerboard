@@ -3,7 +3,7 @@ import { MAX_CONSECUTIVE_KEEPER_YEARS } from "@/lib/config";
 
 export function KeeperYearBadge({ keeperYear, status }: { keeperYear: number; status?: string }) {
   if (keeperYear === 0) {
-    return <Badge variant="default">Acquired this season</Badge>;
+    return <Badge variant="default">{status === "DROPPED" ? "Acquired, then dropped" : "Acquired this season"}</Badge>;
   }
   if (status === "FORCED_BACK" || keeperYear > MAX_CONSECUTIVE_KEEPER_YEARS) {
     return <Badge variant="red">FORCED BACK</Badge>;

@@ -33,7 +33,7 @@ export default async function BoardPage() {
         include: { players: { include: { player: true } }, teams: true },
       }),
       prisma.keeperRecord.findMany({
-        where: { seasonYear: CURRENT_SEASON_YEAR, keeperYear: { gte: 4 } },
+        where: { seasonYear: CURRENT_SEASON_YEAR, keeperYear: { gte: 4 }, status: { not: "DROPPED" } },
         orderBy: { keeperYear: "desc" },
         include: { player: true, team: true },
         take: 6,

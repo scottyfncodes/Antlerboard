@@ -92,3 +92,11 @@ export const DRAFT_COLOR_SKIPPED_SEASONS: number[] = [2020, 2027];
 export const DRAFT_COLOR_OVERRIDES: Record<number, DraftColorName> = {};
 
 export const CURRENT_SEASON_YEAR = 2026;
+
+/**
+ * First season the league's history is tracked at player level (the
+ * master workbook's manager sheets, the auction file and the Yahoo
+ * export all start here). Keepers carried into this season get a
+ * synthetic prior-season origin on import - see league-history-builder.
+ */
+export const LEAGUE_FIRST_SEASON_YEAR = 2021;

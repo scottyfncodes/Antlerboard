@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
       take: 8,
       include: {
         keeperRecords: {
-          orderBy: { seasonYear: "desc" },
+          orderBy: [{ seasonYear: "desc" }, { stintIndex: "desc" }],
           take: 1,
           include: { team: true },
         },

@@ -10,7 +10,7 @@ export default async function TeamsPage() {
     include: {
       manager: true,
       standings: { where: { season: { year: CURRENT_SEASON_YEAR } } },
-      keeperRecords: { where: { seasonYear: CURRENT_SEASON_YEAR } },
+      keeperRecords: { where: { seasonYear: CURRENT_SEASON_YEAR, status: { not: "DROPPED" } } },
     },
     orderBy: { name: "asc" },
   });

@@ -21,7 +21,7 @@ export default async function PlayerMarketPage({
   const sp = await searchParams;
   const teams = await prisma.team.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } });
 
-  const keeperWhere: Prisma.KeeperRecordWhereInput = { seasonYear: CURRENT_SEASON_YEAR };
+  const keeperWhere: Prisma.KeeperRecordWhereInput = { seasonYear: CURRENT_SEASON_YEAR, status: { not: "DROPPED" } };
   if (sp.team) keeperWhere.teamId = sp.team;
   if (sp.yearsRemaining) keeperWhere.yearsRemaining = Number(sp.yearsRemaining);
 
@@ -37,7 +37,7 @@ export default async function PlayerMarketPage({
   const players = await prisma.player.findMany({
     where: playerWhere,
     include: {
-      keeperRecords: { where: keeperWhere, include: { team: true } },
+      keeperRecords: { where: keeperWhere, include: { team: true }, orderBy: { stintIndex: "desc" } },
       tags: true,
     },
     take: 200,

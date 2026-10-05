@@ -65,6 +65,8 @@ export interface HistoryEvent {
   franchise: string;
   method?: StintStartMethod;
   cost?: number;
+  /** TRADED only: completed before the season's keeper deadline. */
+  preseason?: boolean;
   sourceRef: string;
   flags: string[];
 }
@@ -460,6 +462,7 @@ export function buildLeagueHistory(input: BuilderInput): LeagueHistoryPreview {
             season,
             date: date.toISOString(),
             franchise: to,
+            preseason: true,
             sourceRef: `offseason trades ${trade.sourceRef}`,
             flags: holder && holder !== from ? [...tradeFlags, `Sheet says ${from} sent this player, but the roster history has them with ${holder}.`] : tradeFlags,
           });
@@ -535,6 +538,7 @@ export function buildLeagueHistory(input: BuilderInput): LeagueHistoryPreview {
             season,
             date: new Date(draftDate.getTime() - 48 * 3600 * 1000).toISOString(),
             franchise: k.franchise,
+            preseason: true,
             sourceRef: k.ref,
             flags: [`Kept by ${k.franchise} in ${season} but finished ${season - 1} with ${holder}; no trade recorded - treated as an unrecorded offseason trade.`],
           });
@@ -631,7 +635,16 @@ export function buildLeagueHistory(input: BuilderInput): LeagueHistoryPreview {
           if (p.action === "trade") {
             const to = franchiseOf(p.destinationTeamName, `yahoo ${season}`);
             if (!to) continue;
-            events.push({ playerKey: player.key, kind: "TRADED", season, date: tx.timestamp.toISOString(), franchise: to, sourceRef: ref, flags: [] });
+            events.push({
+              playerKey: player.key,
+              kind: "TRADED",
+              season,
+              date: tx.timestamp.toISOString(),
+              franchise: to,
+              preseason: tx.timestamp < draftDate,
+              sourceRef: ref,
+              flags: [],
+            });
             moveTo(newRosters, player.key, to);
           } else if (p.action === "add") {
             const to = franchiseOf(p.destinationTeamName, `yahoo ${season}`);
@@ -752,7 +765,7 @@ export function buildLeagueHistory(input: BuilderInput): LeagueHistoryPreview {
     if (!eventsByPlayer.has(e.playerKey)) eventsByPlayer.set(e.playerKey, []);
     const list = eventsByPlayer.get(e.playerKey)!;
     if (e.kind === "ACQUIRED") list.push({ type: "ACQUIRED", season: e.season, method: e.method!, cost: e.cost ?? 0, teamId: e.franchise, date: new Date(e.date) });
-    else if (e.kind === "TRADED") list.push({ type: "TRADED", season: e.season, teamId: e.franchise, date: new Date(e.date) });
+    else if (e.kind === "TRADED") list.push({ type: "TRADED", season: e.season, teamId: e.franchise, date: new Date(e.date), preseason: !!e.preseason });
     else list.push({ type: "DROPPED", season: e.season, date: new Date(e.date) });
   }
   const timelines = new Map<string, ReturnType<typeof getContinuousKeeperHistory>>();

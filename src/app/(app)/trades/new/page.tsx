@@ -12,7 +12,7 @@ export default async function NewTradePage() {
     orderBy: { name: "asc" },
     include: {
       keeperRecords: {
-        where: { seasonYear: CURRENT_SEASON_YEAR },
+        where: { seasonYear: CURRENT_SEASON_YEAR, status: { not: "DROPPED" } },
         include: { player: true },
       },
     },

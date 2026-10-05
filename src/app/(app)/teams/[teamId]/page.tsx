@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import { CURRENT_SEASON_YEAR } from "@/lib/config";
+import { AUCTION_BUDGET, CURRENT_SEASON_YEAR, KEEPER_SLOT_COUNT } from "@/lib/config";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Card, EmptyState } from "@/components/ui/Card";
 import { Badge, PlayerTagBadge } from "@/components/ui/Badge";
@@ -19,12 +19,15 @@ export default async function TeamDetailPage({ params }: { params: Promise<{ tea
   });
   if (!team) notFound();
 
-  const [roster, tags, transactions, trades, draftHistory] = await Promise.all([
+  const [roster, keeperSlotsDeclared, tags, transactions, trades, draftHistory] = await Promise.all([
     prisma.keeperRecord.findMany({
-      where: { seasonYear: CURRENT_SEASON_YEAR, teamId },
+      where: { seasonYear: CURRENT_SEASON_YEAR, teamId, status: { not: "DROPPED" } },
       include: { player: true },
-      orderBy: [{ keeperYear: "desc" }],
+      orderBy: [{ keeperYear: "desc" }, { stintIndex: "desc" }],
     }),
+    // Keeper slots are what this team declared at the deadline, whether or
+    // not the player has since been traded away.
+    prisma.keeperRecord.findMany({ where: { seasonYear: CURRENT_SEASON_YEAR, startTeamId: teamId, keeperYear: { gte: 1 } }, select: { keeperCost: true } }),
     prisma.playerTag.findMany({ where: { teamId }, include: { player: true } }),
     prisma.transaction.findMany({
       where: { teams: { some: { teamId } } },
@@ -54,7 +57,7 @@ export default async function TeamDetailPage({ params }: { params: Promise<{ tea
     }
   }
 
-  const keeperSlots = roster.filter((r) => r.keeperYear >= 1);
+  const keeperCostDeclared = keeperSlotsDeclared.reduce((sum, r) => sum + r.keeperCost, 0);
   const standing = team.standings[0];
 
   return (
@@ -64,14 +67,21 @@ export default async function TeamDetailPage({ params }: { params: Promise<{ tea
         subtitle={`Managed by ${team.manager.name}${standing ? ` · ${standing.wins}-${standing.losses}${standing.ties ? `-${standing.ties}` : ""}` : ""}`}
       />
 
-      <section className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <section className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <Card>
           <p className="text-xs text-muted">Rostered</p>
           <p className="font-display text-2xl mt-1 tabular">{roster.length}</p>
         </Card>
         <Card>
           <p className="text-xs text-muted">Keeper Slots Used</p>
-          <p className="font-display text-2xl mt-1 tabular">{keeperSlots.length}/10</p>
+          <p className="font-display text-2xl mt-1 tabular">
+            {keeperSlotsDeclared.length}/{KEEPER_SLOT_COUNT}
+          </p>
+        </Card>
+        <Card>
+          <p className="text-xs text-muted">Auction Budget After Keepers</p>
+          <p className="font-display text-2xl mt-1 tabular">{formatCost(AUCTION_BUDGET - keeperCostDeclared)}</p>
+          <p className="text-xs text-muted">{formatCost(keeperCostDeclared)} in keepers</p>
         </Card>
         <Card>
           <p className="text-xs text-muted">In Year 4-5</p>

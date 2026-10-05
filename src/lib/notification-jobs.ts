@@ -43,7 +43,7 @@ export async function runKeeperDeadlineChecks(): Promise<{ notified: number }> {
   }
 
   const criticalRecords = await prisma.keeperRecord.findMany({
-    where: { seasonYear: CURRENT_SEASON_YEAR, keeperYear: { in: [4, 5] } },
+    where: { seasonYear: CURRENT_SEASON_YEAR, keeperYear: { in: [4, 5] }, status: { not: "DROPPED" } },
     include: { player: true, team: true },
   });
 

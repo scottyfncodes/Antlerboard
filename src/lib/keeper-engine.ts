@@ -75,6 +75,12 @@ export interface TradedEvent {
   season: number;
   teamId: string; // the team the player moves TO
   date?: Date;
+  /**
+   * True for a trade completed before this season's keeper deadline (an
+   * offseason deal): the receiving team is then the one that declared the
+   * keeper, so it counts as the team "at the start of" the season.
+   */
+  preseason?: boolean;
 }
 
 /** A player leaving a roster entirely. Ends the stint after this season. */
@@ -95,7 +101,10 @@ export type KeeperRecordStatus =
 export interface KeeperYearInfo {
   season: number;
   stintIndex: number;
+  /** The team holding the player at the end of the season (after any in-season trades). */
   teamId: string;
+  /** The team that kept or acquired the player going into the season (before in-season trades). */
+  teamIdAtStart: string;
   keeperYear: number; // 0 = acquisition season, 1-5 = keeper years
   cost: number | null;
   yearsRemaining: number | null;
@@ -116,9 +125,16 @@ export interface Stint {
   baseCost: number;
   /** Inclusive - the season the DROPPED event landed in, or null if still active. */
   endSeason: number | null;
-  /** teamId for each season within the stint, accounting for trades. */
-  teamBySeason: Map<number, string>;
+  /** Every team the player has been on during the stint, in order: the acquisition, then each trade. */
+  moves: StintMove[];
   lastKnownSeason: number;
+}
+
+export interface StintMove {
+  season: number;
+  date?: Date;
+  preseason: boolean;
+  teamId: string;
 }
 
 const UNDATED_TYPE_ORDER: Record<PlayerHistoryEvent["type"], number> = {
@@ -161,7 +177,7 @@ export function buildStints(events: PlayerHistoryEvent[]): Stint[] {
         rawCost: event.cost,
         baseCost: baseCostForAcquisition(event.method, event.cost),
         endSeason: null,
-        teamBySeason: new Map([[event.season, event.teamId]]),
+        moves: [{ season: event.season, date: event.date, preseason: false, teamId: event.teamId }],
         lastKnownSeason: event.season,
       };
       stints.push(current);
@@ -170,7 +186,7 @@ export function buildStints(events: PlayerHistoryEvent[]): Stint[] {
         // Trade with no open stint is a data error; ignore defensively.
         continue;
       }
-      current.teamBySeason.set(event.season, event.teamId);
+      current.moves.push({ season: event.season, date: event.date, preseason: !!event.preseason, teamId: event.teamId });
       current.lastKnownSeason = event.season;
     } else if (event.type === "DROPPED") {
       if (!current || current.endSeason !== null) continue;
@@ -181,13 +197,25 @@ export function buildStints(events: PlayerHistoryEvent[]): Stint[] {
   return stints;
 }
 
+/** Team holding the player at the end of `season` (every move up to and including that season applied). */
 function teamForSeason(stint: Stint, season: number): string {
-  let team = stint.teamBySeason.get(stint.startSeason)!;
-  for (const [s, t] of [...stint.teamBySeason.entries()].sort(
-    (a, b) => a[0] - b[0]
-  )) {
-    if (s > season) break;
-    team = t;
+  let team = stint.moves[0].teamId;
+  for (const m of stint.moves) {
+    if (m.season > season) break;
+    team = m.teamId;
+  }
+  return team;
+}
+
+/**
+ * Team going into `season`: moves from earlier seasons plus any trade made
+ * before this season's keeper deadline. In the acquisition season itself
+ * it is simply the acquiring team.
+ */
+function teamAtStartOfSeason(stint: Stint, season: number): string {
+  let team = stint.moves[0].teamId;
+  for (const m of stint.moves) {
+    if (m.season < season || (m.season === season && m.preseason)) team = m.teamId;
   }
   return team;
 }
@@ -229,6 +257,7 @@ function keeperInfoForStintSeason(stint: Stint, season: number): KeeperYearInfo 
     season,
     stintIndex: stint.index,
     teamId,
+    teamIdAtStart: teamAtStartOfSeason(stint, season),
     keeperYear,
     acquisitionMethod: stint.method,
     acquisitionSeason: stint.startSeason,

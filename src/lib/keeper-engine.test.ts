@@ -203,7 +203,7 @@ describe("keeper-engine: dated events resolve in-season churn", () => {
     ];
     const stints = buildStints(events);
     expect(stints).toHaveLength(1);
-    expect(stints[0].teamBySeason.get(2023)).toBe("teamA");
+    expect(getContinuousKeeperHistory(events, 2023)[0].teamId).toBe("teamA");
   });
 
   it("undated events keep the legacy DROPPED -> ACQUIRED -> TRADED order", () => {
@@ -213,7 +213,35 @@ describe("keeper-engine: dated events resolve in-season churn", () => {
     ];
     const stints = buildStints(events);
     expect(stints).toHaveLength(1);
-    expect(stints[0].teamBySeason.get(2024)).toBe("teamB");
+    expect(getContinuousKeeperHistory(events, 2024)[0].teamId).toBe("teamB");
+  });
+});
+
+describe("keeper-engine: team at the start of a season vs. at the end", () => {
+  const events: PlayerHistoryEvent[] = [
+    { type: "ACQUIRED", season: 2024, method: "DRAFT", cost: 10, teamId: "teamA", date: new Date("2024-03-23") },
+    // offseason deal before the 2025 keeper deadline: teamB declares the keeper
+    { type: "TRADED", season: 2025, teamId: "teamB", date: new Date("2025-01-10"), preseason: true },
+    // in-season trade: teamC holds the player at the end of 2025
+    { type: "TRADED", season: 2025, teamId: "teamC", date: new Date("2025-07-01") },
+  ];
+
+  it("credits the preseason trade to the keeping team and the in-season trade to the holder", () => {
+    const row2025 = getContinuousKeeperHistory(events, 2025).find((r) => r.season === 2025)!;
+    expect(row2025.teamIdAtStart).toBe("teamB");
+    expect(row2025.teamId).toBe("teamC");
+    expect(row2025.keeperYear).toBe(1);
+  });
+
+  it("uses the acquiring team for the acquisition season", () => {
+    const row2024 = getContinuousKeeperHistory(events, 2025).find((r) => r.season === 2024)!;
+    expect(row2024.teamIdAtStart).toBe("teamA");
+    expect(row2024.teamId).toBe("teamA");
+  });
+
+  it("carries the end-of-season holder into the next season's start", () => {
+    const row2026 = getContinuousKeeperHistory(events, 2026).find((r) => r.season === 2026)!;
+    expect(row2026.teamIdAtStart).toBe("teamC");
   });
 });
 

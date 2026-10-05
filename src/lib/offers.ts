@@ -58,6 +58,9 @@ export async function acceptOffer(id: string) {
           teamId: move.toTeamId,
           method: "TRADE",
           cost: 0,
+          // Before the keeper deadline the receiving team is the one that
+          // declares the keeper - see keeper-engine's preseason trades.
+          preseason: !!season.keeperDeadline && new Date() < season.keeperDeadline,
         },
       });
       const txn = await tx.transaction.create({
