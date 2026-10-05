@@ -50,7 +50,7 @@ describe("promoteFypdBatch", () => {
 
     const player = await prisma.player.findFirst({ where: { name: "Prospect One" } });
     expect(player?.positions).toEqual(["SS"]);
-    expect(player?.mlbDraftYear).toBe(2025);
+    expect(player?.mlbDraftYear).toBe(2024); // the 2025 FYPD drafts the 2024 MLB class
 
     const updatedBatch = await prisma.fypdImportBatch.findUniqueOrThrow({ where: { id: batch.id } });
     expect(updatedBatch.status).toBe("CONFIRMED");

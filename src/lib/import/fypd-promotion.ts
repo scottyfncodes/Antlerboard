@@ -91,7 +91,8 @@ export async function promoteFypdBatch(db: Db, batchId: string): Promise<FypdPro
           .filter(Boolean)
       : [];
     const player =
-      existing ?? (await db.player.create({ data: { leagueId: batch.leagueId, name, positions, mlbDraftYear: seasonYear } }));
+      // An FYPD held before season Y drafts the previous summer's class.
+      existing ?? (await db.player.create({ data: { leagueId: batch.leagueId, name, positions, mlbDraftYear: seasonYear - 1 } }));
     playerCache.set(name, player.id);
     return player.id;
   }

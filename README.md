@@ -50,8 +50,28 @@ gracefully (with clear in-app messaging) when either is unset.
 
 - `src/lib/keeper-engine.ts` is the **only** place keeper-year / keeper-cost
   / forced-redraft math happens. It's pure and fully unit tested
-  (`keeper-engine.test.ts`). `src/lib/keeper-sync.ts` bridges it to the
-  database, materializing results into `KeeperRecord` rows.
+  (`keeper-engine.test.ts`). The confirmed C&A rules live in
+  `src/lib/config.ts`: base price is the auction cost or winning FAAB bid,
+  each kept year adds +1, +3, +5, +7, +9 (so year 5 is base + 25), five
+  kept years then back to the auction, a drop resets the clock, a trade
+  carries it, and an FYPD call-up is free but starts the clock at an
+  assumed $4. `src/lib/keeper-sync.ts` bridges the engine to the database,
+  materializing one `KeeperRecord` per player per season per stint:
+  `startTeamId` is the team that declared the keeper, `teamId` the team
+  holding the player after in-season trades, and `DROPPED` marks a row
+  whose stint ended during that season.
+- `src/lib/import/` holds the league-history import. Step 1 on
+  Commissioner > Import > League History reads the master workbook (team
+  names, trades, prop bets, FYPD boards). Step 2 takes three files - the
+  master workbook, the canonical auction history, and the Yahoo
+  transaction export - and `league-history-builder.ts` turns them into a
+  dated event stream per player (drafts, FAAB adds with their bids, drops,
+  in-season and offseason trades, releases at each keeper deadline), runs
+  the engine over it, and reports every place the computed cost disagrees
+  with the workbook before `league-history-commit.ts` writes anything.
+  Recorded costs that differ are kept as flagged commissioner overrides.
+  Every row the import writes carries a `league-history:` sourceRef, so a
+  re-run replaces its own rows and leaves hand-entered data alone.
 - `src/lib/draft-color-engine.ts` computes the 5-color draft cycle from a
   single anchor point, honoring skipped seasons without breaking the cycle.
 - `src/lib/yahoo/` holds the OAuth client and sync engine. The sync engine
@@ -69,8 +89,11 @@ gracefully (with clear in-app messaging) when either is unset.
 ## Deploying
 
 1. Create a Vercel Postgres (or Neon) database and set `DATABASE_URL`.
-2. Run `npx prisma db push` and `npm run db:seed` against it (or import
-   real league history via Commissioner > Import).
+2. Run `npx prisma db push` and `npm run db:seed` against it, or import
+   the real league history via Commissioner > Import > League History
+   (Step 1 with the master workbook, then Step 2 with the master workbook,
+   the auction history and the Yahoo transaction export - tick "remove the
+   demo league" on the first Step 1 run).
 3. Set the Yahoo/VAPID env vars if/when you want those features live.
 4. Deploy to Vercel. `vercel.json` wires up two cron jobs
    (`/api/cron/yahoo-sync`, `/api/cron/notifications`) - both are protected

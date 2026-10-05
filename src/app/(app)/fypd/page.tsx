@@ -102,7 +102,7 @@ export default async function FypdPage() {
     <div className="space-y-6">
       <PageHeader
         title={`${draft.year} FYPD`}
-        subtitle="Snake draft of U.S. MLB draftees. Drafting a player grants call-up rights, not an active roster spot - see the DPUD tab for what that means once Yahoo is connected."
+        subtitle={`Held in March, the night before the auction, from the ${draft.year - 1} MLB draft class (U.S. draftees only). Drafting a player grants call-up rights, not a roster spot; a call-up is free but starts the keeper clock at an assumed $4, so the first kept year costs $5.`}
         actions={<Badge variant={draft.status === "COMPLETE" ? "green" : draft.status === "PAUSED" ? "yellow" : "default"}>{draft.status.replace("_", " ")}</Badge>}
       />
 

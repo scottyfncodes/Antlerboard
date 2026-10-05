@@ -6,8 +6,10 @@
  */
 
 import { prisma } from "./db";
+import { CURRENT_SEASON_YEAR } from "./config";
 import { computeFypdDraftOrder } from "./fypd-order-engine";
 import { getSnakeSlot } from "./fypd-snake-engine";
+import { recomputeKeeperRecordsForPlayer } from "./keeper-sync";
 import type { FypdDraft, FypdSelection } from "@prisma/client";
 
 export class FypdActionError extends Error {}
@@ -149,17 +151,47 @@ export async function undoLastFypdSelection(draftId: string): Promise<void> {
 /**
  * Marks FYPD call-up rights as exercised. This NEVER deletes the
  * FypdSelection row - the historical fact "Manager X drafted Player Y in
- * the {year} FYPD" is permanent. It only records that the call-up
- * happened and clears isDpud, since an active roster player isn't sitting
- * protected on the waiver wire anymore. (Once Yahoo sync exists, this is
- * the function it should call when it detects the corresponding Yahoo
- * acquisition - see project notes on FYPD/DPUD/Yahoo reconciliation.)
+ * the {year} FYPD" is permanent. It records that the call-up happened,
+ * clears isDpud (an active roster player isn't sitting protected on the
+ * waiver wire anymore), and starts the player's keeper clock: a call-up
+ * is an FYPD acquisition in the current season, free to add but with the
+ * league's assumed $4 base so the first kept year costs $5 (see
+ * keeper-engine.ts). Once Yahoo sync exists, this is the function it
+ * should call when it detects the corresponding Yahoo add.
  */
 export async function exerciseFypdCallUp(selectionId: string): Promise<void> {
-  await prisma.fypdSelection.update({
+  const selection = await prisma.fypdSelection.update({
     where: { id: selectionId },
     data: { callUpExercised: true, callUpExercisedAt: new Date(), isDpud: false },
+    include: { draft: true },
   });
+
+  const league = await prisma.league.findUnique({ where: { id: selection.draft.leagueId } });
+  const year = league?.currentSeasonYear ?? CURRENT_SEASON_YEAR;
+  const season = await prisma.season.upsert({
+    where: { leagueId_year: { leagueId: selection.draft.leagueId, year } },
+    create: { leagueId: selection.draft.leagueId, year, status: "IN_PROGRESS" },
+    update: {},
+  });
+
+  const alreadyStarted = await prisma.acquisition.findFirst({
+    where: { playerId: selection.playerId, seasonYear: year, method: "FYPD" },
+  });
+  if (!alreadyStarted) {
+    await prisma.acquisition.create({
+      data: {
+        seasonId: season.id,
+        seasonYear: year,
+        playerId: selection.playerId,
+        teamId: selection.teamId,
+        method: "FYPD",
+        cost: 0,
+        date: selection.callUpExercisedAt ?? new Date(),
+        notes: `FYPD call-up (${selection.draft.year} FYPD, pick ${selection.overallPick}).`,
+      },
+    });
+  }
+  await recomputeKeeperRecordsForPlayer(selection.playerId, year);
 }
 
 /** Commissioner-maintained until Yahoo sync can compute this automatically. */

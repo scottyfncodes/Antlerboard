@@ -1,3 +1,4 @@
+import { getProjectedKeeperCost } from "./keeper-engine";
 import { describe, it, expect, beforeEach, afterAll } from "vitest";
 import { prisma } from "./db";
 import {
@@ -146,5 +147,24 @@ describe("exerciseFypdCallUp", () => {
     expect(after.callUpExercisedAt).not.toBeNull();
     expect(after.isDpud).toBe(false);
     expect(after.id).toBe(selection.id); // same row - never recreated/deleted
+  });
+
+  it("starts the keeper clock: a free FYPD acquisition whose first kept year costs $5", async () => {
+    const { league, teams } = await makeTwelveTeamLeagueWithStandings(2026);
+    const draft = await createFypdDraft(league.id, 2027, 1, teams[11].id);
+    await startFypdDraft(draft.id);
+    const player = await makePlayer(league.id, "Prospect");
+    const selection = await makeFypdSelection(draft.id, player.id);
+
+    await exerciseFypdCallUp(selection.id);
+    await exerciseFypdCallUp(selection.id); // idempotent
+
+    const acquisitions = await prisma.acquisition.findMany({ where: { playerId: player.id } });
+    expect(acquisitions).toHaveLength(1);
+    expect(acquisitions[0]).toMatchObject({ method: "FYPD", cost: 0, teamId: selection.teamId });
+
+    const record = await prisma.keeperRecord.findFirst({ where: { playerId: player.id }, orderBy: { seasonYear: "asc" } });
+    expect(record).toMatchObject({ keeperYear: 0, keeperCost: 0, teamId: selection.teamId });
+    expect(getProjectedKeeperCost([{ type: "ACQUIRED", season: record!.seasonYear, method: "FYPD", cost: 0, teamId: selection.teamId }], record!.seasonYear + 1)).toBe(5);
   });
 });

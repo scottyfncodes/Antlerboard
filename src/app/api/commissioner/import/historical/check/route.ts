@@ -10,16 +10,20 @@ import { parseFypdRawSection } from "@/lib/import/fypd-history";
 import type { ParsedTeamSeasonBlock } from "@/lib/import/types";
 
 /**
- * The 12 current managers' sheet names, and the two confirmed FYPD table
- * years - see src/lib/import/known-league-history.ts for how the former
- * gets corrected against pre-2021 handoffs, and the project notes for how
- * the latter was confirmed (real MLB draftees identifiable by name in
- * each table - Kilby in the cols A-D table is a 2025 draftee, Waldschmidt
- * in the cols R-Y table is a 2024 draftee).
+ * The 12 current managers' sheet names (see src/lib/import/known-league-
+ * history.ts for how the former gets corrected against pre-2021
+ * handoffs), and the two FYPD tables' years. C&A holds its FYPD in March,
+ * the night before the auction, drafting from the previous summer's MLB
+ * draft - so an FYPD is labeled by the season it precedes (FypdDraft.year)
+ * and its players carry mlbDraftYear = year - 1. The sheet's own column
+ * headers are unreliable; the classes were confirmed from the draftees
+ * themselves (Kilby in the cols A-D table is a 2025 draftee, taken in the
+ * March 2026 FYPD; Waldschmidt in the cols R-Y table is a 2024 draftee,
+ * taken in March 2025).
  */
 const MANAGER_SHEETS = ["Aaron", "Andrew", "Ed", "Hugo", "Jorge", "Kurt", "MattyJ", "Michael", "Neel", "Scott", "Tyler", "Zach"];
-const FYPD_TABLE_1_YEAR = 2025; // cols A-D
-const FYPD_TABLE_2_YEAR = 2024; // cols R-Y
+const FYPD_TABLE_1_YEAR = 2026; // cols A-D: 2025 MLB draft class
+const FYPD_TABLE_2_YEAR = 2025; // cols R-Y: 2024 MLB draft class
 
 /**
  * Preview-only: reads the uploaded workbook and runs it through every
