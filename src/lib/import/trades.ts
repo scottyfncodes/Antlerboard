@@ -36,6 +36,9 @@ export function parseTradeRows(rows: Cell[][]): ParsedTrade[] {
     const teamAName = asTrimmedString(teamA);
     const teamBName = asTrimmedString(teamB);
     if (!teamAName && !teamBName) return; // blank row
+    // The sheet repeats its own header ("Team 1" / "Team 2") above some
+    // season sections - that's layout, not a trade.
+    if (/^team\s*1$/i.test(teamAName ?? "") || /^team\s*2$/i.test(teamBName ?? "")) return;
 
     const flags: string[] = [];
     if (currentYear === null) {

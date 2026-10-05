@@ -44,5 +44,14 @@ function normalizeCell(value: unknown): WorkbookCell {
   if (typeof value === "object" && "result" in (value as Record<string, unknown>)) {
     return normalizeCell((value as { result: unknown }).result);
   }
+  // Rich-text cells (mixed formatting inside one cell, common once names
+  // are pasted from Yahoo) come back as { richText: [{ text }, ...] }.
+  if (typeof value === "object" && Array.isArray((value as { richText?: unknown }).richText)) {
+    return (value as { richText: { text?: unknown }[] }).richText.map((r) => (typeof r.text === "string" ? r.text : "")).join("");
+  }
+  // Hyperlink cells are { text, hyperlink }.
+  if (typeof value === "object" && "text" in (value as Record<string, unknown>)) {
+    return normalizeCell((value as { text: unknown }).text);
+  }
   return String(value);
 }
