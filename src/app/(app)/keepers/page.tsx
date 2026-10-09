@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
 import { AUCTION_BUDGET, CURRENT_SEASON_YEAR, KEEPER_SLOT_COUNT } from "@/lib/config";
-import { PageHeader } from "@/components/ui/PageHeader";
+import { LeagueHeader } from "@/components/league/LeagueHeader";
 import { EmptyState } from "@/components/ui/Card";
 import { KeeperYearBadge } from "@/components/keepers/KeeperYearBadge";
 import { KeeperFilters } from "@/components/keepers/KeeperFilters";
@@ -62,28 +62,26 @@ export default async function KeeperBoardPage({
 
   return (
     <div className="space-y-4">
-      <PageHeader
-        title={season === CURRENT_SEASON_YEAR ? "Keeper Board" : `${season} Keeper Board`}
-        subtitle={`Every keeper each team declared going into ${season}, with the cost it counted against their $${AUCTION_BUDGET}. Year 4 and Year 5 are flagged so nobody gets surprised.`}
-        actions={
-          seasonYears.length > 1 ? (
-            <div className="flex gap-1.5 flex-wrap">
-              {seasonYears.map((s) => (
-                <Link
-                  key={s.seasonYear}
-                  href={`/keepers?season=${s.seasonYear}`}
-                  className={clsx(
-                    "rounded-full px-2.5 py-1 text-xs border",
-                    s.seasonYear === season ? "bg-antler border-antler text-[#1a1305] font-medium" : "border-border text-muted hover:text-foreground"
-                  )}
-                >
-                  {s.seasonYear}
-                </Link>
-              ))}
-            </div>
-          ) : undefined
-        }
+      <LeagueHeader
+        active="keepers"
+        description={`${season === CURRENT_SEASON_YEAR ? "Every" : `${season}: every`} keeper each team declared going into ${season}, with the cost it counted against their $${AUCTION_BUDGET}. Year 4 and Year 5 are flagged so nobody gets surprised.`}
       />
+      {seasonYears.length > 1 && (
+        <div className="flex gap-1.5 flex-wrap">
+          {seasonYears.map((s) => (
+            <Link
+              key={s.seasonYear}
+              href={`/keepers?season=${s.seasonYear}`}
+              className={clsx(
+                "rounded-full px-2.5 py-1 text-xs border",
+                s.seasonYear === season ? "bg-antler border-antler text-[#1a1305] font-medium" : "border-border text-muted hover:text-foreground"
+              )}
+            >
+              {s.seasonYear}
+            </Link>
+          ))}
+        </div>
+      )}
       <KeeperFilters teams={teams} />
 
       {records.length === 0 ? (

@@ -227,8 +227,7 @@ model Team {
   draftPicks     DraftPick[]
   playerTags     PlayerTag[]
   championSeasons Season[] @relation("SeasonChampion")
-  tradesAsTeamA  Trade[]  @relation("TradeTeamA")
-  tradesAsTeamB  Trade[]  @relation("TradeTeamB")
+  tradeParticipations TradeParticipant[]
   offersSent     Offer[]  @relation("OfferSendingTeam")
   offersReceived Offer[]  @relation("OfferReceivingTeam")
   standings      TeamStanding[]
@@ -652,10 +651,6 @@ model Trade {
   season     Season      @relation(fields: [seasonId], references: [id])
   seasonId   String
   seasonYear Int
-  teamA      Team        @relation("TradeTeamA", fields: [teamAId], references: [id])
-  teamAId    String
-  teamB      Team        @relation("TradeTeamB", fields: [teamBId], references: [id])
-  teamBId    String
   proposer   Manager     @relation("TradeProposer", fields: [proposerId], references: [id])
   proposerId String
   status     TradeStatus @default(PROPOSED)
@@ -664,9 +659,34 @@ model Trade {
   createdAt  DateTime    @default(now())
   updatedAt  DateTime    @updatedAt
 
-  assets TradeAsset[]
+  assets       TradeAsset[]
+  // Every team in the deal (2-4). The proposing team's row starts
+  // ACCEPTED; the trade executes once every row is ACCEPTED, and any
+  // REJECTED row kills it. Visibility is limited to these teams until
+  // the trade is accepted - see src/lib/trade-access.ts.
+  participants TradeParticipant[]
 
   @@index([seasonId])
+}
+
+enum TradeResponse {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
+model TradeParticipant {
+  id          String        @id @default(cuid())
+  trade       Trade         @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+  tradeId     String
+  team        Team          @relation(fields: [teamId], references: [id])
+  teamId      String
+  isProposer  Boolean       @default(false)
+  response    TradeResponse @default(PENDING)
+  respondedAt DateTime?
+
+  @@unique([tradeId, teamId])
+  @@index([teamId])
 }
 
 enum TradeAssetType {

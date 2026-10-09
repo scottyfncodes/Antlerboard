@@ -472,10 +472,14 @@ export async function runSeed(): Promise<void> {
     data: {
       seasonId: seasonByYear.get(2025)!.id,
       seasonYear: 2025,
-      teamAId: rackAttack.id,
-      teamBId: velvetHorns.id,
       proposerId: rackAttack.managerId,
       status: "ACCEPTED",
+      participants: {
+        create: [
+          { teamId: rackAttack.id, isProposer: true, response: "ACCEPTED" },
+          { teamId: velvetHorns.id, response: "ACCEPTED" },
+        ],
+      },
       notes: "Rebuild-for-now-win swap, completed before the 2025 keeper deadline.",
     },
   });
@@ -502,10 +506,14 @@ export async function runSeed(): Promise<void> {
     data: {
       seasonId: seasonByYear.get(CURRENT_SEASON_YEAR)!.id,
       seasonYear: CURRENT_SEASON_YEAR,
-      teamAId: antlerAvengers.id,
-      teamBId: buckWild.id,
       proposerId: antlerAvengers.managerId,
       status: "PROPOSED",
+      participants: {
+        create: [
+          { teamId: antlerAvengers.id, isProposer: true, response: "ACCEPTED" },
+          { teamId: buckWild.id, response: "PENDING" },
+        ],
+      },
       notes: "Trying to add a bit more speed for the stretch run.",
     },
   });
@@ -525,6 +533,32 @@ export async function runSeed(): Promise<void> {
       toTeamId: antlerAvengers.id,
       assetType: "PLAYER",
       playerId: playerIdByName.get("Anthony Volpe")!,
+    },
+  });
+
+  // A three-team deal still waiting on one side, so the multi-team flow
+  // has something to show: Whitetails already accepted, Alliance hasn't.
+  await prisma.trade.create({
+    data: {
+      seasonId: seasonByYear.get(CURRENT_SEASON_YEAR)!.id,
+      seasonYear: CURRENT_SEASON_YEAR,
+      proposerId: antlerAvengers.managerId,
+      status: "PROPOSED",
+      notes: "Three-way: Gunnar to me, my 2nd to the Whitetails, their 1st to the Alliance.",
+      participants: {
+        create: [
+          { teamId: antlerAvengers.id, isProposer: true, response: "ACCEPTED" },
+          { teamId: whitetails.id, response: "ACCEPTED", respondedAt: new Date() },
+          { teamId: antlerAlliance.id, response: "PENDING" },
+        ],
+      },
+      assets: {
+        create: [
+          { fromTeamId: antlerAlliance.id, toTeamId: antlerAvengers.id, assetType: "PLAYER", playerId: playerIdByName.get("Gunnar Henderson")! },
+          { fromTeamId: antlerAvengers.id, toTeamId: whitetails.id, assetType: "DRAFT_PICK", draftPickDescription: "2027 2nd round pick" },
+          { fromTeamId: whitetails.id, toTeamId: antlerAlliance.id, assetType: "DRAFT_PICK", draftPickDescription: "2027 1st round pick" },
+        ],
+      },
     },
   });
 

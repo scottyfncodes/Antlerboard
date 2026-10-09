@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { NAV_ITEMS, visibleNavItems } from "./nav-items";
+import { NAV_ITEMS, isNavItemActive, visibleNavItems } from "./nav-items";
+import { AccountMenu } from "./AccountMenu";
+import { NotificationBell } from "../notifications/NotificationBell";
 import clsx from "clsx";
 import { AntlerboardMark } from "@/components/brand/AntlerboardMark";
 import { SearchBox } from "../search/SearchBox";
@@ -24,8 +26,7 @@ export function TopNav({ currentManager }: { currentManager: CurrentManagerSumma
         <nav className="min-w-0 flex-1 overflow-x-auto [scrollbar-width:thin]">
           <ul className="flex items-center gap-0.5 w-max">
             {items.map((item) => {
-              const active =
-                item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+              const active = isNavItemActive(item, pathname);
               return (
                 <li key={item.href}>
                   <Link
@@ -47,6 +48,8 @@ export function TopNav({ currentManager }: { currentManager: CurrentManagerSumma
         <div className="w-44 xl:w-64 shrink-0">
           <SearchBox />
         </div>
+        <NotificationBell />
+        <AccountMenu currentManager={currentManager} />
       </div>
     </header>
   );

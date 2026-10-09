@@ -1,55 +1,71 @@
+import Link from "next/link";
+import { ChevronRight } from "lucide-react";
 import { prisma } from "@/lib/db";
-import { CURRENT_SEASON_YEAR } from "@/lib/config";
-import { CardLink } from "@/components/ui/Card";
-import { PageHeader } from "@/components/ui/PageHeader";
+import { CURRENT_SEASON_YEAR, KEEPER_SLOT_COUNT } from "@/lib/config";
+import { getCurrentManager } from "@/lib/current-manager";
+import { LeagueHeader } from "@/components/league/LeagueHeader";
+import { Avatar } from "@/components/ui/Avatar";
+import { ordinal } from "@/lib/positions";
+import clsx from "clsx";
 
 export const dynamic = "force-dynamic";
 
 export default async function TeamsPage() {
-  const teams = await prisma.team.findMany({
-    include: {
-      manager: true,
-      standings: { where: { season: { year: CURRENT_SEASON_YEAR } } },
-      keeperRecords: { where: { seasonYear: CURRENT_SEASON_YEAR, status: { not: "DROPPED" } } },
-    },
-    orderBy: { name: "asc" },
-  });
+  const [manager, teams] = await Promise.all([
+    getCurrentManager(),
+    prisma.team.findMany({
+      include: {
+        manager: true,
+        standings: { where: { season: { year: CURRENT_SEASON_YEAR } } },
+        keeperRecords: { where: { seasonYear: CURRENT_SEASON_YEAR, status: { not: "DROPPED" } }, select: { keeperYear: true } },
+      },
+      orderBy: { name: "asc" },
+    }),
+  ]);
+  const myTeamIds = new Set(manager?.teams?.map((t) => t.id) ?? []);
 
-  const byRank = [...teams].sort((a, b) => {
-    const ra = a.standings[0]?.rank ?? 999;
-    const rb = b.standings[0]?.rank ?? 999;
-    return ra - rb;
-  });
+  const byRank = [...teams].sort((a, b) => (a.standings[0]?.rank ?? 999) - (b.standings[0]?.rank ?? 999));
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Teams" subtitle="Every roster in the Claw & Antler League." />
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <LeagueHeader active="teams" />
+      <ul className="rounded-xl border border-border bg-surface divide-y divide-border overflow-hidden">
         {byRank.map((team) => {
           const standing = team.standings[0];
+          const keepers = team.keeperRecords.filter((r) => r.keeperYear >= 1).length;
+          const mine = myTeamIds.has(team.id);
           return (
-            <CardLink key={team.id} href={`/teams/${team.id}`}>
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="font-display text-lg">{team.name}</p>
-                  <p className="text-sm text-muted">{team.manager.name}</p>
+            <li key={team.id}>
+              <Link
+                href={`/teams/${team.id}`}
+                className={clsx("flex items-center gap-3 px-3 py-3 hover:bg-surface-raised", mine && "bg-antler-dim/15")}
+              >
+                <Avatar name={team.name} imageUrl={team.logoUrl} size="md" shape="rounded" />
+                <div className="min-w-0 flex-1">
+                  <p className={clsx("truncate font-semibold", mine && "text-antler-strong")}>{team.name}</p>
+                  <p className="truncate text-xs text-muted">
+                    {team.manager.name} · {keepers}/{KEEPER_SLOT_COUNT} keepers
+                  </p>
                 </div>
-                <div className="text-right text-sm">
+                <div className="shrink-0 text-right">
                   {standing ? (
-                    <p className="tabular">
-                      {standing.wins}-{standing.losses}
-                      {standing.ties ? `-${standing.ties}` : ""}
-                    </p>
+                    <>
+                      <p className="text-sm font-semibold tabular">
+                        {standing.wins}-{standing.losses}
+                        {standing.ties ? `-${standing.ties}` : ""}
+                      </p>
+                      {standing.rank && <p className="text-xs text-muted">{ordinal(standing.rank)}</p>}
+                    </>
                   ) : (
-                    <p className="text-muted text-xs">No record yet</p>
+                    <p className="text-xs text-muted">No record</p>
                   )}
-                  <p className="text-xs text-muted">{team.keeperRecords.length} rostered</p>
                 </div>
-              </div>
-            </CardLink>
+                <ChevronRight className="h-4 w-4 shrink-0 text-muted" />
+              </Link>
+            </li>
           );
         })}
-      </div>
+      </ul>
     </div>
   );
 }

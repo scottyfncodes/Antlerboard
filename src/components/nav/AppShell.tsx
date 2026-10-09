@@ -4,7 +4,7 @@ import { TopNav } from "./TopNav";
 import { BottomNav } from "./BottomNav";
 import { AntlerboardMark } from "@/components/brand/AntlerboardMark";
 import { NotificationBell } from "../notifications/NotificationBell";
-import { AuthStatus } from "../auth/AuthStatus";
+import { AccountMenu } from "./AccountMenu";
 import type { CurrentManagerSummary } from "@/lib/auth/types";
 
 export function AppShell({
@@ -31,22 +31,14 @@ export function AppShell({
               <Search className="h-6 w-6" strokeWidth={2.25} />
             </Link>
             <NotificationBell />
+            <AccountMenu currentManager={currentManager} />
           </div>
         </div>
       </header>
-      <div className="flex flex-wrap items-center justify-between gap-2 mx-auto max-w-7xl w-full px-4 lg:px-6 pt-2 lg:pt-1 pb-1">
-        <div className="lg:hidden">
-          <AuthStatus currentManager={currentManager} />
-        </div>
-        <div className="hidden lg:flex items-center gap-4 ml-auto">
-          <AuthStatus currentManager={currentManager} />
-          <NotificationBell />
-        </div>
-      </div>
-      <main className="flex-1 mx-auto w-full max-w-7xl px-4 md:px-6 pb-20 md:pb-10 pt-4">
+      <main className="flex-1 mx-auto w-full max-w-7xl px-4 md:px-6 pb-24 lg:pb-10 pt-4">
         {children}
       </main>
-      <BottomNav currentManager={currentManager} />
+      <BottomNav />
     </div>
   );
 }

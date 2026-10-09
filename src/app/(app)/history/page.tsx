@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import { PageHeader } from "@/components/ui/PageHeader";
+import { LeagueHeader } from "@/components/league/LeagueHeader";
 import { Card, EmptyState } from "@/components/ui/Card";
 import { DraftColorBadge } from "@/components/ui/Badge";
 import { getDraftColorRange } from "@/lib/draft-color-engine";
@@ -59,7 +59,7 @@ export default async function HistoryPage() {
 
   return (
     <div className="space-y-8">
-      <PageHeader title="C&A History" subtitle="The permanent archive: champions, drafts, and keeper milestones." />
+      <LeagueHeader active="history" description="The permanent archive: champions, drafts, and keeper milestones." />
 
       <section>
         <h2 className="font-display text-lg mb-3">Champions</h2>
