@@ -53,6 +53,7 @@ export async function resetDatabase() {
     "DpudBet",
     "Offer",
     "TradeAsset",
+    "TradeParticipant",
     "Trade",
     "PlayerTag",
     "TransactionTeam",

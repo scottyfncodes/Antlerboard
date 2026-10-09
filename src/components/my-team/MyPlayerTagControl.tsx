@@ -33,7 +33,7 @@ export function MyPlayerTagControl({
       value={value}
       disabled={isPending}
       onChange={(e) => apply(e.target.value)}
-      className="rounded-md border border-border bg-surface px-2 py-1 text-xs disabled:opacity-50"
+      className="max-w-[8.5rem] rounded-md border border-border bg-surface-raised px-1.5 py-0.5 text-[11px] text-muted disabled:opacity-50"
     >
       <option value="">No tag</option>
       {MANAGER_SELECTABLE_TAGS.map((t) => (

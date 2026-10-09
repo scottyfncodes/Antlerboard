@@ -11,6 +11,7 @@
  */
 
 import { prisma } from "@/lib/db";
+import { YahooApiError, parseYahooErrorDescription } from "./errors";
 
 const AUTH_BASE = "https://api.login.yahoo.com/oauth2/request_auth";
 const TOKEN_URL = "https://api.login.yahoo.com/oauth2/get_token";
@@ -131,7 +132,8 @@ export async function yahooFantasyGet(leagueId: string, path: string): Promise<u
   });
 
   if (!res.ok) {
-    throw new Error(`Yahoo API request failed (${res.status}): ${path}`);
+    const body = await res.text().catch(() => "");
+    throw new YahooApiError(res.status, path, parseYahooErrorDescription(body));
   }
   return res.json();
 }

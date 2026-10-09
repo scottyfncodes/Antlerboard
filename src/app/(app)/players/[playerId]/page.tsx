@@ -13,6 +13,9 @@ import {
   didPlayerResetKeeperClock,
 } from "@/lib/keeper-engine";
 import Link from "next/link";
+import { getCurrentManager } from "@/lib/current-manager";
+import { visibleTradesWhere } from "@/lib/trade-access";
+import { tradeTitle } from "@/lib/trades";
 import { notFound } from "next/navigation";
 
 export const dynamic = "force-dynamic";
@@ -25,7 +28,7 @@ const ACQUISITION_LABEL: Record<string, string> = {
 };
 
 export default async function PlayerProfilePage({ params }: { params: Promise<{ playerId: string }> }) {
-  const { playerId } = await params;
+  const [{ playerId }, viewer] = await Promise.all([params, getCurrentManager()]);
 
   const player = await prisma.player.findUnique({
     where: { id: playerId },
@@ -47,8 +50,8 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
       orderBy: { transaction: { date: "desc" } },
     }),
     prisma.tradeAsset.findMany({
-      where: { playerId },
-      include: { trade: { include: { teamA: true, teamB: true } } },
+      where: { playerId, trade: visibleTradesWhere(viewer) },
+      include: { trade: { include: { participants: { include: { team: true } } } } },
     }),
     prisma.draftPick.findMany({
       where: { playerId },
@@ -194,7 +197,7 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
               {tradeAssets.map((a) => (
                 <li key={a.id} className="flex items-center justify-between">
                   <span>
-                    {a.trade.teamA.name} ↔ {a.trade.teamB.name}
+                    {tradeTitle(a.trade.participants)}
                   </span>
                   <Badge variant={a.trade.status === "ACCEPTED" ? "green" : "default"}>{a.trade.status}</Badge>
                 </li>

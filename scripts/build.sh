@@ -16,5 +16,14 @@ if [ -n "${DATABASE_URL_POSTGRES_PRISMA_URL:-}" ]; then
   export DIRECT_URL="${DATABASE_URL_POSTGRES_URL_NON_POOLING:-$DATABASE_URL_POSTGRES_PRISMA_URL}"
 fi
 
-npx prisma migrate deploy
+# Preview deployments share the production database (same DATABASE_URL in
+# the Vercel env), so a preview build must never migrate it - a branch's
+# schema change would hit the live site before its code does. Migrations
+# run only when Vercel confirms a production build. A missing or unexpected
+# VERCEL_ENV skips them; run `npx prisma migrate deploy` by hand locally.
+if [ "${VERCEL_ENV:-}" = "production" ]; then
+  npx prisma migrate deploy
+else
+  echo "Skipping prisma migrate deploy: VERCEL_ENV is '${VERCEL_ENV:-unset}', not 'production' (shared production database)."
+fi
 next build
