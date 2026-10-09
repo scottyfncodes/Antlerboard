@@ -1,4 +1,5 @@
 import { PrismaClient } from "@prisma/client";
+import { resolveDatabaseUrl } from "@/lib/database-url";
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
@@ -7,13 +8,12 @@ const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
  * *sensitive* environment variables (write-only - never readable back
  * through the Management API, by design), and it names them with
  * whatever prefix was chosen when the storage was connected rather than
- * the literal `DATABASE_URL` our schema declares. `DATABASE_URL` itself is
- * genuinely absent from the runtime in that case, so we fall back to the
- * pooled connection string the integration actually provides. Local dev
- * and any other provider that sets `DATABASE_URL` directly are unaffected.
+ * the literal `DATABASE_URL` our schema declares. The integration's pooled
+ * URL wins when present - the same precedence the build uses for
+ * `prisma migrate deploy` (see src/lib/database-url.ts). Local dev and any
+ * other provider that sets `DATABASE_URL` directly are unaffected.
  */
-const datasourceUrl =
-  process.env.DATABASE_URL || process.env.DATABASE_URL_POSTGRES_PRISMA_URL;
+const datasourceUrl = resolveDatabaseUrl();
 
 export const prisma =
   globalForPrisma.prisma ??
