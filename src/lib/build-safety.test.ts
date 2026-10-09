@@ -24,24 +24,33 @@ describe("scripts/build.sh only migrates on production builds", () => {
   }
   afterAll(() => rmSync(stubDir, { recursive: true, force: true }));
 
-  function runBuild(vercelEnv: string | undefined): string[] {
+  function runBuild(extraEnv: Record<string, string>): string[] {
     writeFileSync(log, "");
-    const env: Record<string, string> = { PATH: `${stubDir}:${process.env.PATH}` };
-    if (vercelEnv !== undefined) env.VERCEL_ENV = vercelEnv;
+    const env = { PATH: `${stubDir}:${process.env.PATH}`, ...extraEnv };
     execFileSync("bash", [path.join(ROOT, "scripts/build.sh")], { env: env as unknown as NodeJS.ProcessEnv, stdio: "pipe" });
     return readFileSync(log, "utf8").trim().split("\n");
   }
 
   it.each(["preview", "development"])("skips migrations on a %s build", (vercelEnv) => {
-    expect(runBuild(vercelEnv)).toEqual(["next build"]);
+    expect(runBuild({ VERCEL: "1", VERCEL_ENV: vercelEnv })).toEqual(["next build"]);
+  });
+
+  // Fail closed: if Vercel's system env vars aren't exposed to the build, a
+  // preview must not be mistaken for production.
+  it("skips migrations on a preview build where VERCEL_ENV is missing", () => {
+    expect(runBuild({ VERCEL: "1" })).toEqual(["next build"]);
+  });
+
+  it("skips migrations when no Vercel env vars are present at all", () => {
+    expect(runBuild({})).toEqual(["next build"]);
+  });
+
+  it.each(["", "Production", "staging", " production"])("skips migrations for an unexpected VERCEL_ENV %j", (vercelEnv) => {
+    expect(runBuild({ VERCEL: "1", VERCEL_ENV: vercelEnv })).toEqual(["next build"]);
   });
 
   it("migrates before building on a production build", () => {
-    expect(runBuild("production")).toEqual(["npx prisma migrate deploy", "next build"]);
-  });
-
-  it("migrates on a local / non-Vercel build", () => {
-    expect(runBuild(undefined)).toEqual(["npx prisma migrate deploy", "next build"]);
+    expect(runBuild({ VERCEL: "1", VERCEL_ENV: "production" })).toEqual(["npx prisma migrate deploy", "next build"]);
   });
 });
 
