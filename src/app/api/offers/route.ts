@@ -3,6 +3,12 @@ import { prisma } from "@/lib/db";
 import { getCurrentManager } from "@/lib/current-manager";
 import { notifyManagers } from "@/lib/notifications";
 import { isOfferParty, visibleOffersWhere } from "@/lib/trade-access";
+import { offerProposalProblem } from "@/lib/offers";
+
+// Names only - never a manager's email or other account fields.
+const MANAGER_NAME = { select: { id: true, name: true } } as const;
+
+const isIdList = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");
 
 export async function GET() {
   const manager = await getCurrentManager();
@@ -13,7 +19,7 @@ export async function GET() {
     orderBy: { createdAt: "desc" },
     include: {
       sendingTeam: true,
-      receivingTeam: { include: { manager: true } },
+      receivingTeam: { include: { manager: MANAGER_NAME } },
       targetPlayer: true,
     },
   });
@@ -38,6 +44,20 @@ export async function POST(req: Request) {
   if (sendingTeamId === receivingTeamId) {
     return NextResponse.json({ error: "Pick a different team to send the offer to" }, { status: 400 });
   }
+  if (typeof receivingTeamId !== "string" || (targetPlayerId != null && typeof targetPlayerId !== "string")) {
+    return NextResponse.json({ error: "Malformed offer" }, { status: 400 });
+  }
+  if ((playersOffered != null && !isIdList(playersOffered)) || (playersRequested != null && !isIdList(playersRequested))) {
+    return NextResponse.json({ error: "Players must be a list of player ids" }, { status: 400 });
+  }
+  const problem = await offerProposalProblem({
+    sendingTeamId,
+    receivingTeamId,
+    targetPlayerId,
+    playersOffered: playersOffered ?? [],
+    playersRequested: playersRequested ?? [],
+  });
+  if (problem) return NextResponse.json({ error: problem }, { status: 400 });
 
   const offer = await prisma.offer.create({
     data: {
@@ -51,7 +71,7 @@ export async function POST(req: Request) {
       message,
       status: "PENDING",
     },
-    include: { receivingTeam: { include: { manager: true } }, targetPlayer: true },
+    include: { receivingTeam: { include: { manager: MANAGER_NAME } }, targetPlayer: true },
   });
 
   await notifyManagers([offer.receivingTeam.managerId], {
