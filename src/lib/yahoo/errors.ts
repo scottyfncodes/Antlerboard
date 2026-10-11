@@ -20,17 +20,47 @@ export class YahooApiError extends Error {
   get isAppNotAuthorized(): boolean {
     return this.status === 403 && /not authorized to perform this action/i.test(this.description ?? "");
   }
+
+  /** Yahoo's rate limit answer is a 999 ("Request denied"); 429 and 5xx are worth one more try too. */
+  get isRetryable(): boolean {
+    return this.status === 429 || this.status === 999 || this.status >= 500;
+  }
+}
+
+/**
+ * Yahoo refused the stored refresh token (revoked from the Yahoo account
+ * page, expired, or issued to a different Client ID). Nothing retries past
+ * this - the commissioner has to Disconnect and Connect Yahoo again.
+ */
+export class YahooAuthError extends Error {
+  constructor(
+    readonly status: number,
+    readonly description: string | null
+  ) {
+    super(
+      `Yahoo authorization expired or was revoked (${status}${description ? `: ${description}` : ""}). ` +
+        "Disconnect and Connect Yahoo again on Commissioner > Yahoo."
+    );
+    this.name = "YahooAuthError";
+  }
 }
 
 /**
  * Pulls the human-readable reason out of a Yahoo error body, which is usually
- * `{"error": {"description": "..."}}` but is occasionally XML or an HTML page.
+ * `{"error": {"description": "..."}}` (or the OAuth endpoint's
+ * `{"error": "...", "error_description": "..."}`) but is occasionally XML or
+ * an HTML page.
  */
 export function parseYahooErrorDescription(body: string): string | null {
   if (!body) return null;
   try {
-    const parsed = JSON.parse(body) as { error?: { description?: unknown } };
-    if (typeof parsed?.error?.description === "string") return parsed.error.description;
+    const parsed = JSON.parse(body) as { error?: unknown; error_description?: unknown };
+    const error = parsed?.error as { description?: unknown } | string | undefined;
+    if (error && typeof error === "object" && typeof error.description === "string") return error.description;
+    // OAuth token endpoint errors: {"error": "invalid_grant", "error_description": "..."}
+    if (typeof error === "string") {
+      return typeof parsed.error_description === "string" ? `${error}: ${parsed.error_description}` : error;
+    }
   } catch {
     // not JSON - fall through
   }

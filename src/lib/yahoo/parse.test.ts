@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fantasyContent, toArray, mergeMeta } from "./parse";
+import { fantasyContent, toArray, mergeMeta, readFields } from "./parse";
 
 describe("fantasyContent", () => {
   it("unwraps the fantasy_content envelope", () => {
@@ -79,5 +79,21 @@ describe("mergeMeta", () => {
   it("returns an empty object for nullish input", () => {
     expect(mergeMeta(undefined)).toEqual({});
     expect(mergeMeta(null)).toEqual({});
+  });
+});
+
+describe("readFields", () => {
+  it("keeps the scalar fields of an already-flat object (Yahoo's team_standings shape)", () => {
+    const standings = { rank: "2", playoff_seed: "2", outcome_totals: { wins: "8", losses: "7", ties: 0 } };
+    expect(readFields(standings).rank).toBe("2");
+    expect(readFields(readFields(standings).outcome_totals).wins).toBe("8");
+  });
+
+  it("merges the array-of-single-key-objects shape", () => {
+    expect(readFields([{ rank: "1" }, { playoff_seed: "1" }])).toEqual({ rank: "1", playoff_seed: "1" });
+  });
+
+  it("returns an empty object for missing values", () => {
+    expect(readFields(undefined)).toEqual({});
   });
 });
