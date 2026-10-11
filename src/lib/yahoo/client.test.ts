@@ -173,3 +173,17 @@ describe("missingYahooEnvVars", () => {
     expect(isYahooConfigured()).toBe(false);
   });
 });
+
+describe("yahooClientIdHint", () => {
+  it("shows only the last 8 characters of the Client ID", async () => {
+    vi.stubEnv("YAHOO_CLIENT_ID", "dj0yJmk9abcdefghijklmnop12345678");
+    const { yahooClientIdHint } = await import("./client");
+    expect(yahooClientIdHint()).toBe("…12345678");
+  });
+
+  it("is null when unset", async () => {
+    vi.stubEnv("YAHOO_CLIENT_ID", "");
+    const { yahooClientIdHint } = await import("./client");
+    expect(yahooClientIdHint()).toBeNull();
+  });
+});

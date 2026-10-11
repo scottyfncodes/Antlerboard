@@ -30,6 +30,17 @@ export function missingYahooEnvVars(): string[] {
   return YAHOO_ENV_VARS.filter((name) => !process.env[name]?.trim());
 }
 
+/**
+ * The tail of the Client ID this deployment sends to Yahoo, for comparing
+ * against the one Yahoo approved. The Client ID isn't secret (it's in the
+ * authorization URL), but only the end is shown to keep the page tidy.
+ */
+export function yahooClientIdHint(): string | null {
+  const id = process.env.YAHOO_CLIENT_ID?.trim();
+  if (!id) return null;
+  return id.length <= 8 ? id : `…${id.slice(-8)}`;
+}
+
 export function isYahooConfigured(): boolean {
   return missingYahooEnvVars().length === 0;
 }
