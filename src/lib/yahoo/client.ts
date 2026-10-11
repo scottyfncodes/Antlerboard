@@ -12,6 +12,7 @@
 
 import { prisma } from "@/lib/db";
 import { YahooApiError, YahooAuthError, parseYahooErrorDescription } from "./errors";
+import { logYahooApiError } from "./diagnostics";
 
 const AUTH_BASE = "https://api.login.yahoo.com/oauth2/request_auth";
 const TOKEN_URL = "https://api.login.yahoo.com/oauth2/get_token";
@@ -137,7 +138,8 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
  * before its stated expires_in). Rate limits (999/429) and 5xx get up to two
  * backed-off retries. Anything else - including the 403 Yahoo sends when the
  * app's Client ID isn't approved for the Fantasy API - fails immediately as a
- * YahooApiError carrying Yahoo's own description.
+ * YahooApiError carrying Yahoo's own description. Every failed response is
+ * also logged once, sanitized, by logYahooApiError (see ./diagnostics).
  */
 export async function yahooFantasyGet(leagueId: string, path: string): Promise<unknown> {
   const separator = path.includes("?") ? "&" : "?";
@@ -154,6 +156,14 @@ export async function yahooFantasyGet(leagueId: string, path: string): Promise<u
 
     const body = await res.text().catch(() => "");
     const error = new YahooApiError(res.status, path, parseYahooErrorDescription(body));
+    logYahooApiError({
+      status: res.status,
+      path,
+      attempt,
+      description: error.description,
+      headers: res.headers,
+      knownSecrets: [accessToken],
+    });
 
     if (res.status === 401 && !refreshedAfter401) {
       refreshedAfter401 = true;
