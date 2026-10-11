@@ -110,23 +110,36 @@ export function pickYahooResponseHeaders(
   return { requestIds, headerNames: headerNames.sort() };
 }
 
+export interface YahooClientIdFingerprint {
+  tail: string;
+  sha256: string;
+  surroundingWhitespace: boolean;
+}
+
 /**
  * Identifies which Client ID this deployment sends, without logging it.
  *
- * `tail` is the last six characters. Yahoo Client IDs end in a base64-encoded
- * `...&sv=0&x=NN` suffix, so most of those six characters are the same for
- * every app - the tail is a quick visual check, not proof. `sha256` is the
- * first 12 hex characters of the full ID's SHA-256 and does tell apps apart.
+ * `sha256` is the first 12 hex characters of the SHA-256 of YAHOO_CLIENT_ID
+ * exactly as client.ts sends it to Yahoo (untrimmed), so it describes the
+ * value Yahoo actually receives. `surroundingWhitespace` flags a value with
+ * leading/trailing whitespace - Yahoo receives that whitespace too, and the
+ * hash then won't match a cleanly pasted copy of the same ID.
+ *
+ * `tail` is the last six visible characters. Yahoo Client IDs end in a
+ * base64-encoded `...&sv=0&x=NN` suffix, so most of those six characters are
+ * the same for every app - the tail is a quick visual check, not proof.
  * The Client ID itself is public (it's in Yahoo's login URL); the secret is
  * never read here. IDs too short to be real Yahoo Client IDs get no tail, so
  * a misconfigured short value is never logged whole.
  */
-export function yahooClientIdFingerprint(): { tail: string; sha256: string } | null {
-  const id = process.env.YAHOO_CLIENT_ID?.trim();
-  if (!id) return null;
+export function yahooClientIdFingerprint(): YahooClientIdFingerprint | null {
+  const raw = process.env.YAHOO_CLIENT_ID;
+  const visible = raw?.trim();
+  if (!raw || !visible) return null;
   return {
-    tail: id.length > 12 ? id.slice(-6) : "[short]",
-    sha256: createHash("sha256").update(id).digest("hex").slice(0, 12),
+    tail: visible.length > 12 ? visible.slice(-6) : "[short]",
+    sha256: createHash("sha256").update(raw).digest("hex").slice(0, 12),
+    surroundingWhitespace: raw !== visible,
   };
 }
 
@@ -144,7 +157,7 @@ export interface YahooApiErrorEvent {
   attempt: number;
   deployment: string | null;
   message: string | null;
-  clientId: { tail: string; sha256: string } | null;
+  clientId: YahooClientIdFingerprint | null;
   requestIds: Record<string, string>;
   headerNames: string[];
 }

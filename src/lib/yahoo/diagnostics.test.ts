@@ -126,6 +126,7 @@ describe("yahooClientIdFingerprint", () => {
     expect(fingerprint).toEqual({
       tail: CLIENT_ID.slice(-6),
       sha256: createHash("sha256").update(CLIENT_ID).digest("hex").slice(0, 12),
+      surroundingWhitespace: false,
     });
     expect(JSON.stringify(fingerprint)).not.toContain(CLIENT_ID.slice(0, 20));
   });
@@ -133,6 +134,26 @@ describe("yahooClientIdFingerprint", () => {
   it("is null when no Client ID is configured", () => {
     vi.stubEnv("YAHOO_CLIENT_ID", "");
     expect(yahooClientIdFingerprint()).toBeNull();
+    vi.stubEnv("YAHOO_CLIENT_ID", "  \n");
+    expect(yahooClientIdFingerprint()).toBeNull();
+  });
+
+  it("hashes the exact value sent to Yahoo and flags surrounding whitespace", () => {
+    vi.stubEnv("YAHOO_CLIENT_ID", `${CLIENT_ID}\n`);
+    const fingerprint = yahooClientIdFingerprint()!;
+    expect(fingerprint.surroundingWhitespace).toBe(true);
+    expect(fingerprint.tail).toBe(CLIENT_ID.slice(-6));
+    // Differs from a cleanly pasted copy - which is the point: Yahoo gets the newline too.
+    expect(fingerprint.sha256).toBe(createHash("sha256").update(`${CLIENT_ID}\n`).digest("hex").slice(0, 12));
+    expect(fingerprint.sha256).not.toBe(createHash("sha256").update(CLIENT_ID).digest("hex").slice(0, 12));
+  });
+
+  it("matches the Client ID that buildAuthorizationUrl sends", async () => {
+    vi.stubEnv("YAHOO_CLIENT_ID", CLIENT_ID);
+    vi.stubEnv("YAHOO_REDIRECT_URI", "https://example.test/api/yahoo/callback");
+    const { buildAuthorizationUrl } = await import("./client");
+    const sent = new URL(buildAuthorizationUrl("state")).searchParams.get("client_id")!;
+    expect(yahooClientIdFingerprint()!.sha256).toBe(createHash("sha256").update(sent).digest("hex").slice(0, 12));
   });
 
   it("does not show the tail of an implausibly short Client ID", () => {

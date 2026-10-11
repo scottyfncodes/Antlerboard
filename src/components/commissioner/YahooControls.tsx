@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { DiscoveredLeague, LeagueDiagnostic } from "@/app/api/yahoo/leagues/route";
 import type { LinkableTeam, YahooTeamLinkRow } from "@/app/api/yahoo/teams/route";
 import type { SyncSectionResult } from "@/lib/yahoo/sync";
+import type { YahooClientIdFingerprint } from "@/lib/yahoo/diagnostics";
 
 export function YahooControls({
   connected,
@@ -13,7 +14,7 @@ export function YahooControls({
 }: {
   connected: boolean;
   selectedLeagueKey: string | null;
-  clientIdFingerprint: { tail: string; sha256: string } | null;
+  clientIdFingerprint: YahooClientIdFingerprint | null;
 }) {
   const [leagues, setLeagues] = useState<DiscoveredLeague[] | null>(null);
   const [diagnostic, setDiagnostic] = useState<LeagueDiagnostic | null>(null);
@@ -105,6 +106,8 @@ export function YahooControls({
                 Client ID this site is using ends in <span className="font-mono">{clientIdFingerprint.tail}</span>{" "}
                 (fingerprint <span className="font-mono">{clientIdFingerprint.sha256}</span>) - it must match the one
                 Yahoo approved.
+                {clientIdFingerprint.surroundingWhitespace &&
+                  " Warning: the configured Client ID has leading or trailing whitespace, which is sent to Yahoo too."}
               </p>
             )}
             {diagnostic.helpUrl && (
