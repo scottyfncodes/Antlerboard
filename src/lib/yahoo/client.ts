@@ -11,7 +11,7 @@
  */
 
 import { prisma } from "@/lib/db";
-import { YahooApiError, parseYahooErrorDescription } from "./errors";
+import { YahooApiError, YahooAuthError, parseYahooErrorDescription } from "./errors";
 
 const AUTH_BASE = "https://api.login.yahoo.com/oauth2/request_auth";
 const TOKEN_URL = "https://api.login.yahoo.com/oauth2/get_token";
@@ -69,7 +69,8 @@ export async function exchangeCodeForToken(code: string): Promise<TokenResponse>
     }),
   });
   if (!res.ok) {
-    throw new Error(`Yahoo token exchange failed: ${res.status} ${await res.text()}`);
+    const description = parseYahooErrorDescription(await res.text().catch(() => ""));
+    throw new Error(`Yahoo token exchange failed: ${res.status}${description ? ` ${description}` : ""}`);
   }
   return res.json();
 }
@@ -89,7 +90,11 @@ export async function refreshAccessToken(refreshToken: string): Promise<TokenRes
     }),
   });
   if (!res.ok) {
-    throw new Error(`Yahoo token refresh failed: ${res.status} ${await res.text()}`);
+    const description = parseYahooErrorDescription(await res.text().catch(() => ""));
+    // 400/401 from the token endpoint means the refresh token itself is no
+    // good (invalid_grant) - retrying won't help, a reconnect will.
+    if (res.status === 400 || res.status === 401) throw new YahooAuthError(res.status, description);
+    throw new Error(`Yahoo token refresh failed: ${res.status}${description ? ` ${description}` : ""}`);
   }
   return res.json();
 }
@@ -98,7 +103,7 @@ export async function refreshAccessToken(refreshToken: string): Promise<TokenRes
  * Returns a valid access token for the league's Yahoo connection,
  * transparently refreshing it if it's expired or about to expire.
  */
-export async function getValidAccessToken(leagueId: string): Promise<string> {
+export async function getValidAccessToken(leagueId: string, opts: { forceRefresh?: boolean } = {}): Promise<string> {
   const connection = await prisma.yahooConnection.findUnique({ where: { leagueId } });
   if (!connection?.accessToken || !connection.refreshToken) {
     throw new Error("Yahoo is not connected for this league yet.");
@@ -107,7 +112,7 @@ export async function getValidAccessToken(leagueId: string): Promise<string> {
   const expiresSoon =
     !connection.tokenExpiresAt || connection.tokenExpiresAt.getTime() - Date.now() < 60_000;
 
-  if (!expiresSoon) return connection.accessToken;
+  if (!expiresSoon && !opts.forceRefresh) return connection.accessToken;
 
   const refreshed = await refreshAccessToken(connection.refreshToken);
   await prisma.yahooConnection.update({
@@ -121,19 +126,44 @@ export async function getValidAccessToken(leagueId: string): Promise<string> {
   return refreshed.access_token;
 }
 
-/** Authenticated GET against the Yahoo Fantasy API, returning parsed JSON. */
+const RETRY_DELAYS_MS = [1_000, 3_000];
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Authenticated GET against the Yahoo Fantasy API, returning parsed JSON.
+ *
+ * A 401 gets one forced token refresh and a retry (Yahoo can expire a token
+ * before its stated expires_in). Rate limits (999/429) and 5xx get up to two
+ * backed-off retries. Anything else - including the 403 Yahoo sends when the
+ * app's Client ID isn't approved for the Fantasy API - fails immediately as a
+ * YahooApiError carrying Yahoo's own description.
+ */
 export async function yahooFantasyGet(leagueId: string, path: string): Promise<unknown> {
-  const accessToken = await getValidAccessToken(leagueId);
   const separator = path.includes("?") ? "&" : "?";
   const url = `${FANTASY_API_BASE}${path}${separator}format=json`;
 
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
+  let accessToken = await getValidAccessToken(leagueId);
+  let refreshedAfter401 = false;
 
-  if (!res.ok) {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (res.ok) return res.json();
+
     const body = await res.text().catch(() => "");
-    throw new YahooApiError(res.status, path, parseYahooErrorDescription(body));
+    const error = new YahooApiError(res.status, path, parseYahooErrorDescription(body));
+
+    if (res.status === 401 && !refreshedAfter401) {
+      refreshedAfter401 = true;
+      accessToken = await getValidAccessToken(leagueId, { forceRefresh: true });
+      continue;
+    }
+    if (error.isRetryable && attempt < RETRY_DELAYS_MS.length) {
+      await sleep(RETRY_DELAYS_MS[attempt]);
+      continue;
+    }
+    throw error;
   }
-  return res.json();
 }

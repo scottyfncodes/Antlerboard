@@ -15,7 +15,8 @@
 
 import { prisma } from "@/lib/db";
 import { yahooFantasyGet } from "./client";
-import { toArray, mergeMeta, fantasyContent } from "./parse";
+import { toArray, mergeMeta, fantasyContent, readFields } from "./parse";
+import { YahooApiError } from "./errors";
 
 export interface SyncSectionResult {
   section: string;
@@ -29,72 +30,143 @@ export interface SyncResult {
   totalRecordsUpdated: number;
 }
 
+/**
+ * The Antlerboard season a Yahoo league response belongs to: the Season row
+ * matching the league's own `season` field, falling back to the latest
+ * season only when Yahoo didn't say (so an offseason row for next year
+ * never receives this year's standings).
+ */
+async function seasonForLeague(leagueId: string, leagueMeta: Record<string, unknown>) {
+  const year = Number(leagueMeta.season);
+  if (Number.isInteger(year) && year > 0) {
+    const season = await prisma.season.findUnique({ where: { leagueId_year: { leagueId, year } } });
+    if (season) return season;
+  }
+  return prisma.season.findFirst({ where: { leagueId }, orderBy: { year: "desc" } });
+}
+
+/** The `{teams: ...}` list from a league response, wherever Yahoo nested it. */
+export function findLeagueTeams(leagueField: unknown): unknown[] {
+  for (const node of toArray(leagueField)) {
+    if (!node || typeof node !== "object") continue;
+    if ("teams" in node) return toArray((node as { teams?: unknown }).teams);
+    // /league/{key}/standings nests it one level deeper:
+    // league[1].standings[0].teams
+    if ("standings" in node) {
+      for (const inner of toArray((node as { standings?: unknown }).standings)) {
+        if (inner && typeof inner === "object" && "teams" in inner) {
+          return toArray((inner as { teams?: unknown }).teams);
+        }
+      }
+    }
+  }
+  return [];
+}
+
+export interface YahooTeamSummary {
+  key: string;
+  name: string;
+  managerNicknames: string[];
+}
+
+/** Reads one `{team: [...]}` entry into its key, name, and manager nicknames. */
+export function readYahooTeam(entry: unknown): { summary: YahooTeamSummary; parts: unknown[] } | null {
+  const parts = toArray((entry as { team?: unknown })?.team);
+  if (parts.length === 0) return null;
+  const meta = mergeMeta(parts[0]);
+  const key = meta.team_key ? String(meta.team_key) : "";
+  if (!key) return null;
+  const managerNicknames = toArray(meta.managers)
+    .map((m) => (m as { manager?: { nickname?: unknown } })?.manager?.nickname)
+    .filter((n): n is string => typeof n === "string" && n.length > 0);
+  return { summary: { key, name: String(meta.name ?? "Unnamed Team"), managerNicknames }, parts };
+}
+
+/**
+ * Updates names and standings for teams already linked to Yahoo.
+ *
+ * A Yahoo team with no linked Antlerboard team is linked automatically only
+ * on an exact (case-insensitive) team-name match. Otherwise, if the league
+ * still has unlinked Antlerboard teams, it's left for the commissioner to
+ * link on Commissioner > Yahoo instead of guessing - creating a placeholder
+ * there would duplicate a real team and orphan its keeper history. Only a
+ * league with no unlinked teams left (a brand new league) gets placeholder
+ * teams created.
+ */
 async function syncTeamsAndStandings(leagueId: string, leagueKey: string): Promise<SyncSectionResult> {
   let updated = 0;
   const data = await yahooFantasyGet(leagueId, `/league/${leagueKey}/standings`);
 
   const leagueField = fantasyContent(data).league;
-  const leagueNode = mergeMeta(leagueField);
-  const teamsContainer = toArray(leagueField).find(
-    (n) => n && typeof n === "object" && "teams" in (n as object)
-  ) as { teams?: unknown } | undefined;
+  const leagueMeta = readFields(toArray(leagueField)[0]);
+  const teamEntries = findLeagueTeams(leagueField);
+  if (teamEntries.length === 0) {
+    return { section: "teams+standings", recordsUpdated: 0, error: `Yahoo returned no teams for league ${leagueKey}` };
+  }
 
-  const teamEntries = toArray(teamsContainer?.teams);
-
-  const season = await prisma.season.findFirst({ where: { league: { id: leagueId } }, orderBy: { year: "desc" } });
+  const season = await seasonForLeague(leagueId, leagueMeta);
+  const unlinked: string[] = [];
 
   for (const entry of teamEntries) {
-    const teamArray = (entry as { team?: unknown })?.team;
-    if (!teamArray) continue;
-    const [metaPart, standingsPart] = toArray(teamArray);
-    const meta = mergeMeta(metaPart);
-    const standings = mergeMeta((standingsPart as { team_standings?: unknown })?.team_standings);
-    const outcomeTotals = mergeMeta((standings as { outcome_totals?: unknown })?.outcome_totals);
-
-    const yahooTeamId = String(meta.team_key ?? meta.team_id ?? "");
-    const name = String(meta.name ?? "Unnamed Team");
-    if (!yahooTeamId) continue;
+    const read = readYahooTeam(entry);
+    if (!read) continue;
+    const { key: yahooTeamId, name } = read.summary;
+    const standingsPart = read.parts.find(
+      (p) => p && typeof p === "object" && "team_standings" in (p as object)
+    ) as { team_standings?: unknown } | undefined;
+    const standings = readFields(standingsPart?.team_standings);
+    const outcomeTotals = readFields(standings.outcome_totals);
 
     let team = await prisma.team.findFirst({ where: { leagueId, yahooTeamId } });
     if (!team) {
-      // Brand new Yahoo team we haven't mapped to a C&A manager yet.
-      // Created unassigned - a commissioner links it to a real manager
-      // from Commissioner > Teams rather than the sync guessing.
-      const placeholderManager = await prisma.manager.create({
-        data: { leagueId, name: `Unassigned (${name})` },
+      const byName = await prisma.team.findFirst({
+        where: { leagueId, yahooTeamId: null, active: true, name: { equals: name, mode: "insensitive" } },
       });
-      team = await prisma.team.create({
-        data: { leagueId, yahooTeamId, name, managerId: placeholderManager.id },
-      });
-    } else if (team.name !== name) {
+      if (byName) {
+        team = await prisma.team.update({ where: { id: byName.id }, data: { yahooTeamId } });
+      } else if ((await prisma.team.count({ where: { leagueId, yahooTeamId: null, active: true } })) > 0) {
+        unlinked.push(name);
+        continue;
+      } else {
+        // Brand new league with nothing to link to - create the team under
+        // a placeholder manager the commissioner can rename later.
+        const placeholderManager = await prisma.manager.create({
+          data: { leagueId, name: `Unassigned (${name})` },
+        });
+        team = await prisma.team.create({
+          data: { leagueId, yahooTeamId, name, managerId: placeholderManager.id },
+        });
+      }
+    }
+    if (team.name !== name) {
       await prisma.team.update({ where: { id: team.id }, data: { name } });
     }
     updated++;
 
-    if (season && standings.rank !== undefined) {
+    if (season && standings.rank !== undefined && standings.rank !== "") {
+      const values = {
+        wins: Number(outcomeTotals.wins ?? 0),
+        losses: Number(outcomeTotals.losses ?? 0),
+        ties: Number(outcomeTotals.ties ?? 0),
+        rank: Number(standings.rank),
+      };
       await prisma.teamStanding.upsert({
         where: { seasonId_teamId: { seasonId: season.id, teamId: team.id } },
-        create: {
-          seasonId: season.id,
-          teamId: team.id,
-          wins: Number(outcomeTotals.wins ?? 0),
-          losses: Number(outcomeTotals.losses ?? 0),
-          ties: Number(outcomeTotals.ties ?? 0),
-          rank: Number(standings.rank),
-        },
-        update: {
-          wins: Number(outcomeTotals.wins ?? 0),
-          losses: Number(outcomeTotals.losses ?? 0),
-          ties: Number(outcomeTotals.ties ?? 0),
-          rank: Number(standings.rank),
-        },
+        create: { seasonId: season.id, teamId: team.id, ...values },
+        update: values,
       });
       updated++;
     }
   }
 
-  void leagueNode;
-  return { section: "teams+standings", recordsUpdated: updated };
+  return {
+    section: "teams+standings",
+    recordsUpdated: updated,
+    error:
+      unlinked.length > 0
+        ? `${unlinked.length} Yahoo team(s) not linked to an Antlerboard team yet (${unlinked.join(", ")}) - link them on Commissioner > Yahoo`
+        : undefined,
+  };
 }
 
 /**
@@ -197,7 +269,7 @@ async function syncPlayers(leagueId: string): Promise<SyncSectionResult> {
         updated++;
       }
     } catch (err) {
-      perTeamErrors.push(`${team.name}: ${err instanceof Error ? err.message : "Unknown error"}`);
+      perTeamErrors.push(`${team.name}: ${describeSyncError(err)}`);
     }
   }
 
@@ -212,11 +284,12 @@ async function syncTransactions(leagueId: string, leagueKey: string): Promise<Sy
   let updated = 0;
   const data = await yahooFantasyGet(leagueId, `/league/${leagueKey}/transactions`);
 
-  const txContainer = toArray(fantasyContent(data).league).find(
+  const leagueField = fantasyContent(data).league;
+  const txContainer = toArray(leagueField).find(
     (n) => n && typeof n === "object" && "transactions" in (n as object)
   ) as { transactions?: unknown } | undefined;
 
-  const season = await prisma.season.findFirst({ where: { league: { id: leagueId } }, orderBy: { year: "desc" } });
+  const season = await seasonForLeague(leagueId, readFields(toArray(leagueField)[0]));
   if (!season) return { section: "transactions", recordsUpdated: 0, error: "No season configured" };
 
   for (const entry of toArray(txContainer?.transactions)) {
@@ -254,6 +327,13 @@ async function syncTransactions(leagueId: string, leagueKey: string): Promise<Sy
   return { section: "transactions", recordsUpdated: updated };
 }
 
+function describeSyncError(err: unknown): string {
+  if (err instanceof YahooApiError && err.isAppNotAuthorized) {
+    return "Yahoo hasn't enabled Fantasy Sports API access for this app's Client ID (403). Check the Client ID set in Vercel matches the one Yahoo approved.";
+  }
+  return err instanceof Error ? err.message : "Unknown error";
+}
+
 /**
  * Runs a full sync for a league and records the outcome. Safe to call
  * repeatedly (manually via "Sync Now" or on the Vercel Cron schedule) -
@@ -276,21 +356,17 @@ export async function runYahooSync(leagueId: string): Promise<SyncResult> {
   });
 
   const sections: SyncSectionResult[] = [];
-  const runSection = async (fn: () => Promise<SyncSectionResult>) => {
+  const runSection = async (section: string, fn: () => Promise<SyncSectionResult>) => {
     try {
       sections.push(await fn());
     } catch (err) {
-      sections.push({
-        section: fn.name,
-        recordsUpdated: 0,
-        error: err instanceof Error ? err.message : "Unknown error",
-      });
+      sections.push({ section, recordsUpdated: 0, error: describeSyncError(err) });
     }
   };
 
-  await runSection(() => syncTeamsAndStandings(leagueId, connection.yahooLeagueKey!));
-  await runSection(() => syncPlayers(leagueId));
-  await runSection(() => syncTransactions(leagueId, connection.yahooLeagueKey!));
+  await runSection("teams+standings", () => syncTeamsAndStandings(leagueId, connection.yahooLeagueKey!));
+  await runSection("players", () => syncPlayers(leagueId));
+  await runSection("transactions", () => syncTransactions(leagueId, connection.yahooLeagueKey!));
 
   const totalRecordsUpdated = sections.reduce((sum, s) => sum + s.recordsUpdated, 0);
   const failedSections = sections.filter((s) => s.error);

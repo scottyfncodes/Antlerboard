@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { runYahooSync } from "@/lib/yahoo/sync";
 
+// Twelve roster requests plus retries on Yahoo rate limits can outrun the
+// default function timeout.
+export const maxDuration = 120;
+
 /**
  * Vercel Cron target - see vercel.json for the schedule. Protected by
  * CRON_SECRET so it can't be triggered by an arbitrary public request.

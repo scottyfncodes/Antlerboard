@@ -8,6 +8,7 @@ vi.mock("./client", () => ({
 }));
 
 import { yahooFantasyGet } from "./client";
+import { YahooApiError } from "./errors";
 const mockedGet = vi.mocked(yahooFantasyGet);
 
 beforeEach(async () => {
@@ -18,32 +19,51 @@ afterAll(resetDatabase);
 
 const LEAGUE_KEY = "422.l.1";
 
-function standingsResponse(teams: { key: string; name: string; rank: string; wins: string; losses: string }[]) {
+/**
+ * Mirrors Yahoo's real /league/{key}/standings shape: the team list sits at
+ * league[1].standings[0].teams, and each team is
+ * [meta fields, {team_points}, {team_standings}] - team_standings is NOT the
+ * second element.
+ */
+function standingsResponse(
+  teams: { key: string; name: string; rank: string; wins: string; losses: string; nickname?: string }[],
+  opts: { season?: string } = {}
+) {
   return {
     fantasy_content: {
       league: [
-        { league_key: LEAGUE_KEY },
-        { name: "Claw & Antler League" },
+        { league_key: LEAGUE_KEY, name: "Claw & Antler League", season: opts.season ?? "2026" },
         {
-          teams: {
-            ...Object.fromEntries(
-              teams.map((t, i) => [
-                String(i),
-                {
-                  team: [
-                    [{ team_key: t.key }, { team_id: t.key.split(".").pop() }, { name: t.name }],
+          standings: [
+            {
+              teams: {
+                ...Object.fromEntries(
+                  teams.map((t, i) => [
+                    String(i),
                     {
-                      team_standings: [
-                        { rank: t.rank },
-                        { outcome_totals: [{ wins: t.wins }, { losses: t.losses }, { ties: "0" }] },
+                      team: [
+                        [
+                          { team_key: t.key },
+                          { team_id: t.key.split(".").pop() },
+                          { name: t.name },
+                          [],
+                          { managers: [{ manager: { manager_id: String(i + 1), nickname: t.nickname ?? "--" } }] },
+                        ],
+                        { team_points: { coverage_type: "season", season: "2026", total: "0" } },
+                        {
+                          team_standings: {
+                            rank: t.rank,
+                            outcome_totals: { wins: t.wins, losses: t.losses, ties: "0", percentage: ".500" },
+                          },
+                        },
                       ],
                     },
-                  ],
-                },
-              ])
-            ),
-            count: teams.length,
-          },
+                  ])
+                ),
+                count: teams.length,
+              },
+            },
+          ],
         },
       ],
     },
@@ -103,7 +123,7 @@ function transactionsResponse(txns: { key: string; type: string; timestamp: stri
   return {
     fantasy_content: {
       league: [
-        { league_key: LEAGUE_KEY },
+        { league_key: LEAGUE_KEY, season: "2026" },
         {
           transactions: {
             ...Object.fromEntries(
@@ -204,6 +224,124 @@ describe("runYahooSync - teams and standings", () => {
     const teams = await prisma.team.findMany({ where: { leagueId: league.id } });
     expect(teams).toHaveLength(1);
     expect(teams[0].name).toBe("The Antlers Renamed");
+  });
+});
+
+describe("runYahooSync - linking existing Antlerboard teams", () => {
+  async function existingTeam(leagueId: string, name: string, managerName: string) {
+    const manager = await prisma.manager.create({ data: { leagueId, name: managerName } });
+    return prisma.team.create({ data: { leagueId, name, managerId: manager.id } });
+  }
+
+  it("links an unlinked Antlerboard team on an exact name match instead of creating a duplicate", async () => {
+    const { league, season } = await setupConnectedLeague();
+    const existing = await existingTeam(league.id, "The Antlers", "Alex");
+    wireMock({
+      standings: standingsResponse([{ key: "422.l.1.t.1", name: "the antlers", rank: "3", wins: "9", losses: "6" }]),
+    });
+
+    const result = await runYahooSync(league.id);
+    expect(result.status).toBe("SUCCESS");
+
+    const teams = await prisma.team.findMany({ where: { leagueId: league.id } });
+    expect(teams).toHaveLength(1);
+    expect(teams[0].id).toBe(existing.id);
+    expect(teams[0].yahooTeamId).toBe("422.l.1.t.1");
+    expect(teams[0].managerId).toBe(existing.managerId);
+    expect(await prisma.manager.count({ where: { leagueId: league.id } })).toBe(1);
+
+    const standing = await prisma.teamStanding.findUniqueOrThrow({
+      where: { seasonId_teamId: { seasonId: season.id, teamId: existing.id } },
+    });
+    expect(standing).toMatchObject({ rank: 3, wins: 9, losses: 6 });
+  });
+
+  it("leaves unmatched Yahoo teams unlinked (no placeholder teams) while Antlerboard teams await linking", async () => {
+    const { league } = await setupConnectedLeague();
+    await existingTeam(league.id, "Moose Tracks", "Alex");
+    wireMock({
+      standings: standingsResponse([{ key: "422.l.1.t.1", name: "Yahoo Name Differs", rank: "1", wins: "1", losses: "0" }]),
+    });
+
+    const result = await runYahooSync(league.id);
+
+    const teams = await prisma.team.findMany({ where: { leagueId: league.id } });
+    expect(teams.map((t) => t.name)).toEqual(["Moose Tracks"]);
+    expect(teams[0].yahooTeamId).toBeNull();
+    expect(await prisma.manager.count({ where: { leagueId: league.id, name: { startsWith: "Unassigned" } } })).toBe(0);
+
+    const section = result.sections.find((s) => s.section === "teams+standings")!;
+    expect(section.error).toContain("Yahoo Name Differs");
+    expect(section.error).toContain("Commissioner > Yahoo");
+    expect(result.status).toBe("PARTIAL");
+  });
+
+  it("updates a linked team's name from Yahoo and keeps its id and manager", async () => {
+    const { league } = await setupConnectedLeague();
+    const existing = await existingTeam(league.id, "Old Name", "Alex");
+    await prisma.team.update({ where: { id: existing.id }, data: { yahooTeamId: "422.l.1.t.1" } });
+    wireMock({
+      standings: standingsResponse([{ key: "422.l.1.t.1", name: "New Name", rank: "1", wins: "1", losses: "0" }]),
+    });
+
+    await runYahooSync(league.id);
+
+    const after = await prisma.team.findUniqueOrThrow({ where: { id: existing.id } });
+    expect(after.name).toBe("New Name");
+    expect(after.managerId).toBe(existing.managerId);
+  });
+
+  it("records standings against the Yahoo league's own season, not a newer offseason row", async () => {
+    const { league, season } = await setupConnectedLeague();
+    const nextSeason = await prisma.season.create({ data: { leagueId: league.id, year: 2027, status: "UPCOMING" } });
+    wireMock({
+      standings: standingsResponse([{ key: "422.l.1.t.1", name: "The Antlers", rank: "1", wins: "10", losses: "5" }], {
+        season: "2026",
+      }),
+      transactions: transactionsResponse([{ key: "422.l.1.tr.9", type: "add", timestamp: "1700000000" }]),
+    });
+
+    await runYahooSync(league.id);
+
+    expect(await prisma.teamStanding.count({ where: { seasonId: season.id } })).toBe(1);
+    expect(await prisma.teamStanding.count({ where: { seasonId: nextSeason.id } })).toBe(0);
+    const tx = await prisma.transaction.findUniqueOrThrow({ where: { yahooTransactionId: "422.l.1.tr.9" } });
+    expect(tx.seasonId).toBe(season.id);
+  });
+
+  it("reports an error rather than a silent success when Yahoo returns no teams", async () => {
+    const { league } = await setupConnectedLeague();
+    wireMock({ standings: standingsResponse([]) });
+
+    const result = await runYahooSync(league.id);
+
+    const section = result.sections.find((s) => s.section === "teams+standings")!;
+    expect(section.error).toContain("no teams");
+    expect(result.status).not.toBe("SUCCESS");
+  });
+});
+
+describe("runYahooSync - Yahoo API errors", () => {
+  it("labels each failed section and explains Yahoo's app-not-authorized 403", async () => {
+    const { league } = await setupConnectedLeague();
+    // A linked team so the players section really requests (and fails) a roster.
+    const manager = await prisma.manager.create({ data: { leagueId: league.id, name: "Alex" } });
+    await prisma.team.create({
+      data: { leagueId: league.id, yahooTeamId: "422.l.1.t.1", name: "The Antlers", managerId: manager.id },
+    });
+    mockedGet.mockRejectedValue(
+      new YahooApiError(403, "/league/422.l.1/standings", "This application is not authorized to perform this action.")
+    );
+
+    const result = await runYahooSync(league.id);
+
+    expect(result.status).toBe("FAILED");
+    expect(result.sections.map((s) => s.section)).toEqual(["teams+standings", "players", "transactions"]);
+    const teamsSection = result.sections[0];
+    expect(teamsSection.error).toContain("hasn't enabled Fantasy Sports API access");
+
+    const connection = await prisma.yahooConnection.findUniqueOrThrow({ where: { leagueId: league.id } });
+    expect(connection.lastSyncError).toContain("hasn't enabled Fantasy Sports API access");
   });
 });
 
@@ -369,7 +507,9 @@ describe("runYahooSync - partial failure and preservation of Antlerboard-owned d
 
   it("writes an auditable SyncLog row for every run", async () => {
     const { league } = await setupConnectedLeague();
-    wireMock({});
+    wireMock({
+      standings: standingsResponse([{ key: "422.l.1.t.1", name: "The Antlers", rank: "1", wins: "10", losses: "5" }]),
+    });
     await runYahooSync(league.id);
 
     const connection = await prisma.yahooConnection.findUniqueOrThrow({ where: { leagueId: league.id } });

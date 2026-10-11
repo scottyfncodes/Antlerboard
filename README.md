@@ -76,7 +76,10 @@ gracefully (with clear in-app messaging) when either is unset.
   single anchor point, honoring skipped seasons without breaking the cycle.
 - `src/lib/yahoo/` holds the OAuth client and sync engine. The sync engine
   only ever writes fields Yahoo actually owns (team names, standings,
-  transactions) - see the comment at the top of `sync.ts`.
+  transactions) - see the comment at the top of `sync.ts`. Yahoo teams are
+  matched to Antlerboard teams by `Team.yahooTeamId`, which the commissioner
+  sets under Commissioner > Yahoo > Team links (exact team-name matches link
+  automatically); the sync never creates a duplicate of an existing team.
 - `src/lib/trades.ts`, `src/lib/offers.ts`, `src/lib/dpud.ts` hold the state
   machines for Trade Center, Make Me an Offer, and DPUD, each with their
   own integration test file.

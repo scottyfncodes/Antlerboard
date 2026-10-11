@@ -4,6 +4,10 @@ import { runYahooSync } from "@/lib/yahoo/sync";
 import { notifyManagers } from "@/lib/notifications";
 import { requireCommissioner } from "@/lib/current-manager";
 
+// Twelve roster requests plus retries on Yahoo rate limits can outrun the
+// default function timeout.
+export const maxDuration = 120;
+
 export async function POST() {
   if (!(await requireCommissioner())) {
     return NextResponse.json({ error: "Commissioner access required" }, { status: 403 });

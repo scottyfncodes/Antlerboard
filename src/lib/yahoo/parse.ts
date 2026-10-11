@@ -39,3 +39,15 @@ export function mergeMeta(value: unknown): Record<string, unknown> {
   }
   return out;
 }
+
+/**
+ * Reads a resource's fields whether Yahoo sent them as the usual array of
+ * single-key objects or as one already-flat object (team_standings and
+ * outcome_totals come back flat). mergeMeta alone would drop a flat
+ * object's scalar fields, since it only merges object-valued entries.
+ */
+export function readFields(value: unknown): Record<string, unknown> {
+  if (Array.isArray(value)) return mergeMeta(value);
+  if (value && typeof value === "object") return value as Record<string, unknown>;
+  return {};
+}
