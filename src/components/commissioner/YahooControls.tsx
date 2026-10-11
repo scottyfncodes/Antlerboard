@@ -9,9 +9,11 @@ import type { SyncSectionResult } from "@/lib/yahoo/sync";
 export function YahooControls({
   connected,
   selectedLeagueKey,
+  clientIdFingerprint,
 }: {
   connected: boolean;
   selectedLeagueKey: string | null;
+  clientIdFingerprint: { tail: string; sha256: string } | null;
 }) {
   const [leagues, setLeagues] = useState<DiscoveredLeague[] | null>(null);
   const [diagnostic, setDiagnostic] = useState<LeagueDiagnostic | null>(null);
@@ -98,6 +100,13 @@ export function YahooControls({
         {diagnostic?.reason === "app_not_authorized" ? (
           <div className="rounded-md border border-yellow/40 bg-yellow/10 px-3 py-2 text-sm text-yellow">
             <p>{diagnostic.message}</p>
+            {clientIdFingerprint && (
+              <p className="mt-1 text-xs">
+                Client ID this site is using ends in <span className="font-mono">{clientIdFingerprint.tail}</span>{" "}
+                (fingerprint <span className="font-mono">{clientIdFingerprint.sha256}</span>) - it must match the one
+                Yahoo approved.
+              </p>
+            )}
             {diagnostic.helpUrl && (
               <a href={diagnostic.helpUrl} target="_blank" rel="noopener noreferrer" className="mt-1 inline-block underline">
                 Open Yahoo&apos;s confirmation form

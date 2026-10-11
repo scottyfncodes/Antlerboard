@@ -4,6 +4,7 @@ import { Card, EmptyState } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { YahooControls } from "@/components/commissioner/YahooControls";
 import { isYahooConfigured } from "@/lib/yahoo/client";
+import { yahooClientIdFingerprint } from "@/lib/yahoo/diagnostics";
 import { timeAgo } from "@/lib/format";
 import { getCurrentManager } from "@/lib/current-manager";
 
@@ -41,7 +42,11 @@ export default async function YahooSettingsPage() {
 
       <Card>
         <h2 className="font-display text-lg mb-3">Connection</h2>
-        <YahooControls connected={!!connection?.accessToken} selectedLeagueKey={connection?.yahooLeagueKey ?? null} />
+        <YahooControls
+          connected={!!connection?.accessToken}
+          selectedLeagueKey={connection?.yahooLeagueKey ?? null}
+          clientIdFingerprint={yahooClientIdFingerprint()}
+        />
       </Card>
 
       <Card>
