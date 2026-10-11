@@ -3,7 +3,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { Card, EmptyState } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { YahooControls } from "@/components/commissioner/YahooControls";
-import { isYahooConfigured } from "@/lib/yahoo/client";
+import { missingYahooEnvVars } from "@/lib/yahoo/client";
 import { timeAgo } from "@/lib/format";
 import { getCurrentManager } from "@/lib/current-manager";
 
@@ -32,10 +32,24 @@ export default async function YahooSettingsPage() {
         subtitle="Yahoo stays the source of truth for rosters, standings, and transactions. Antlerboard layers keeper history, tags, trades, and DPUD on top - a sync never touches those."
       />
 
-      {!isYahooConfigured() && (
+      {missingYahooEnvVars().length > 0 && (
         <div className="rounded-lg border border-yellow/40 bg-yellow/10 px-4 py-3 text-sm text-yellow">
-          Yahoo OAuth isn&apos;t configured in this environment (missing YAHOO_CLIENT_ID / YAHOO_CLIENT_SECRET /
-          YAHOO_REDIRECT_URI). Set those in your Vercel project&apos;s environment variables to enable this.
+          {process.env.VERCEL_ENV === "preview" ? (
+            <>
+              This is a Vercel preview deployment, and Yahoo&apos;s settings only exist in Production (Yahoo sends you
+              back to the production address after login). Use Yahoo at{" "}
+              <a href="https://antlerboard.vercel.app/commissioner/yahoo" className="underline">
+                antlerboard.vercel.app
+              </a>
+              .
+            </>
+          ) : (
+            <>
+              Yahoo OAuth isn&apos;t configured in this environment ({process.env.VERCEL_ENV ?? "local"}): missing or
+              blank {missingYahooEnvVars().join(", ")}. Set {missingYahooEnvVars().length === 1 ? "it" : "them"} in the
+              Vercel project&apos;s environment variables for this environment, then redeploy.
+            </>
+          )}
         </div>
       )}
 

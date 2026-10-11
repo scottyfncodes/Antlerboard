@@ -23,8 +23,15 @@ function requireEnv(name: string): string {
   return value;
 }
 
+const YAHOO_ENV_VARS = ["YAHOO_CLIENT_ID", "YAHOO_CLIENT_SECRET", "YAHOO_REDIRECT_URI"] as const;
+
+/** Names (never values) of the Yahoo env vars that are unset or blank here. */
+export function missingYahooEnvVars(): string[] {
+  return YAHOO_ENV_VARS.filter((name) => !process.env[name]?.trim());
+}
+
 export function isYahooConfigured(): boolean {
-  return !!(process.env.YAHOO_CLIENT_ID && process.env.YAHOO_CLIENT_SECRET && process.env.YAHOO_REDIRECT_URI);
+  return missingYahooEnvVars().length === 0;
 }
 
 export function buildAuthorizationUrl(state: string): string {
