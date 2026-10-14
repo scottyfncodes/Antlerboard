@@ -37,6 +37,8 @@ export interface SyncResult {
   status: "SUCCESS" | "PARTIAL" | "FAILED";
   sections: SyncSectionResult[];
   totalRecordsUpdated: number;
+  /** The SyncLog row this run wrote (lets the scheduled run cite it). */
+  syncLogId?: string;
 }
 
 /**
@@ -649,5 +651,5 @@ export async function runYahooSync(leagueId: string): Promise<SyncResult> {
     }),
   ]);
 
-  return { status, sections, totalRecordsUpdated };
+  return { status, sections, totalRecordsUpdated, syncLogId: syncLog.id };
 }

@@ -52,11 +52,14 @@ exists for this reason.
    `classifyKeeperCost` / `nominationOrderOf` first, or record the
    commissioner's explicit decision to import without it.
 2. **Prove the cron works [READ].** On at least one day, with no manual
-   "Sync Now" between 09:00 and 13:00 UTC, confirm a SyncLog row appears with
-   `startedAt` between 12:00 and 13:00 UTC and `status = SUCCESS`
-   (query in §8). Vercel Hobby crons can fire anywhere within the scheduled
-   hour, and runtime logs are kept only 1 hour, so the database row is the
-   only durable evidence. If it never appears, fix the cron before going
+   "Sync Now" between 09:00 and 13:00 UTC, confirm the scheduled run's
+   `YAHOO_SYNC_CRON` audit entry (actor "Vercel Cron") with an
+   `outcome: "synced"` result whose `syncLogId` names a SyncLog row with
+   `status = SUCCESS` (query in §5). Runtime logs are kept only 1 hour on
+   Hobby, so the database is the only durable evidence. Every authenticated
+   scheduled run writes that audit entry, including runs that skip or find
+   no eligible connection. No entry at all after 13:00 UTC means the
+   schedule didn't fire or didn't authenticate. Fix the cron before going
    further. The post-import verification depends on it.
 
 ## 1. Prepare the input files [READ]
@@ -179,16 +182,26 @@ The commit must not overlap a sync: both write players and transactions.
 On the import day:
 
 1. No manual "Sync Now" after 09:00 UTC. Otherwise the 180-minute interval makes the cron skip.
-2. After 12:00 UTC, wait for the cron's row, rather than assuming it ran:
+2. After 12:00 UTC, wait for the scheduled run's evidence, rather than
+   assuming it ran:
 
    ```sql
-   select "startedAt", "finishedAt", status, "recordsUpdated", error
-   from "SyncLog" order by "startedAt" desc limit 3;
+   -- the scheduled run: what it did, and the SyncLog it created
+   select a."createdAt", r->>'outcome' outcome, r->>'status' status,
+          r->>'reason' reason, s.status log_status, s."finishedAt", s.error
+   from "AuditLogEntry" a
+   cross join lateral jsonb_array_elements((a."after"::jsonb)->'results') r
+   left join "SyncLog" s on s.id = r->>'syncLogId'
+   where a.action = 'YAHOO_SYNC_CRON'
+   order by a."createdAt" desc limit 3;
    ```
 
-   Proceed only when a row has `startedAt` today between 12:00 and 13:00 UTC,
-   `finishedAt` is set, and `status = 'SUCCESS'`. `RUNNING`, `PARTIAL` or
-   `FAILED` means stop and investigate; don't import that day.
+   Proceed only when today's entry (12:00 to 13:00 UTC) has
+   `outcome = synced` and its SyncLog has `finishedAt` set and
+   `status = SUCCESS`. `skipped` means a manual sync ran too recently.
+   `failed`, or a log status of `RUNNING`, `PARTIAL` or `FAILED`, means stop
+   and investigate; don't import that day. A SyncLog row with no matching
+   audit entry was a manual "Sync Now", not the schedule.
 3. Commit within about 60 minutes of that sync finishing, so the next
    automatic sync is about 24 hours away.
 

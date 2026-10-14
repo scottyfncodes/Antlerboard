@@ -181,6 +181,7 @@ describe("runYahooSync - teams and standings", () => {
 
     const result = await runYahooSync(league.id);
     expect(result.status).toBe("SUCCESS");
+    expect(result.syncLogId).toBe((await prisma.syncLog.findFirstOrThrow({ where: { status: "SUCCESS" } })).id);
 
     const teams = await prisma.team.findMany({ where: { leagueId: league.id }, orderBy: { name: "asc" } });
     expect(teams.map((t) => t.name)).toEqual(["The Antlers", "The Rack"]);

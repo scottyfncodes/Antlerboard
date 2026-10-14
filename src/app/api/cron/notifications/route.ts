@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runKeeperDeadlineChecks, runDpudEndingSoonChecks } from "@/lib/notification-jobs";
+import { isAuthorizedCronRequest } from "@/lib/cron-auth";
 
 export async function GET(req: NextRequest) {
-  const authHeader = req.headers.get("authorization");
-  if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!isAuthorizedCronRequest(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
