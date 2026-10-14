@@ -79,3 +79,88 @@ describe("POST /api/commissioner/import/check - team matching", () => {
     expect(res.status).toBe(403);
   });
 });
+
+describe("POST /api/commissioner/import/check - player matching", () => {
+  const playerRow = (playerName: string, season = "2026") => ({ playerName, teamName: "Hugo", season, method: "DRAFT", cost: "5" });
+
+  /** A second league with its own same-named player, team and 2026 acquisition. */
+  async function otherLeagueWith(playerName: string) {
+    const { league, season } = await makeLeagueWithSeason();
+    const { team } = await makeManagerAndTeam(league.id, "Stranger");
+    const player = await prisma.player.create({ data: { leagueId: league.id, name: playerName } });
+    await prisma.acquisition.create({
+      data: { seasonId: season.id, seasonYear: 2026, playerId: player.id, teamId: team.id, method: "DRAFT", cost: 30 },
+    });
+    return player;
+  }
+
+  it("matches an existing player in the commissioner's league (any case) and flags a same-season acquisition", async () => {
+    const { league, hugoTeam } = await setup();
+    const season = await prisma.season.findFirstOrThrow({ where: { leagueId: league.id } });
+    const kurtz = await prisma.player.create({ data: { leagueId: league.id, name: "Nick Kurtz" } });
+    await prisma.acquisition.create({
+      data: { seasonId: season.id, seasonYear: 2026, playerId: kurtz.id, teamId: hugoTeam.id, method: "DRAFT", cost: 12 },
+    });
+
+    const [same, otherSeason] = await check([playerRow("nick kurtz"), playerRow("Nick Kurtz", "2027")]);
+
+    expect(same.existingPlayerId).toBe(kurtz.id);
+    expect(same.errors).toEqual([]);
+    expect(same.conflict).toBe("nick kurtz already has a recorded acquisition for 2026");
+    expect(otherSeason.existingPlayerId).toBe(kurtz.id);
+    expect(otherSeason.conflict).toBeUndefined();
+  });
+
+  it("treats a player that exists only in another league as new, with no cross-league conflict", async () => {
+    await setup();
+    await otherLeagueWith("Nick Kurtz");
+
+    const [r] = await check([playerRow("Nick Kurtz")]);
+
+    expect(r.existingPlayerId).toBeUndefined();
+    expect(r.conflict).toBeUndefined();
+    expect(r.errors).toEqual([]);
+  });
+
+  it("matches the in-league player, never the other league's namesake", async () => {
+    const { league } = await setup();
+    // The other league's namesake exists first, so an unscoped lookup would find it.
+    await otherLeagueWith("Nick Kurtz");
+    const mine = await prisma.player.create({ data: { leagueId: league.id, name: "Nick Kurtz" } });
+
+    const [r] = await check([playerRow("Nick Kurtz")]);
+
+    expect(r.existingPlayerId).toBe(mine.id);
+    // The other league's 2026 acquisition is not this player's conflict.
+    expect(r.conflict).toBeUndefined();
+  });
+
+  it("reports an ambiguity error, and no match or conflict, when two players in the league share the name", async () => {
+    const { league, hugoTeam } = await setup();
+    const season = await prisma.season.findFirstOrThrow({ where: { leagueId: league.id } });
+    const one = await prisma.player.create({ data: { leagueId: league.id, name: "Will Smith", positions: ["C"] } });
+    await prisma.player.create({ data: { leagueId: league.id, name: "will smith", positions: ["RP"] } });
+    await prisma.acquisition.create({
+      data: { seasonId: season.id, seasonYear: 2026, playerId: one.id, teamId: hugoTeam.id, method: "DRAFT", cost: 3 },
+    });
+
+    const [r] = await check([playerRow("Will Smith")]);
+
+    expect(r.existingPlayerId).toBeUndefined();
+    expect(r.conflict).toBeUndefined();
+    expect(r.errors).toEqual([
+      'Player "Will Smith" matches more than one player in this league - resolve the duplicate before importing',
+    ]);
+  });
+
+  it("keeps the existing behavior for a brand-new player and for a missing player name", async () => {
+    await setup();
+
+    const [fresh, missing] = await check([playerRow("Someone New"), { ...playerRow(""), playerName: undefined }]);
+
+    expect(fresh.existingPlayerId).toBeUndefined();
+    expect(fresh.errors).toEqual([]);
+    expect(missing.errors).toContain("Missing player name");
+    expect(missing.existingPlayerId).toBeUndefined();
+  });
+});

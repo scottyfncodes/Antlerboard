@@ -57,9 +57,19 @@ export async function POST(req: Request) {
       let existingPlayerId: string | undefined;
 
       if (playerName) {
-        const existingPlayer = await prisma.player.findFirst({
-          where: { name: { equals: playerName, mode: "insensitive" } },
+        // Only this league's players, and only an unambiguous name: two
+        // same-named players here (e.g. two Will Smiths) can't be told apart
+        // from a CSV row, so the row is held back rather than attached to
+        // either one.
+        const sameName = await prisma.player.findMany({
+          where: { leagueId: commissioner.leagueId, name: { equals: playerName, mode: "insensitive" } },
+          select: { id: true },
+          take: 2,
         });
+        if (sameName.length > 1) {
+          errors.push(`Player "${playerName}" matches more than one player in this league - resolve the duplicate before importing`);
+        }
+        const existingPlayer = sameName.length === 1 ? sameName[0] : undefined;
         if (existingPlayer) {
           existingPlayerId = existingPlayer.id;
           if (!Number.isNaN(season)) {
