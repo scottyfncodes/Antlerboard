@@ -59,6 +59,7 @@ export async function resetDatabase() {
     "TransactionTeam",
     "TransactionPlayer",
     "Transaction",
+    "RosterSpot",
     "KeeperRecord",
     "TeamStanding",
     "DraftPick",

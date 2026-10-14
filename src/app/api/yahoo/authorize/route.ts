@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { randomBytes } from "crypto";
-import { buildAuthorizationUrl, isYahooConfigured } from "@/lib/yahoo/client";
+import { buildAuthorizationUrl, missingYahooEnvVars } from "@/lib/yahoo/client";
 import { requireCommissioner } from "@/lib/current-manager";
 
 export async function GET() {
@@ -8,9 +8,10 @@ export async function GET() {
     return NextResponse.json({ error: "Commissioner access required" }, { status: 403 });
   }
 
-  if (!isYahooConfigured()) {
+  const missing = missingYahooEnvVars();
+  if (missing.length > 0) {
     return NextResponse.json(
-      { error: "Yahoo OAuth is not configured. Set YAHOO_CLIENT_ID/YAHOO_CLIENT_SECRET/YAHOO_REDIRECT_URI." },
+      { error: `Yahoo OAuth is not configured in this environment. Missing or blank: ${missing.join(", ")}.` },
       { status: 400 }
     );
   }
