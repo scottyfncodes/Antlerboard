@@ -17,6 +17,7 @@ import { prisma } from "@/lib/db";
 import { yahooFantasyGet } from "./client";
 import { toArray, mergeMeta, fantasyContent, readFields } from "./parse";
 import { YahooApiError } from "./errors";
+import { canonicalYahooPlayerId, yahooPlayerIdForms } from "./player-id";
 import type { Season } from "@prisma/client";
 
 export interface SyncSectionResult {
@@ -280,6 +281,11 @@ export function readYahooRoster(data: unknown): { entries: YahooRosterEntry[]; t
  *
  * Matching order:
  *   1. Already linked (Player.yahooPlayerId === player_key).
+ *   1b. Linked under another form of the same Yahoo identity: the bare
+ *      player_id the league-history import stores ("12345"), or a key from
+ *      an earlier season ("458.p.12345"). Exactly one such player is the
+ *      same person and its key is brought up to date; more than one means
+ *      the data is already duplicated, and none of them is guessed at.
  *   2. Not linked yet, and exactly ONE unlinked player in the league has
  *      this exact name - claim it (covers players entered by hand or by
  *      import before Yahoo was connected).
@@ -299,7 +305,14 @@ async function resolveRosterPlayer(
   let player = await prisma.player.findFirst({ where: { leagueId, yahooPlayerId } });
   let ambiguous = false;
 
-  if (!player) {
+  const canonical = canonicalYahooPlayerId(yahooPlayerId);
+  if (!player && canonical) {
+    const sameIdentity = await prisma.player.findMany({ where: { leagueId, OR: yahooPlayerIdForms(canonical) }, take: 2 });
+    if (sameIdentity.length === 1) player = sameIdentity[0];
+    else ambiguous = sameIdentity.length > 1;
+  }
+
+  if (!player && !ambiguous) {
     const candidates = await prisma.player.findMany({
       where: { leagueId, yahooPlayerId: null, name: { equals: name, mode: "insensitive" } },
       take: 2,

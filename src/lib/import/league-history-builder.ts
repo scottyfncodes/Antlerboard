@@ -38,6 +38,7 @@ import type { ParsedTrade } from "./types";
 import { editDistance, matchPlayerName, normalizePlayerName } from "./player-names";
 import type { FranchiseResolver } from "./team-aliases";
 import { CONFIRMED_UNLOGGED_TRADES } from "./known-league-history";
+import type { OrderProvenance, PriceProvenance } from "./provenance";
 
 // ---------------------------------------------------------------------------
 // Output types
@@ -66,6 +67,12 @@ export interface HistoryEvent {
   franchise: string;
   method?: StintStartMethod;
   cost?: number;
+  /**
+   * ACQUIRED only: how far `cost` can be trusted (see provenance.ts). A
+   * missing price still needs a number for the engine, so `cost` is 0 then -
+   * this is what keeps that 0 from ever being read as a real $0.
+   */
+  priceStatus?: PriceProvenance;
   /** TRADED only: completed before the season's keeper deadline. */
   preseason?: boolean;
   sourceRef: string;
@@ -79,6 +86,8 @@ export interface HistoryDraftPick {
   playerKey: string;
   cost: number | null;
   sourceRef: string;
+  /** "source": the auction file's own pick number; "sheet": workbook row order (real order unknown). */
+  order: OrderProvenance;
 }
 
 export type CheckStatus = "match" | "mismatch" | "unmatched" | "not-computed";
@@ -141,6 +150,13 @@ export interface BuilderInput {
   currentSeason: number;
   /** Known draft dates (ISO date) per season; otherwise inferred from the first FAAB add. */
   draftDates?: Record<number, string>;
+  /**
+   * Seasons whose transactions the Yahoo sync already records. Their
+   * in-season moves belong to the sync, so the workbook's end-of-year
+   * rosters are not used to reconstruct them (that would invent a second
+   * copy of moves Yahoo already logged). See league-history-conflicts.ts.
+   */
+  yahooSyncedSeasons?: number[];
 }
 
 // ---------------------------------------------------------------------------
@@ -149,7 +165,7 @@ export interface BuilderInput {
 
 const PITCHER_POSITIONS = new Set(["SP", "RP", "P", "LHP", "RHP"]);
 
-function isPitcherPositions(positions: string[]): boolean | null {
+export function isPitcherPositions(positions: string[]): boolean | null {
   if (positions.length === 0) return null;
   const pitcher = positions.some((p) => PITCHER_POSITIONS.has(p.toUpperCase()));
   // Util / DH only ever describe a hitter (that is how Yahoo lists Ohtani's batting half).
@@ -345,6 +361,7 @@ export const MIN_EOY_ROWS_FOR_RECONCILE = 15;
 
 export function buildLeagueHistory(input: BuilderInput): LeagueHistoryPreview {
   const { blocks, auctionRows, yahoo, offseasonTrades, resolver, firstSeason, currentSeason } = input;
+  const yahooSyncedSeasons = new Set(input.yahooSyncedSeasons ?? []);
   const registry = new PlayerRegistry();
   const events: HistoryEvent[] = [];
   const draftPicks: HistoryDraftPick[] = [];
@@ -538,6 +555,7 @@ export function buildLeagueHistory(input: BuilderInput): LeagueHistoryPreview {
           franchise: k.franchise,
           method: "DRAFT",
           cost: Math.max(0, (k.cost ?? 1) - 1),
+          priceStatus: k.cost === null ? "missing" : "inferred",
           sourceRef: k.ref,
           flags: [`Pre-${firstSeason} history: treated as acquired in ${season - 1} so ${season} is keeper year 1 (the workbook's +3 step into ${season + 1} confirms this for every ${season} keeper).`],
         });
@@ -584,6 +602,7 @@ export function buildLeagueHistory(input: BuilderInput): LeagueHistoryPreview {
             franchise: k.franchise,
             method: "WAIVER",
             cost: Math.max(0, (k.cost ?? 1) - 1),
+            priceStatus: k.cost === null ? "missing" : "inferred",
             sourceRef: k.ref,
             flags: [`Kept in ${season} with no acquisition on record - origin assumed to be a ${season - 1} pickup priced to match the recorded keeper cost.`],
           });
@@ -625,11 +644,12 @@ export function buildLeagueHistory(input: BuilderInput): LeagueHistoryPreview {
           franchise: f,
           method: "DRAFT",
           cost: r.salary ?? 0,
+          priceStatus: r.salary === null ? "missing" : "recorded",
           sourceRef: `auction:${r.sourceRef}`,
           flags: r.salary === null ? ["Auction row had no salary - cost recorded as 0."] : [],
         });
         moveTo(newRosters, player.key, f);
-        if (r.pick !== null) draftPicks.push({ season, overallPick: r.pick, franchise: f, playerKey: player.key, cost: r.salary, sourceRef: r.sourceRef });
+        if (r.pick !== null) draftPicks.push({ season, overallPick: r.pick, franchise: f, playerKey: player.key, cost: r.salary, sourceRef: r.sourceRef, order: "source" });
       }
     } else {
       let pick = 0;
@@ -645,11 +665,12 @@ export function buildLeagueHistory(input: BuilderInput): LeagueHistoryPreview {
             franchise: b.managerSheetName,
             method: "DRAFT",
             cost: d.cost ?? 0,
+            priceStatus: d.cost === null ? "missing" : "recorded",
             sourceRef: `workbook:${b.managerSheetName}/${season}/draft`,
             flags: d.cost === null ? ["Draft row had no cost - recorded as 0."] : [],
           });
           moveTo(newRosters, player.key, b.managerSheetName);
-          draftPicks.push({ season, overallPick: pick, franchise: b.managerSheetName, playerKey: player.key, cost: d.cost, sourceRef: `${b.managerSheetName} ${season} draft` });
+          draftPicks.push({ season, overallPick: pick, franchise: b.managerSheetName, playerKey: player.key, cost: d.cost, sourceRef: `${b.managerSheetName} ${season} draft`, order: "sheet" });
         }
       }
       if (pick > 0) flags.push(`${season}: auction results taken from the workbook (nomination order unknown - picks numbered by sheet order).`);
@@ -700,7 +721,10 @@ export function buildLeagueHistory(input: BuilderInput): LeagueHistoryPreview {
               date: tx.timestamp.toISOString(),
               franchise: to,
               method,
+              // Yahoo omits faab_bid on $0 claims and free-agent adds, so
+              // an absent bid is a real $0, not a missing price.
               cost: tx.faabBid ?? 0,
+              priceStatus: method === "FYPD" ? "rule" : "recorded",
               sourceRef: ref,
               flags: addFlags,
             });
@@ -721,6 +745,10 @@ export function buildLeagueHistory(input: BuilderInput): LeagueHistoryPreview {
           }
         }
       }
+    } else if (yahooSyncedSeasons.has(season)) {
+      flags.push(
+        `${season}: in-season moves were not reconstructed - the Yahoo sync already records ${season}'s transactions, so the workbook's end-of-year rosters would duplicate them.`
+      );
     } else {
       // No transaction export for this season: reconcile against the
       // workbook's end-of-year rosters where they look complete.
@@ -762,6 +790,7 @@ export function buildLeagueHistory(input: BuilderInput): LeagueHistoryPreview {
             franchise,
             method: prospect ? "FYPD" : "WAIVER",
             cost: prospect ? 0 : (row.cost ?? 0),
+            priceStatus: prospect ? "rule" : row.cost === null ? "missing" : "recorded",
             sourceRef: `workbook:${franchise}/${season}/eoy`,
             flags: [`Added from ${franchise}'s ${season} end-of-year roster (no ${season} transaction export); cost taken from the sheet.`],
           });

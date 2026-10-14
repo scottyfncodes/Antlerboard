@@ -3,7 +3,21 @@
 import { useMemo, useState } from "react";
 import type { LeagueHistoryPreview, KeeperCheck, CheckStatus } from "@/lib/import/league-history-builder";
 
+interface IdentityReviewItem {
+  importKey: string;
+  name: string;
+  reason: string;
+  candidateIds: string[];
+}
+
 interface Preview extends LeagueHistoryPreview {
+  previewToken: string;
+  dbCheck: {
+    conflicts: string[];
+    identityReview: IdentityReviewItem[];
+    identityCounts: { byYahooId: number; byName: number; created: number };
+    yahooSyncedSeasons: number[];
+  } | null;
   sources: {
     managerSheets: string[];
     auctionRows: number;
@@ -25,6 +39,9 @@ interface CommitResult {
   overridesApplied: number;
   historicalTradesResolved: number;
   previousImportRowsRemoved: number;
+  playersMatchedByYahooId: number;
+  playersMatchedByName: number;
+  identityReview: IdentityReviewItem[];
 }
 
 type Step = "upload" | "review" | "done";
@@ -95,7 +112,7 @@ export function LeagueHistoryImportWizard() {
     const data = await res.json();
     setBusy(false);
     if (!res.ok) {
-      setError(data.error ?? "Import failed.");
+      setError(data.conflicts?.length ? `Nothing was written. ${data.conflicts.join(" ")}` : data.error ?? "Import failed.");
       return;
     }
     setResult(data);
@@ -129,8 +146,45 @@ export function LeagueHistoryImportWizard() {
   if (step === "review" && preview) {
     const kc = preview.summary.keeperChecks;
     const total = kc.match + kc.mismatch + kc.unmatched + kc["not-computed"];
+    const conflicts = preview.dbCheck?.conflicts ?? [];
+    const review = preview.dbCheck?.identityReview ?? [];
+    const ids = preview.dbCheck?.identityCounts;
     return (
       <div className="space-y-6">
+        {conflicts.length > 0 && (
+          <section className="rounded-xl border border-red/50 bg-red/10 p-4 text-sm space-y-1.5">
+            <p className="font-medium text-red">This import can&apos;t be committed - it would conflict with data already in Antlerboard.</p>
+            {conflicts.map((c) => (
+              <p key={c}>{c}</p>
+            ))}
+          </section>
+        )}
+        {ids && (
+          <section className="rounded-xl border border-border bg-surface p-4 text-sm space-y-1.5">
+            <p>
+              <span className="font-medium">Players:</span> {ids.byYahooId} matched to existing players by Yahoo id, {ids.byName} by an
+              unambiguous name, {ids.created} new. Existing players&apos; Yahoo ids are never changed.
+            </p>
+            {(preview.dbCheck?.yahooSyncedSeasons.length ?? 0) > 0 && (
+              <p className="text-muted">
+                The Yahoo sync already records {preview.dbCheck!.yahooSyncedSeasons.join(", ")} - those seasons&apos; in-season
+                transactions stay the sync&apos;s and are not imported.
+              </p>
+            )}
+            {review.length > 0 && (
+              <div>
+                <p className="text-yellow">{review.length} players kept separate for manual review (a match couldn&apos;t be established confidently):</p>
+                <ul className="text-xs space-y-0.5 max-h-40 overflow-y-auto mt-1">
+                  {review.map((r) => (
+                    <li key={r.importKey}>
+                      <span className="font-medium">{r.name}</span> <span className="text-muted">– {r.reason}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </section>
+        )}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           <Stat label="Players" value={preview.summary.players} />
           <Stat label="Events" value={preview.summary.events} note={`${preview.summary.flaggedEvents} flagged`} />
@@ -234,7 +288,7 @@ export function LeagueHistoryImportWizard() {
             Back
           </button>
           <button
-            disabled={busy}
+            disabled={busy || conflicts.length > 0}
             onClick={commit}
             className="rounded-md bg-antler px-3 py-2 text-sm font-medium text-[#1a1305] hover:bg-antler-strong disabled:opacity-50"
           >
@@ -257,6 +311,9 @@ export function LeagueHistoryImportWizard() {
       <p className="text-muted">
         {result?.keeperRecordsWritten} keeper records rebuilt, {result?.overridesApplied} kept at the workbook&apos;s recorded cost.
       </p>
+      {!!result?.identityReview?.length && (
+        <p className="text-yellow">{result.identityReview.length} players were kept separate for manual review - see the audit log entry.</p>
+      )}
       {!!result?.historicalTradesResolved && <p className="text-muted">{result.historicalTradesResolved} trade-log entries linked to teams.</p>}
       {!!result?.previousImportRowsRemoved && <p className="text-muted">{result.previousImportRowsRemoved} rows from a previous run replaced.</p>}
     </div>
