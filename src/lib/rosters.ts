@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 
 /**
@@ -87,4 +88,87 @@ export async function getCurrentTeamForPlayer(playerId: string, seasonYear: numb
   return keeper
     ? { status: "rostered" as const, team: keeper.team, source: "keepers" as const }
     : { status: "unrostered" as const, team: null, source: "keepers" as const };
+}
+
+type Db = Prisma.TransactionClient | typeof prisma;
+
+/**
+ * Who holds each player right now, for deciding what a team can trade.
+ *
+ * With a Yahoo roster snapshot recorded for the season (RosterSpot rows),
+ * the snapshot decides - adjusted for deals agreed in Antlerboard since that
+ * snapshot was taken: a TRADE acquisition created after the season's latest
+ * roster sync means the move was agreed here (a trade or an accepted offer)
+ * but isn't in Yahoo yet, so its receiving team holds the player. The next
+ * sync moves the snapshot past it, and Yahoo's roster decides again.
+ *
+ * Without a Yahoo snapshot for the season, the live keeper stint decides, as
+ * before rosters were synced - and a player with more than one live stint is
+ * ambiguous, so he has no holder.
+ *
+ * Players with no holder (free agents, unknown ids, ambiguous stints) are
+ * absent from the map. Run inside a deal's transaction, after taking the
+ * players' locks, so a deal that just committed is visible here.
+ */
+export async function getCurrentHolders(
+  db: Db,
+  leagueId: string,
+  seasonYear: number,
+  playerIds?: string[]
+): Promise<Map<string, string>> {
+  const holders = new Map<string, string>();
+  const season = await db.season.findFirst({ where: { leagueId, year: seasonYear }, select: { id: true } });
+  if (!season) return holders;
+  const playerFilter = playerIds ? { playerId: { in: playerIds } } : {};
+
+  const snapshot = await db.rosterSpot.aggregate({ where: { seasonId: season.id }, _max: { lastSeenAt: true } });
+  const snapshotAt = snapshot._max.lastSeenAt;
+
+  if (snapshotAt) {
+    const [spots, agreedSince] = await Promise.all([
+      db.rosterSpot.findMany({ where: { seasonId: season.id, ...playerFilter }, select: { playerId: true, teamId: true } }),
+      db.acquisition.findMany({
+        where: { seasonId: season.id, method: "TRADE", createdAt: { gt: snapshotAt }, ...playerFilter },
+        select: { playerId: true, teamId: true },
+        orderBy: { createdAt: "asc" },
+      }),
+    ]);
+    for (const s of spots) holders.set(s.playerId, s.teamId);
+    for (const a of agreedSince) holders.set(a.playerId, a.teamId); // latest agreed move wins
+    return holders;
+  }
+
+  const live = await db.keeperRecord.findMany({
+    where: { seasonId: season.id, status: { not: "DROPPED" }, ...playerFilter },
+    select: { playerId: true, teamId: true },
+  });
+  const stints = new Map<string, string[]>();
+  for (const k of live) stints.set(k.playerId, [...(stints.get(k.playerId) ?? []), k.teamId]);
+  for (const [playerId, teams] of stints) if (teams.length === 1) holders.set(playerId, teams[0]);
+  return holders;
+}
+
+/**
+ * What the trade form offers: each active team in the league with the
+ * players it can trade right now. Holdings come from getCurrentHolders - the
+ * same rule the trade and offer guards enforce - so the form never lists a
+ * player the guard would refuse, or hides one it would accept. (Listing only
+ * live keeper records left every roster empty once Yahoo rosters were synced
+ * without keeper records.)
+ */
+export async function getTradeRosters(leagueId: string, seasonYear: number) {
+  const [teams, holders] = await Promise.all([
+    prisma.team.findMany({ where: { leagueId, active: true }, orderBy: { name: "asc" } }),
+    getCurrentHolders(prisma, leagueId, seasonYear),
+  ]);
+  const players = await prisma.player.findMany({
+    where: { id: { in: [...holders.keys()] } },
+    select: { id: true, name: true, mlbTeam: true },
+    orderBy: { name: "asc" },
+  });
+  return teams.map((t) => ({
+    id: t.id,
+    name: t.name,
+    roster: players.filter((p) => holders.get(p.id) === t.id),
+  }));
 }
