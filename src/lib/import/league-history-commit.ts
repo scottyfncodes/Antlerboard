@@ -4,8 +4,14 @@
  * starting with SOURCE_PREFIX, so a re-run first removes its own previous
  * rows and never touches anything a commissioner entered by hand.
  *
+ * Before writing anything it re-checks the preview against the database
+ * as it is now (see checkLeagueHistoryAgainstDb): a Yahoo id stored on two
+ * players, or any overlap with transactions the Yahoo sync already
+ * recorded, throws LeagueHistoryConflictError and nothing is written.
+ *
  * Writes, in order: managers/teams for any franchise that doesn't exist
- * yet, seasons, players (matched by Yahoo id, then by name), acquisitions
+ * yet, seasons, players (see player-identity.ts - an existing player's
+ * Yahoo id is never changed), acquisitions
  * (ACQUIRED and TRADED events), DROP transactions, draft picks, then a
  * bulk rebuild of KeeperRecord rows for every player touched. Finally,
  * where the workbook's recorded keeper cost disagrees with the computed
@@ -19,6 +25,10 @@ import type { Prisma } from "@prisma/client";
 import { rebuildKeeperRecordsBulk } from "../keeper-sync";
 import type { FranchiseResolver } from "./team-aliases";
 import type { LeagueHistoryPreview } from "./league-history-builder";
+import { canonicalYahooPlayerId } from "../yahoo/player-id";
+import { planPlayerIdentities, reviewNotes, type IdentityPlan, type IdentityReviewItem } from "./player-identity";
+import { findTransactionConflicts, type SyncedTransactionState } from "./league-history-conflicts";
+import { tagRef, type PriceProvenance } from "./provenance";
 
 type Db = Prisma.TransactionClient;
 
@@ -33,6 +43,13 @@ export interface CommitOptions {
   resolver?: FranchiseResolver;
 }
 
+export class LeagueHistoryConflictError extends Error {
+  constructor(readonly conflicts: string[]) {
+    super(`Import stopped before writing anything: ${conflicts.join(" ")}`);
+    this.name = "LeagueHistoryConflictError";
+  }
+}
+
 export interface CommitResult {
   managersCreated: number;
   teamsCreated: number;
@@ -45,6 +62,42 @@ export interface CommitResult {
   overridesApplied: number;
   historicalTradesResolved: number;
   previousImportRowsRemoved: number;
+  playersMatchedByYahooId: number;
+  playersMatchedByName: number;
+  /** Players kept separate because their identity couldn't be established confidently. */
+  identityReview: IdentityReviewItem[];
+}
+
+export interface DbCheck {
+  plan: IdentityPlan;
+  synced: SyncedTransactionState;
+  conflicts: string[];
+}
+
+/** Synced (Yahoo) transaction keys and seasons for this league. */
+export async function loadSyncedTransactionState(db: Db, leagueId: string): Promise<SyncedTransactionState> {
+  const rows = await db.transaction.findMany({
+    where: { yahooTransactionId: { not: null }, season: { leagueId } },
+    select: { yahooTransactionId: true, seasonYear: true },
+  });
+  return {
+    yahooTransactionIds: rows.map((r) => r.yahooTransactionId!),
+    seasons: [...new Set(rows.map((r) => r.seasonYear))].sort((a, b) => a - b),
+  };
+}
+
+/**
+ * Read-only: every decision and conflict the commit would hit, against the
+ * database as it is now. The preview shows it; the commit re-runs it inside
+ * its transaction and refuses to write on any conflict.
+ */
+export async function checkLeagueHistoryAgainstDb(db: Db, leagueId: string, preview: Pick<LeagueHistoryPreview, "players" | "events">): Promise<DbCheck> {
+  const [existing, synced] = await Promise.all([
+    db.player.findMany({ where: { leagueId }, select: { id: true, yahooPlayerId: true, name: true, positions: true, notes: true } }),
+    loadSyncedTransactionState(db, leagueId),
+  ]);
+  const plan = planPlayerIdentities(preview.players, existing);
+  return { plan, synced, conflicts: [...plan.conflicts, ...findTransactionConflicts(preview.events, synced)] };
 }
 
 export async function commitLeagueHistory(db: Db, leagueId: string, preview: LeagueHistoryPreview, options: CommitOptions): Promise<CommitResult> {
@@ -60,7 +113,14 @@ export async function commitLeagueHistory(db: Db, leagueId: string, preview: Lea
     overridesApplied: 0,
     historicalTradesResolved: 0,
     previousImportRowsRemoved: 0,
+    playersMatchedByYahooId: 0,
+    playersMatchedByName: 0,
+    identityReview: [],
   };
+
+  // --- refuse before writing anything ---------------------------------------
+  const { plan, conflicts } = await checkLeagueHistoryAgainstDb(db, leagueId, preview);
+  if (conflicts.length > 0) throw new LeagueHistoryConflictError(conflicts);
 
   // --- remove this import's previous rows (re-run safety) -----------------
   const prevTx = await db.transaction.findMany({ where: { sourceRef: { startsWith: SOURCE_PREFIX } }, select: { id: true } });
@@ -113,46 +173,44 @@ export async function commitLeagueHistory(db: Db, leagueId: string, preview: Lea
   }
 
   // --- players -------------------------------------------------------------
+  // Decided by planPlayerIdentities above. Matched players are used as they
+  // are - their Yahoo id (the sync's full "469.p.N" key) is never rewritten,
+  // which is what lets the next roster sync keep finding them. New players
+  // store the canonical bare id, which the sync also matches.
   const playerIdByKey = new Map<string, string>();
-  const existingByYahoo = new Map(
-    (await db.player.findMany({ where: { leagueId, yahooPlayerId: { not: null } }, select: { id: true, yahooPlayerId: true } })).map((p) => [p.yahooPlayerId!, p.id])
-  );
-  const existingByName = new Map<string, string>();
-  for (const p of await db.player.findMany({ where: { leagueId }, select: { id: true, name: true } })) {
-    existingByName.set(p.name.toLowerCase(), p.id);
-  }
-  const toCreate: { id: string; leagueId: string; yahooPlayerId: string | null; name: string; mlbTeam: string | null; positions: string[] }[] = [];
-  const claimedByYahoo = new Set<string>(); // existing rows already matched to a Yahoo id this run
+  const toCreate: { id: string; leagueId: string; yahooPlayerId: string | null; name: string; mlbTeam: string | null; positions: string[]; notes: string | null }[] = [];
+  const reviewByKey = new Map(plan.review.map((r) => [r.importKey, r]));
   for (const p of preview.players) {
-    // A player with a Yahoo id matches an existing row by that id, or by
-    // name only when the existing row has no Yahoo id yet (a hand-entered
-    // player being linked up). Two distinct Yahoo players who share a name
-    // (there are a few) must never collapse into one row.
-    const byYahoo = p.yahooPlayerId ? existingByYahoo.get(p.yahooPlayerId) : undefined;
-    const byName = existingByName.get(p.name.toLowerCase());
-    const existingId = byYahoo ?? (byName && !claimedByYahoo.has(byName) ? byName : undefined);
-    if (existingId) {
-      playerIdByKey.set(p.key, existingId);
+    const decision = plan.decisions.get(p.key);
+    if (decision?.kind === "existing") {
+      playerIdByKey.set(p.key, decision.playerId);
       result.playersMatched++;
-      if (p.yahooPlayerId && !byYahoo) {
-        claimedByYahoo.add(existingId);
-        await db.player.update({ where: { id: existingId }, data: { yahooPlayerId: p.yahooPlayerId } }).catch(() => undefined);
-      }
       continue;
     }
     const id = randomUUID();
-    toCreate.push({ id, leagueId, yahooPlayerId: p.yahooPlayerId, name: p.name, mlbTeam: p.mlbTeam, positions: p.positions });
+    const review = reviewByKey.get(p.key);
+    toCreate.push({
+      id,
+      leagueId,
+      yahooPlayerId: canonicalYahooPlayerId(p.yahooPlayerId),
+      name: p.name,
+      mlbTeam: p.mlbTeam,
+      positions: p.positions,
+      notes: review ? reviewNotes(review) : null,
+    });
     playerIdByKey.set(p.key, id);
-    if (p.yahooPlayerId) claimedByYahoo.add(id);
-    if (!existingByName.has(p.name.toLowerCase())) existingByName.set(p.name.toLowerCase(), id);
   }
   for (let i = 0; i < toCreate.length; i += 1000) {
     await db.player.createMany({ data: toCreate.slice(i, i + 1000) });
   }
   result.playersCreated = toCreate.length;
+  result.playersMatchedByYahooId = plan.counts.byYahooId;
+  result.playersMatchedByName = plan.counts.byName;
+  result.identityReview = plan.review;
 
   // --- events -> acquisitions and drops ------------------------------------
-  const acquisitions: Prisma.AcquisitionCreateManyInput[] = [];
+  const acquisitions: (Prisma.AcquisitionCreateManyInput & { id: string })[] = [];
+  const acquisitionTags = new Map<string, { raw: string; price?: PriceProvenance; keeperRecorded: number[] }>();
   const transactions: Prisma.TransactionCreateManyInput[] = [];
   const transactionPlayers: Prisma.TransactionPlayerCreateManyInput[] = [];
   const transactionTeams: Prisma.TransactionTeamCreateManyInput[] = [];
@@ -173,7 +231,10 @@ export async function commitLeagueHistory(db: Db, leagueId: string, preview: Lea
     }
     const teamId = teamIdByFranchise.get(e.franchise);
     if (!teamId) continue;
+    const id = randomUUID();
+    acquisitionTags.set(id, { raw: sourceRef, price: e.kind === "TRADED" ? undefined : e.priceStatus, keeperRecorded: [] });
     acquisitions.push({
+      id,
       seasonId,
       seasonYear: e.season,
       playerId,
@@ -185,6 +246,25 @@ export async function commitLeagueHistory(db: Db, leagueId: string, preview: Lea
       notes,
       sourceRef,
     });
+  }
+
+  // Seasons where the workbook's recorded keeper cost equals what the engine
+  // computes are recorded costs, even when the stint's origin price was
+  // inferred - noted on that origin acquisition (the latest non-trade
+  // acquisition before the season) so readers can tell. Mismatches become
+  // overrides below instead.
+  for (const check of preview.keeperChecks) {
+    if (check.status !== "match" || !check.playerKey || check.recordedCost === null) continue;
+    const playerId = playerIdByKey.get(check.playerKey);
+    const origin = acquisitions
+      .filter((a) => a.playerId === playerId && a.method !== "TRADE" && a.seasonYear < check.season)
+      .sort((a, b) => a.seasonYear - b.seasonYear || new Date(a.date!).getTime() - new Date(b.date!).getTime())
+      .pop();
+    if (origin) acquisitionTags.get(origin.id)!.keeperRecorded.push(check.season);
+  }
+  for (const a of acquisitions) {
+    const t = acquisitionTags.get(a.id)!;
+    a.sourceRef = tagRef(t.raw, { price: t.price, keeperRecorded: t.keeperRecorded });
   }
   for (let i = 0; i < acquisitions.length; i += 1000) await db.acquisition.createMany({ data: acquisitions.slice(i, i + 1000) });
   for (let i = 0; i < transactions.length; i += 1000) await db.transaction.createMany({ data: transactions.slice(i, i + 1000) });
@@ -210,7 +290,7 @@ export async function commitLeagueHistory(db: Db, leagueId: string, preview: Lea
       playerId,
       cost: d.cost,
       acquisitionType: "DRAFT",
-      sourceRef: `${SOURCE_PREFIX}${d.sourceRef}`,
+      sourceRef: tagRef(`${SOURCE_PREFIX}${d.sourceRef}`, { order: d.order }),
     });
   }
   for (let i = 0; i < picks.length; i += 1000) {

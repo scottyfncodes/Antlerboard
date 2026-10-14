@@ -198,3 +198,51 @@ describe("buildLeagueHistory", () => {
     expect(preview.unmatchedPlayers).toEqual([]);
   });
 });
+
+describe("buildLeagueHistory - price and order provenance", () => {
+  it("marks each acquisition's price as recorded, inferred, missing or set by rule - never a bare 0", () => {
+    expect(eventsFor("Old Keeper")[0]).toMatchObject({ cost: 9, priceStatus: "inferred" }); // back-solved from the $10 keeper cost
+    expect(eventsFor("Drafted Guy")[0]).toMatchObject({ cost: 20, priceStatus: "recorded" }); // auction file
+    expect(eventsFor("Waiver Guy")[0]).toMatchObject({ cost: 3, priceStatus: "recorded" }); // FAAB bid
+    expect(eventsFor("Hot Prospect")[0]).toMatchObject({ cost: 0, priceStatus: "rule" }); // FYPD call-up
+    expect(eventsFor("Filler Player0")[0]).toMatchObject({ cost: 2, priceStatus: "recorded" }); // EOY sheet price
+    expect(preview.events.filter((e) => e.kind === "ACQUIRED" && !e.priceStatus)).toEqual([]);
+    expect(preview.events.filter((e) => e.kind !== "ACQUIRED" && e.priceStatus)).toEqual([]);
+  });
+
+  it("keeps a missing price missing: auction rows, workbook drafts and EOY rows with no cost", () => {
+    const p = buildLeagueHistory({
+      blocks: [
+        block("A", 2021, {
+          draft: [{ name: "No Price Draftee", cost: null }],
+          eoyRoster: Array.from({ length: MIN_EOY_ROWS_FOR_RECONCILE }, (_, i) => ({ name: `Blank Cost${i}`, cost: null, nextSeasonCost: null })),
+        }),
+      ],
+      auctionRows: [{ ...auction(2022, "No Salary Guy", "Alpha", 0, false, 1), salary: null }],
+      yahoo: [],
+      offseasonTrades: [],
+      resolver,
+      firstSeason: 2021,
+      currentSeason: 2022,
+    });
+    const byName = (n: string) => p.events.find((e) => e.kind === "ACQUIRED" && p.players.find((x) => x.key === e.playerKey)?.name === n)!;
+    expect(byName("No Price Draftee")).toMatchObject({ cost: 0, priceStatus: "missing" });
+    expect(byName("No Salary Guy")).toMatchObject({ cost: 0, priceStatus: "missing" });
+    expect(byName("Blank Cost0")).toMatchObject({ cost: 0, priceStatus: "missing" });
+    expect(p.draftPicks.find((d) => d.season === 2021)).toMatchObject({ order: "sheet", cost: null });
+    expect(p.draftPicks.find((d) => d.season === 2022)).toMatchObject({ order: "source", cost: null });
+  });
+
+  it("labels workbook draft numbering as sheet order and the auction file's pick column as the source's", () => {
+    expect(preview.draftPicks.filter((d) => d.season <= 2022).every((d) => d.order === "source")).toBe(true);
+    expect(preview.draftPicks.filter((d) => d.season === 2023).map((d) => d.order)).toEqual(["sheet"]);
+  });
+
+  it("does not reconstruct in-season moves from EOY rosters for a season the Yahoo sync records", () => {
+    const synced = buildLeagueHistory({ blocks, auctionRows, yahoo, offseasonTrades, resolver, firstSeason: 2021, currentSeason: 2023, yahooSyncedSeasons: [2023] });
+    expect(synced.events.some((e) => e.sourceRef.endsWith("/2023/eoy"))).toBe(false);
+    expect(synced.flags.some((f) => f.startsWith("2023: in-season moves were not reconstructed"))).toBe(true);
+    // Pre-season facts for that season are still imported.
+    expect(synced.events.some((e) => e.season === 2023 && e.method === "DRAFT")).toBe(true);
+  });
+});
