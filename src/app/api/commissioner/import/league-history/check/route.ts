@@ -4,6 +4,8 @@ import { requireCommissioner } from "@/lib/current-manager";
 import { CURRENT_SEASON_YEAR, LEAGUE_FIRST_SEASON_YEAR } from "@/lib/config";
 import { buildLeagueHistory } from "@/lib/import/league-history-builder";
 import { buildResolver, loadWorkbook, readAuctionWorkbook, readMasterWorkbook, readYahooExport, MANAGER_SHEETS } from "@/lib/import/league-history-sources";
+import { checkLeagueHistoryAgainstDb, loadSyncedTransactionState } from "@/lib/import/league-history-commit";
+import { signPreview } from "@/lib/import/preview-signature";
 
 export const maxDuration = 120;
 
@@ -11,7 +13,9 @@ export const maxDuration = 120;
  * Preview-only: parses the master workbook, the canonical auction file and
  * the Yahoo transaction export, builds the per-player event history, runs
  * the keeper engine over it and reports every disagreement with the
- * workbook's recorded costs. Writes nothing - see ../commit.
+ * workbook's recorded costs, plus every player-identity decision and
+ * conflict the commit would hit against the database right now. Writes
+ * nothing - see ../commit.
  */
 export async function POST(req: Request) {
   if (!(await requireCommissioner())) {
@@ -57,6 +61,7 @@ export async function POST(req: Request) {
       }))
     : [];
   const resolver = buildResolver(master.blocks, dbRecords);
+  const synced = league ? await loadSyncedTransactionState(prisma, league.id) : { yahooTransactionIds: [], seasons: [] };
 
   const preview = buildLeagueHistory({
     blocks: master.blocks,
@@ -67,12 +72,18 @@ export async function POST(req: Request) {
     resolver,
     firstSeason: LEAGUE_FIRST_SEASON_YEAR,
     currentSeason: league?.currentSeasonYear ?? CURRENT_SEASON_YEAR,
+    yahooSyncedSeasons: synced.seasons,
   });
+  const dbCheck = league ? await checkLeagueHistoryAgainstDb(prisma, league.id, preview) : null;
 
   const existingTeams = league ? await prisma.manager.findMany({ where: { leagueId: league.id, name: { in: MANAGER_SHEETS } }, select: { name: true } }) : [];
 
   return NextResponse.json({
     ...preview,
+    previewToken: signPreview(preview),
+    dbCheck: dbCheck
+      ? { conflicts: dbCheck.conflicts, identityReview: dbCheck.plan.review, identityCounts: dbCheck.plan.counts, yahooSyncedSeasons: synced.seasons }
+      : null,
     sources: {
       managerSheets: master.sheetsFound,
       auctionRows: auction.length,

@@ -17,8 +17,8 @@ function preview(): LeagueHistoryPreview {
       { playerKey: "n:drafted guy", kind: "DROPPED", season: 2024, date: "2024-12-31T00:00:00.000Z", franchise: "Scott", sourceRef: "not kept into 2025", flags: ["example flag"] },
     ],
     draftPicks: [
-      { season: 2023, overallPick: 1, franchise: "Scott", playerKey: "1001", cost: 10, sourceRef: "auction:1" },
-      { season: 2024, overallPick: 1, franchise: "Scott", playerKey: "n:drafted guy", cost: 4, sourceRef: "auction:2" },
+      { season: 2023, overallPick: 1, franchise: "Scott", playerKey: "1001", cost: 10, sourceRef: "auction:1", order: "source" },
+      { season: 2024, overallPick: 1, franchise: "Scott", playerKey: "n:drafted guy", cost: 4, sourceRef: "auction:2", order: "source" },
     ],
     keeperChecks: [
       // Rule says 10 + 4 = 14 in 2025 (year 2); the workbook recorded 13.

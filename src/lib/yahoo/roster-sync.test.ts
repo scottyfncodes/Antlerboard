@@ -288,6 +288,34 @@ describe("roster sync - missing and ambiguous players", () => {
     ]);
   });
 
+  it("finds a player stored under another form of the same Yahoo id (import's bare id, or last season's key) instead of duplicating it", async () => {
+    const { league, teamA } = await setup();
+    const fromImport = await prisma.player.create({ data: { leagueId: league.id, name: "Juan Soto", yahooPlayerId: "5" } });
+    const lastSeason = await prisma.player.create({ data: { leagueId: league.id, name: "Pete Alonso", yahooPlayerId: "421.p.6" } });
+    wire({ "422.l.1.t.1": roster([{ key: "422.p.5", full: "Juan Soto" }, { key: "422.p.6", full: "Pete Alonso" }]) });
+
+    const result = await runYahooSync(league.id);
+
+    expect(result.status).toBe("SUCCESS");
+    expect(await prisma.player.count({ where: { leagueId: league.id } })).toBe(2);
+    expect((await prisma.player.findUniqueOrThrow({ where: { id: fromImport.id } })).yahooPlayerId).toBe("422.p.5");
+    expect((await prisma.player.findUniqueOrThrow({ where: { id: lastSeason.id } })).yahooPlayerId).toBe("422.p.6");
+    expect((await prisma.rosterSpot.findMany({ where: { teamId: teamA.id } })).map((s) => s.playerId).sort()).toEqual([fromImport.id, lastSeason.id].sort());
+  });
+
+  it("never picks between two players already stored under one Yahoo id - reports it instead", async () => {
+    const { league } = await setup();
+    const a = await prisma.player.create({ data: { leagueId: league.id, name: "Juan Soto", yahooPlayerId: "5" } });
+    const b = await prisma.player.create({ data: { leagueId: league.id, name: "Juan Soto", yahooPlayerId: "421.p.5" } });
+    wire({ "422.l.1.t.1": roster([{ key: "422.p.5", full: "Juan Soto" }]) });
+
+    const result = await runYahooSync(league.id);
+
+    expect((await prisma.player.findUniqueOrThrow({ where: { id: a.id } })).yahooPlayerId).toBe("5");
+    expect((await prisma.player.findUniqueOrThrow({ where: { id: b.id } })).yahooPlayerId).toBe("421.p.5");
+    expect(playersSection(result).error).toContain("matched more than one existing player");
+  });
+
   it("does not report the same player as ambiguous again once linked", async () => {
     const { league } = await setup();
     await prisma.player.create({ data: { leagueId: league.id, name: "Will Smith" } });
