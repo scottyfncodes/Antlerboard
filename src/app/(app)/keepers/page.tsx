@@ -210,7 +210,7 @@ function KeeperCostCell({ value, override }: { value: CostValue | undefined; ove
     const reason = value?.status === "unavailable" || value?.status === "not-applicable" ? value.reason : "No keeper cost is recorded.";
     return (
       <td className="px-2 py-2 text-xs text-muted" title={reason}>
-        {value?.status === "not-applicable" ? "None" : costLabel(value ?? { status: "unavailable", reason })}
+        {costLabel(value ?? { status: "unavailable", reason })}
       </td>
     );
   }

@@ -8,7 +8,9 @@ import { PlayerRow, PlayerSection } from "@/components/players/PlayerRow";
 import { MyPlayerTagControl } from "@/components/my-team/MyPlayerTagControl";
 import { TeamHeader } from "./TeamHeader";
 import { groupHittersAndPitchers } from "@/lib/positions";
-import { getTeamRoster } from "@/lib/rosters";
+import { loadTeamRosterCosts, shapeAuctionPick } from "@/lib/keeper-cost-views";
+import { auctionNumberHeader } from "@/lib/draft-history";
+import { costDisplay } from "@/lib/player-costs";
 import { visibleTradesWhere, type TradeViewer } from "@/lib/trade-access";
 import { tradeTitle } from "@/lib/trades";
 import { formatCost, formatDateTime, timeAgo, PLAYER_TAG_LABEL } from "@/lib/format";
@@ -39,21 +41,16 @@ export async function TeamView({
   isMine: boolean;
   viewer: TradeViewer | null;
 }) {
-  const [team, season, roster, keeperSlotsDeclared, tags] = await Promise.all([
+  const [team, season, { roster, declaredCount, budget }, tags] = await Promise.all([
     prisma.team.findUnique({
       where: { id: teamId },
       include: { manager: true, standings: { where: { season: { year: CURRENT_SEASON_YEAR } } } },
     }),
     prisma.season.findFirst({ where: { year: CURRENT_SEASON_YEAR } }),
     // The Yahoo roster when the sync has recorded one for this season,
-    // otherwise the live keeper stints (see getTeamRoster).
-    getTeamRoster(teamId, CURRENT_SEASON_YEAR),
-    // Keeper slots are what this team declared at the deadline, whether or
-    // not the player has since been traded away.
-    prisma.keeperRecord.findMany({
-      where: { seasonYear: CURRENT_SEASON_YEAR, startTeamId: teamId, keeperYear: { gte: 1 } },
-      select: { keeperCost: true },
-    }),
+    // otherwise the live keeper stints (see getTeamRoster) - each with its
+    // checked keeper cost - plus the keeper slots the team declared.
+    loadTeamRosterCosts(teamId, CURRENT_SEASON_YEAR),
     prisma.playerTag.findMany({ where: { teamId } }),
   ]);
   if (!team) return null;
@@ -61,7 +58,6 @@ export async function TeamView({
   const tagByPlayer = new Map(tags.map((t) => [t.playerId, t]));
   const rows = roster.rows;
   const expiring = rows.filter((r) => (r.keeper?.keeperYear ?? 0) >= 4);
-  const keeperCostDeclared = keeperSlotsDeclared.reduce((sum, r) => sum + r.keeperCost, 0);
   const { hitters, pitchers } = groupHittersAndPitchers(rows, (r) => r.player.positions);
 
   const tabs = [
@@ -78,7 +74,7 @@ export async function TeamView({
       <PlayerRow
         key={r.key}
         player={r.player}
-        cost={r.keeper ? r.keeper.keeperCost : undefined}
+        cost={r.cost}
         keeperYear={r.keeper?.keeperYear}
         keeperStatus={r.keeper?.status}
         meta={r.selectedPosition ? `Slot ${r.selectedPosition}` : undefined}
@@ -101,9 +97,16 @@ export async function TeamView({
         eyebrow={isMine ? "My Team" : undefined}
         stats={[
           { label: "Roster", value: String(rows.length) },
-          { label: "Keepers", value: `${keeperSlotsDeclared.length}/${KEEPER_SLOT_COUNT}` },
+          { label: "Keepers", value: `${declaredCount}/${KEEPER_SLOT_COUNT}` },
           { label: "Yr 4–5", value: String(expiring.length), tone: expiring.length > 0 ? "warn" : undefined },
-          { label: "Budget left", value: formatCost(AUCTION_BUDGET - keeperCostDeclared) },
+          budget.budgetLeft === null
+            ? {
+                label: "Budget left",
+                value: "—",
+                tone: "muted",
+                title: `${budget.unconfirmed} keeper cost${budget.unconfirmed === 1 ? "" : "s"} unconfirmed - the budget left can't be worked out yet.`,
+              }
+            : { label: "Budget left", value: formatCost(budget.budgetLeft) },
         ]}
       />
 
@@ -119,6 +122,11 @@ export async function TeamView({
           )}
           {roster.source === "yahoo" && roster.lastSyncedAt && (
             <p className="text-xs text-muted">Yahoo roster · synced {timeAgo(roster.lastSyncedAt)}</p>
+          )}
+          {budget.budgetLeft === null && (
+            <p className="text-xs text-muted">
+              Budget left unknown: {budget.unconfirmed} keeper cost{budget.unconfirmed === 1 ? "" : "s"} unconfirmed ({formatCost(budget.confirmedTotal)} confirmed of {formatCost(AUCTION_BUDGET)}).
+            </p>
           )}
           {rows.length === 0 ? (
             <EmptyState title="No players rostered yet" />
@@ -216,24 +224,35 @@ async function TeamDraft({ teamId }: { teamId: string }) {
 
   return (
     <div className="space-y-4">
-      {[...bySeason.entries()].map(([year, rows]) => (
-        <PlayerSection key={year} title={`${year} Auction`} count={rows.length} right={<span>Nom. · Cost</span>}>
-          {rows.map((d) => (
-            <div key={d.id} className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm">
-              {d.player ? (
-                <Link href={`/players/${d.playerId}`} className="min-w-0 truncate font-semibold hover:text-antler-strong">
-                  {d.player.name}
-                </Link>
-              ) : (
-                <span className="text-muted">—</span>
-              )}
-              <span className="shrink-0 tabular text-muted">
-                {d.round}.{String(d.pick).padStart(2, "0")} · <span className="font-semibold text-foreground">{formatCost(d.cost)}</span>
-              </span>
-            </div>
-          ))}
-        </PlayerSection>
-      ))}
+      {[...bySeason.entries()].map(([year, rows]) => {
+        // Imported numbers may be workbook row order, not nominations - each
+        // row says which, and the header only says "Nom." when all are.
+        const shaped = rows.map((d) => ({ d, pick: shapeAuctionPick(d) }));
+        return (
+          <PlayerSection key={year} title={`${year} Auction`} count={rows.length} right={<span>{auctionNumberHeader(shaped.map((x) => x.pick.order))} · Cost</span>}>
+            {shaped.map(({ d, pick }) => {
+              const cost = costDisplay(pick.cost);
+              return (
+                <div key={d.id} className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm">
+                  {d.player ? (
+                    <Link href={`/players/${d.playerId}`} className="min-w-0 truncate font-semibold hover:text-antler-strong">
+                      {d.player.name}
+                    </Link>
+                  ) : (
+                    <span className="text-muted">—</span>
+                  )}
+                  <span className="shrink-0 tabular text-muted">
+                    <span title={pick.number.title}>{pick.isKeeperSlot ? "Keeper slot" : pick.number.text}</span> ·{" "}
+                    <span title={cost.title} className={cost.confirmed ? "font-semibold text-foreground" : "text-xs"}>
+                      {cost.text}
+                    </span>
+                  </span>
+                </div>
+              );
+            })}
+          </PlayerSection>
+        );
+      })}
     </div>
   );
 }

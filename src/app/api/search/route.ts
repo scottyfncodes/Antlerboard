@@ -3,6 +3,9 @@ import { prisma } from "@/lib/db";
 import { getCurrentManager } from "@/lib/current-manager";
 import { visibleTradesWhere } from "@/lib/trade-access";
 import { tradeTitle } from "@/lib/trades";
+import { CURRENT_SEASON_YEAR } from "@/lib/config";
+import { loadKeeperCostValues } from "@/lib/player-costs-data";
+import { costDisplay } from "@/lib/player-costs";
 
 export async function GET(req: NextRequest) {
   const q = req.nextUrl.searchParams.get("q")?.trim() ?? "";
@@ -47,16 +50,28 @@ export async function GET(req: NextRequest) {
     }),
   ]);
 
+  // Keeper costs are checked like everywhere else (classifyKeeperCost): a
+  // cost from a missing or guessed price reads Unavailable, forced back None.
+  const latest = players.flatMap((p) => (p.keeperRecords[0] ? [p.keeperRecords[0]] : []));
+  const costs = await loadKeeperCostValues(latest);
+
   return NextResponse.json({
-    players: players.map((p) => ({
-      id: p.id,
-      name: p.name,
-      mlbTeam: p.mlbTeam,
-      team: p.keeperRecords[0]?.team.name ?? null,
-      keeperCost: p.keeperRecords[0]?.keeperCost ?? null,
-      keeperYear: p.keeperRecords[0]?.keeperYear ?? null,
-      yearsRemaining: p.keeperRecords[0]?.yearsRemaining ?? null,
-    })),
+    players: players.map((p) => {
+      const r = p.keeperRecords[0];
+      const cost = r ? costs.get(r.id) : undefined;
+      return {
+        id: p.id,
+        name: p.name,
+        mlbTeam: p.mlbTeam,
+        team: r?.team.name ?? null,
+        // The record may be from an earlier season - the view says which,
+        // so an old cost never reads as this season's.
+        keeperSeason: r && r.seasonYear !== CURRENT_SEASON_YEAR ? r.seasonYear : null,
+        cost: cost ? costDisplay(cost) : null,
+        keeperYear: r?.keeperYear ?? null,
+        yearsRemaining: r?.yearsRemaining ?? null,
+      };
+    }),
     teams: teams.map((t) => ({ id: t.id, name: t.name, manager: t.manager.name })),
     managers: managers.map((m) => ({
       id: m.id,

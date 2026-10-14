@@ -7,7 +7,8 @@ import { PlayersTabs } from "@/components/players/PlayersTabs";
 import { PlayerRow, PlayerSection } from "@/components/players/PlayerRow";
 import { PlayerTagBadge } from "@/components/ui/Badge";
 import { PLAYER_TAG_LABEL } from "@/lib/format";
-import type { Prisma, PlayerTagType } from "@prisma/client";
+import { loadMarketRows } from "@/lib/keeper-cost-views";
+import type { PlayerTagType } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
 
@@ -21,39 +22,18 @@ export default async function PlayerMarketPage({
   const sp = await searchParams;
   const teams = await prisma.team.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } });
 
-  const keeperWhere: Prisma.KeeperRecordWhereInput = { seasonYear: CURRENT_SEASON_YEAR, status: { not: "DROPPED" } };
-  if (sp.team) keeperWhere.teamId = sp.team;
-  if (sp.yearsRemaining) keeperWhere.yearsRemaining = Number(sp.yearsRemaining);
-
-  const playerWhere: Prisma.PlayerWhereInput = {
-    keeperRecords: { some: keeperWhere },
-  };
-  if (sp.q) playerWhere.name = { contains: sp.q, mode: "insensitive" };
-  if (sp.position) playerWhere.positions = { has: sp.position };
-  if (sp.tag) {
-    playerWhere.tags = { some: { tag: sp.tag as PlayerTagType } };
-  }
-
-  const players = await prisma.player.findMany({
-    where: playerWhere,
-    include: {
-      keeperRecords: { where: keeperWhere, include: { team: true }, orderBy: { stintIndex: "desc" } },
-      tags: true,
-    },
-    take: 200,
+  // Each row's keeper cost is checked against where it came from (see
+  // loadMarketRows): an unconfirmed cost reads Unavailable, a forced-back
+  // player None, and "sort by cost" ranks only confirmed amounts as numbers.
+  const rows = await loadMarketRows({
+    seasonYear: CURRENT_SEASON_YEAR,
+    team: sp.team,
+    yearsRemaining: sp.yearsRemaining ? Number(sp.yearsRemaining) : undefined,
+    q: sp.q,
+    position: sp.position,
+    tag: sp.tag ? { some: { tag: sp.tag as PlayerTagType } } : undefined,
+    sort: sp.sort,
   });
-
-  let rows = players
-    .map((p) => ({ player: p, record: p.keeperRecords[0] }))
-    .filter((r) => r.record);
-
-  if (sp.sort === "cost") {
-    rows = rows.sort((a, b) => b.record!.keeperCost - a.record!.keeperCost);
-  } else if (sp.sort === "yearsRemaining") {
-    rows = rows.sort((a, b) => a.record!.yearsRemaining - b.record!.yearsRemaining);
-  } else {
-    rows = rows.sort((a, b) => a.player.name.localeCompare(b.player.name));
-  }
 
   return (
     <div className="space-y-4">
@@ -68,16 +48,16 @@ export default async function PlayerMarketPage({
         <EmptyState title="No players match those filters" />
       ) : (
         <PlayerSection title="Rostered players" count={rows.length} right={<span>Cost · Clock</span>}>
-          {rows.map(({ player, record }) => {
-            const tag = player.tags.find((t) => t.teamId === record!.teamId);
+          {rows.map(({ player, record, cost }) => {
+            const tag = player.tags.find((t) => t.teamId === record.teamId);
             return (
               <PlayerRow
                 key={player.id}
                 player={player}
-                meta={record!.team.name}
-                cost={record!.keeperCost}
-                keeperYear={record!.keeperYear}
-                keeperStatus={record!.status}
+                meta={record.team.name}
+                cost={cost}
+                keeperYear={record.keeperYear}
+                keeperStatus={record.status}
                 trailing={tag && <PlayerTagBadge tag={tag.tag} label={PLAYER_TAG_LABEL[tag.tag]} />}
               />
             );

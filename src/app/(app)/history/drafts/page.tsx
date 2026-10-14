@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/Badge";
 import { UrlFilterBar } from "@/components/ui/UrlFilterBar";
 import { CompletenessBadge, completenessCount } from "@/components/draft/CompletenessBadge";
 import { listDraftSeasons, loadDraftHistory } from "@/lib/draft-history-data";
-import { filterDraftPicks, isInferredOrder, type DraftHistoryPick, type DraftKind } from "@/lib/draft-history";
+import { auctionNumberHeader, filterDraftPicks, isInferredOrder, type DraftHistoryPick, type DraftKind } from "@/lib/draft-history";
 import { formatCost } from "@/lib/format";
 import Link from "next/link";
 import clsx from "clsx";
@@ -279,7 +279,7 @@ function PickCards({ picks, isAuction }: { picks: DraftHistoryPick[]; isAuction:
 /** Desktop layout: a dense, scannable table. */
 function PickTable({ picks, isAuction }: { picks: DraftHistoryPick[]; isAuction: boolean }) {
   const inferred = picks.filter((p) => isInferredOrder(p.order)).length;
-  const numberHeader = !isAuction ? "Pick" : inferred === 0 ? "Nom." : inferred === picks.length ? "Row" : "#";
+  const numberHeader = isAuction ? auctionNumberHeader(picks.map((p) => p.order)) : "Pick";
   return (
     <div className="hidden md:block rounded-xl border border-border overflow-hidden">
       <table className="w-full text-sm">

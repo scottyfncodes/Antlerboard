@@ -6,6 +6,9 @@ import {
   classifyKeeperCost,
   findStintOrigin,
   costLabel,
+  costDisplay,
+  compareCostDesc,
+  summarizeKeeperBudget,
   filterPlayerCostRows,
   paginate,
   type BuildPlayerCostRowsInput,
@@ -154,7 +157,8 @@ describe("keeper cost provenance", () => {
   it("never shows the engine's stored $0 for a forced redraft", () => {
     const v = classifyKeeperCost(rec({ status: "FORCED_BACK", keeperCost: 0, keeperYear: 6 }), origin("recorded"));
     expect(v.status).toBe("not-applicable");
-    expect(costLabel(v)).not.toBe("$0");
+    // "None", never $0 - and never "Carried", which means a trade.
+    expect(costLabel(v)).toBe("None");
   });
 
   it("is Unavailable when the cost can't be traced to an acquisition", () => {
@@ -310,5 +314,39 @@ describe("paginate", () => {
     expect(paginate(items, 99).page).toBe(3);
     expect(paginate(items, Number("abc")).page).toBe(1);
     expect(paginate([], 1)).toMatchObject({ page: 1, pageCount: 1, total: 0 });
+  });
+});
+
+describe("shared cost presentation (team page, market, search, draft board)", () => {
+  const recorded = (amount: number) => ({ status: "recorded" as const, amount });
+  const unavailable = { status: "unavailable" as const, reason: "No recorded price." };
+  const none = { status: "not-applicable" as const, label: "None" as const, reason: "Forced back." };
+  const carried = { status: "not-applicable" as const, label: "Carried" as const, reason: "Trade." };
+
+  it("labels each case: real $0 as $0, trades Carried, forced back None, unknown Unavailable", () => {
+    expect(costLabel(recorded(0))).toBe("$0");
+    expect(costLabel(classifyAcquisitionCost(acq({ cost: 0, sourceRef: "x|price=recorded" })))).toBe("$0");
+    expect(costLabel(classifyAcquisitionCost(acq({ method: "TRADE" })))).toBe("Carried");
+    expect(costLabel(classifyAcquisitionCost(acq({ cost: 0, sourceRef: "x|price=missing" })))).toBe("Unavailable");
+    expect(costLabel(classifyAcquisitionCost(acq({ cost: 9, sourceRef: "x|price=inferred" })))).toBe("Unavailable");
+    expect(costLabel(none)).toBe("None");
+    expect(costLabel(carried)).toBe("Carried");
+  });
+
+  it("marks only a recorded cost as confirmed, and carries the reason for the tooltip", () => {
+    expect(costDisplay(recorded(12))).toEqual({ text: "$12", confirmed: true, title: undefined });
+    expect(costDisplay(unavailable)).toEqual({ text: "Unavailable", confirmed: false, title: "No recorded price." });
+    expect(costDisplay(none)).toMatchObject({ text: "None", confirmed: false });
+  });
+
+  it("adds up only confirmed keeper costs, and won't state a budget while any is unconfirmed", () => {
+    expect(summarizeKeeperBudget([recorded(30), recorded(0), none], 260)).toEqual({ confirmedTotal: 30, unconfirmed: 0, budgetLeft: 230 });
+    expect(summarizeKeeperBudget([recorded(30), unavailable, undefined], 260)).toEqual({ confirmedTotal: 30, unconfirmed: 2, budgetLeft: null });
+    expect(summarizeKeeperBudget([], 260)).toEqual({ confirmedTotal: 0, unconfirmed: 0, budgetLeft: 260 });
+  });
+
+  it("sorts by cost with confirmed amounts first, then None/Carried, then Unavailable", () => {
+    const values = [unavailable, recorded(5), none, recorded(40), undefined, recorded(0)];
+    expect([...values].sort(compareCostDesc).map((v) => (v ? costLabel(v) : "missing"))).toEqual(["$40", "$5", "$0", "None", "Unavailable", "missing"]);
   });
 });

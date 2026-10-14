@@ -8,8 +8,7 @@ import {
   validateFypdOrder,
   type AuctionPickInput,
   type FypdDraftInput,
-  type FypdSelectionInput,
-} from "./draft-history";
+  type FypdSelectionInput, auctionNumberHeader, auctionNumberLabel } from "./draft-history";
 import { getSnakeSlot } from "./fypd-snake-engine";
 
 const TEAMS = Array.from({ length: 12 }, (_, i) => ({ id: `t${i + 1}`, name: `Team ${i + 1}` }));
@@ -256,5 +255,20 @@ describe("auction nomination-order provenance", () => {
   it("marks every FYPD pick as source order", () => {
     const fypd = buildFypdHistory(draft([sel(1)]));
     expect(fypd.picks[0].order).toBe("source");
+  });
+});
+
+describe("auction number labels (draft board, team Draft tab, Draft History)", () => {
+  it("labels a workbook row number Row, never a nomination", () => {
+    expect(auctionNumberLabel(37, "sheet")).toMatchObject({ text: "Row 37", inferred: true });
+    expect(auctionNumberLabel(37, "unknown")).toMatchObject({ text: "Row 37", inferred: true });
+    expect(auctionNumberLabel(37, "source")).toMatchObject({ text: "Nom. 37", inferred: false });
+    expect(auctionNumberLabel(37, "entered")).toMatchObject({ text: "Nom. 37", inferred: false });
+  });
+
+  it("heads the column Nom. only when every number is a real nomination", () => {
+    expect(auctionNumberHeader(["source", "entered"])).toBe("Nom.");
+    expect(auctionNumberHeader(["sheet", "unknown"])).toBe("Row");
+    expect(auctionNumberHeader(["source", "sheet"])).toBe("#");
   });
 });
