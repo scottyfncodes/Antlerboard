@@ -84,14 +84,21 @@ async function validateProposal(input: CreateTradeInput) {
   const problem = tradeProposalProblem(input);
   if (problem) throw new TradeActionError(problem);
 
-  const season = await prisma.season.findFirst({ where: { year: CURRENT_SEASON_YEAR } });
-  if (!season) throw new TradeActionError("No current season");
-
   const teamIds = [...new Set(input.teamIds)];
-  const teams = await prisma.team.findMany({ where: { id: { in: teamIds } }, select: { id: true, name: true, active: true } });
+  const teams = await prisma.team.findMany({
+    where: { id: { in: teamIds } },
+    select: { id: true, name: true, active: true, leagueId: true },
+  });
   if (teams.length !== teamIds.length || teams.some((t) => !t.active)) {
     throw new TradeActionError("Every team in the trade has to be an active team in the league");
   }
+  // Every team in one league - otherwise each side could pass the roster
+  // check with its own players and the trade would span two leagues.
+  const leagueIds = new Set(teams.map((t) => t.leagueId));
+  if (leagueIds.size !== 1) throw new TradeActionError("Every team in the trade has to be in the same league");
+
+  const season = await prisma.season.findFirst({ where: { leagueId: teams[0].leagueId, year: CURRENT_SEASON_YEAR } });
+  if (!season) throw new TradeActionError("No current season");
 
   const offRoster = await firstOffRosterMove(prisma, playerMoves(input.assets));
   if (offRoster) {
@@ -232,7 +239,9 @@ export async function acceptTrade(id: string, teamId: string): Promise<boolean> 
 
 /** Moves the players. Runs inside acceptTrade's transaction. */
 async function executeTrade(tx: Prisma.TransactionClient, trade: LoadedTrade) {
-  const season = await tx.season.findFirst({ where: { year: CURRENT_SEASON_YEAR } });
+  // The season the trade was proposed in (its own league's), never "the
+  // first season with this year" across every league.
+  const season = await tx.season.findUnique({ where: { id: trade.seasonId } });
   if (!season) throw new TradeActionError("No current season");
   const teamName = new Map(trade.participants.map((p) => [p.teamId, p.team.name]));
 

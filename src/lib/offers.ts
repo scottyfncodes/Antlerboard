@@ -49,8 +49,12 @@ export async function offerProposalProblem(o: OfferProposal): Promise<string | n
   if (new Set([...o.playersOffered, ...o.playersRequested]).size !== o.playersOffered.length + o.playersRequested.length) {
     return "The same player can't be in an offer twice";
   }
-  const receiving = await prisma.team.findUnique({ where: { id: o.receivingTeamId }, select: { active: true } });
+  const [sending, receiving] = await Promise.all([
+    prisma.team.findUnique({ where: { id: o.sendingTeamId }, select: { leagueId: true } }),
+    prisma.team.findUnique({ where: { id: o.receivingTeamId }, select: { active: true, leagueId: true } }),
+  ]);
   if (!receiving?.active) return "That team isn't an active team in the league";
+  if (!sending || sending.leagueId !== receiving.leagueId) return "That team isn't an active team in the league";
   if (ids.length === 0) return null;
 
   const offRoster = await firstOffRosterMove(prisma, [
@@ -89,7 +93,8 @@ export async function rejectOffer(id: string) {
 export async function acceptOffer(id: string) {
   const offer = await prisma.$transaction(async (tx) => {
     const offer = await loadPendingOfferForUpdate(tx, id);
-    const season = await tx.season.findFirst({ where: { year: CURRENT_SEASON_YEAR } });
+    // The offer's own league's season - never another league's.
+    const season = await tx.season.findFirst({ where: { leagueId: offer.receivingTeam.leagueId, year: CURRENT_SEASON_YEAR } });
     if (!season) throw new OfferActionError("No current season");
 
     // Same guard as an executing trade: lock every player, confirm each is
