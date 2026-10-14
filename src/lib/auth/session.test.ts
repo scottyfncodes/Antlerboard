@@ -32,8 +32,16 @@ describe("session tokens", () => {
   it("rejects a tampered signature", async () => {
     const token = await createSessionToken("manager-123", "pin");
     const [payloadB64, signatureB64] = token.split(".");
-    const tamperedSig = signatureB64.slice(0, -1) + (signatureB64.slice(-1) === "A" ? "B" : "A");
-    expect(await verifySessionToken(`${payloadB64}.${tamperedSig}`)).toBeNull();
+    // Flip a bit in the decoded signature itself. Editing the last base64url
+    // character is not enough: a 32-byte signature is 43 characters, and the
+    // last one carries 2 padding bits, so swapping "A" <-> "B" there can
+    // leave the decoded bytes - and so the signature - unchanged.
+    const bytes = Buffer.from(signatureB64, "base64url");
+    for (const index of [0, bytes.length - 1]) {
+      const flipped = Buffer.from(bytes);
+      flipped[index] ^= 0x01;
+      expect(await verifySessionToken(`${payloadB64}.${flipped.toString("base64url")}`)).toBeNull();
+    }
   });
 
   it("rejects an already-expired token", async () => {
