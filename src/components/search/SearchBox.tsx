@@ -2,9 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { searchKeeperLine, type SearchKeeperFacts } from "@/lib/search-display";
 
 interface SearchResults {
-  players: { id: string; name: string; mlbTeam: string | null; team: string | null; keeperCost: number | null; keeperYear: number | null; yearsRemaining: number | null }[];
+  players: ({ id: string; name: string; mlbTeam: string | null } & SearchKeeperFacts)[];
   teams: { id: string; name: string; manager: string }[];
   managers: { id: string; name: string; teamId: string | null; teamName: string | null }[];
   trades: { id: string; label: string; status: string }[];
@@ -84,8 +85,8 @@ export function SearchBox({ autoFocus }: { autoFocus?: boolean }) {
                   <span>
                     {p.name} <span className="text-muted">{p.mlbTeam}</span>
                   </span>
-                  <span className="text-muted tabular text-xs">
-                    {p.team ? `${p.team} · $${p.keeperCost} · Yr ${p.keeperYear} · ${p.yearsRemaining}y left` : "Unrostered"}
+                  <span className="text-muted tabular text-xs" title={p.cost?.title}>
+                    {p.team ? searchKeeperLine(p) : "Unrostered"}
                   </span>
                 </button>
               ))}

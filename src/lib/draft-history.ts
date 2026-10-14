@@ -38,6 +38,26 @@ export function isInferredOrder(o: NominationOrder): boolean {
   return o === "sheet" || o === "unknown";
 }
 
+/**
+ * Column header for a list of auction picks: "Nom." only when every number
+ * is a real nomination number, "Row" when every one is workbook row order,
+ * "#" when they're mixed (each pick then says which it is).
+ */
+export function auctionNumberHeader(orders: NominationOrder[]): "Nom." | "Row" | "#" {
+  const inferred = orders.filter(isInferredOrder).length;
+  return inferred === 0 ? "Nom." : inferred === orders.length ? "Row" : "#";
+}
+
+/**
+ * One auction pick's number, labelled for what it is. A workbook row number
+ * never reads as a nomination: "Row 37", with the reason in `title`.
+ */
+export function auctionNumberLabel(overallPick: number, order: NominationOrder): { text: string; title: string; inferred: boolean } {
+  return isInferredOrder(order)
+    ? { text: `Row ${overallPick}`, inferred: true, title: "Spreadsheet row order - the real nomination order isn't recorded." }
+    : { text: `Nom. ${overallPick}`, inferred: false, title: "Nomination number from the auction record." };
+}
+
 export type DraftKind = "auction" | "fypd";
 
 export type Completeness =

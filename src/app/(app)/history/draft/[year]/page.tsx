@@ -5,7 +5,8 @@ import { DraftColorBadge } from "@/components/ui/Badge";
 import { DraftDayDetailsCard } from "@/components/draft/DraftDayDetailsCard";
 import { getDraftColor } from "@/lib/draft-color-engine";
 import { getCurrentManager } from "@/lib/current-manager";
-import { formatCost } from "@/lib/format";
+import { loadDraftBoard } from "@/lib/keeper-cost-views";
+import { costDisplay } from "@/lib/player-costs";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
@@ -15,12 +16,10 @@ export default async function DraftBoardPage({ params }: { params: Promise<{ yea
   const year = Number(yearParam);
   const colorResult = getDraftColor(year);
 
-  const [picks, season, manager] = await Promise.all([
-    prisma.draftPick.findMany({
-      where: { seasonYear: year },
-      orderBy: { overallPick: "asc" },
-      include: { team: true, player: true },
-    }),
+  const [board, season, manager] = await Promise.all([
+    // Each pick's number labelled by provenance: "Nom." from the auction
+    // record, "Row" when it's only the workbook's row order.
+    loadDraftBoard(year),
     prisma.season.findFirst({ where: { year }, include: { draftDayDetails: true } }),
     getCurrentManager(),
   ]);
@@ -29,7 +28,13 @@ export default async function DraftBoardPage({ params }: { params: Promise<{ yea
     <div className="space-y-4">
       <PageHeader
         title={`${year} Draft`}
-        subtitle={colorResult.skipped ? "Draft color cycle skipped this season." : "Live auction draft - activity below is nomination order, not snake-draft pick slots."}
+        subtitle={
+          colorResult.skipped
+            ? "Draft color cycle skipped this season."
+            : board.inferredCount > 0
+              ? "Live auction draft - the real nomination order isn't recorded for this season, so numbers marked Row are spreadsheet row order, not nominations."
+              : "Live auction draft - activity below is nomination order, not snake-draft pick slots."
+        }
         actions={<DraftColorBadge color={colorResult.color} />}
       />
       <div className="flex gap-2 text-sm">
@@ -57,43 +62,47 @@ export default async function DraftBoardPage({ params }: { params: Promise<{ yea
       )}
 
       <h2 className="font-display text-lg">Auction Activity</h2>
-      {picks.length === 0 ? (
+      {board.rows.length === 0 ? (
         <EmptyState title="No draft picks recorded for this season" />
       ) : (
         <div className="rounded-xl border border-border overflow-hidden">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-surface-raised text-left text-xs text-muted">
-                <th className="px-2 py-2 font-medium">Nom.</th>
+                <th className="px-2 py-2 font-medium">{board.header}</th>
                 <th className="px-2 py-2 font-medium hide-xs">Team</th>
                 <th className="px-2 py-2 font-medium">Player</th>
                 <th className="px-2 py-2 font-medium">Cost</th>
               </tr>
             </thead>
             <tbody>
-              {picks.map((p) => (
-                <tr key={p.id} className="border-t border-border">
-                  <td className="px-2 py-2 tabular text-muted">
-                    {p.round}.{String(p.pick).padStart(2, "0")}
-                    <span className="text-xs hide-xs"> (#{p.overallPick})</span>
-                  </td>
-                  <td className="px-2 py-2 hide-xs">
-                    <Link href={`/teams/${p.teamId}`} className="hover:text-antler-strong">
-                      {p.team.name}
-                    </Link>
-                  </td>
-                  <td className="px-2 py-2">
-                    {p.player ? (
-                      <Link href={`/players/${p.playerId}`} className="hover:text-antler-strong">
-                        {p.player.name}
+              {board.rows.map((p) => {
+                const cost = costDisplay(p.cost);
+                return (
+                  <tr key={p.id} className="border-t border-border">
+                    <td className="px-2 py-2 tabular text-muted whitespace-nowrap" title={p.number.title}>
+                      {p.isKeeperSlot ? "Keeper slot" : p.number.text}
+                    </td>
+                    <td className="px-2 py-2 hide-xs">
+                      <Link href={`/teams/${p.team.id}`} className="hover:text-antler-strong">
+                        {p.team.name}
                       </Link>
-                    ) : (
-                      "—"
-                    )}
-                  </td>
-                  <td className="px-2 py-2 tabular">{formatCost(p.cost)}</td>
-                </tr>
-              ))}
+                    </td>
+                    <td className="px-2 py-2">
+                      {p.player ? (
+                        <Link href={`/players/${p.playerId}`} className="hover:text-antler-strong">
+                          {p.player.name}
+                        </Link>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className={cost.confirmed ? "px-2 py-2 tabular" : "px-2 py-2 text-xs text-muted"} title={cost.title}>
+                      {cost.text}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

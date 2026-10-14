@@ -4,7 +4,9 @@ import { ordinal } from "@/lib/positions";
 export interface TeamHeaderStat {
   label: string;
   value: string;
-  tone?: "warn";
+  tone?: "warn" | "muted";
+  /** Hover text explaining the value (e.g. why a figure isn't shown). */
+  title?: string;
 }
 
 /**
@@ -40,9 +42,9 @@ export function TeamHeader({
       </div>
       <dl className="grid grid-cols-4 divide-x divide-border rounded-xl border border-border bg-surface">
         {stats.map((s) => (
-          <div key={s.label} className="px-2 py-2.5 text-center">
+          <div key={s.label} className="px-2 py-2.5 text-center" title={s.title}>
             <dt className="text-[10px] font-semibold uppercase tracking-wider text-muted">{s.label}</dt>
-            <dd className={`mt-0.5 font-display text-lg tabular leading-tight ${s.tone === "warn" ? "text-yellow" : ""}`}>{s.value}</dd>
+            <dd className={`mt-0.5 font-display text-lg tabular leading-tight ${s.tone === "warn" ? "text-yellow" : s.tone === "muted" ? "text-muted" : ""}`}>{s.value}</dd>
           </div>
         ))}
       </dl>

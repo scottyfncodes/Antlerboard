@@ -2,7 +2,7 @@ import Link from "next/link";
 import clsx from "clsx";
 import { Avatar } from "@/components/ui/Avatar";
 import { MAX_CONSECUTIVE_KEEPER_YEARS } from "@/lib/config";
-import { formatCost } from "@/lib/format";
+import { costDisplay, type CostValue } from "@/lib/player-costs";
 
 /**
  * The compact keeper-clock chip used in dense player rows ("Y3/5"), where
@@ -45,7 +45,8 @@ export function PlayerRow({
   player: { id: string; name: string; mlbTeam: string | null; positions: string[] };
   keeperYear?: number;
   keeperStatus?: string;
-  cost?: number | null;
+  /** The checked keeper cost (see classifyKeeperCost); omitted when the player has no keeper record. */
+  cost?: CostValue;
   /** Extra muted text appended to the TEAM · POS line (e.g. the owning team). */
   meta?: string;
   trailing?: React.ReactNode;
@@ -62,12 +63,22 @@ export function PlayerRow({
       </div>
       <div className="flex shrink-0 flex-col items-end gap-1">
         <div className="flex items-center gap-2">
-          {cost !== undefined && <span className="text-sm font-semibold tabular">{formatCost(cost)}</span>}
+          {cost !== undefined && <CostText value={cost} />}
           {keeperYear !== undefined && <KeeperClockChip keeperYear={keeperYear} status={keeperStatus} />}
         </div>
         {trailing}
       </div>
     </div>
+  );
+}
+
+/** "$12" in bold when confirmed; "Unavailable" / "None" / "Carried" muted, with the reason on hover. */
+function CostText({ value }: { value: CostValue }) {
+  const d = costDisplay(value);
+  return (
+    <span title={d.title} className={clsx("tabular", d.confirmed ? "text-sm font-semibold" : "text-xs text-muted")}>
+      {d.text}
+    </span>
   );
 }
 

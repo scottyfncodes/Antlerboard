@@ -40,8 +40,12 @@ export type CostValue =
    */
   | { status: "recorded"; amount: number; note?: string; basis?: "recorded" | "calculated" }
   | { status: "unavailable"; reason: string }
-  /** No price applies by design (a trade carries the existing cost). */
-  | { status: "not-applicable"; reason: string };
+  /**
+   * No price applies by design. The label is part of the value because the
+   * two cases mean different things: a trade carries the player's existing
+   * cost ("Carried"); a forced-back player has no keeper cost ("None").
+   */
+  | { status: "not-applicable"; label: "Carried" | "None"; reason: string };
 
 export const UNAVAILABLE = "Unavailable";
 
@@ -117,7 +121,7 @@ const INFERRED_PRICE_NOTE = /origin assumed|treated as acquired in|priced to mat
 
 export function classifyAcquisitionCost(a: Pick<AcquisitionInput, "method" | "cost" | "notes" | "sourceRef">): CostValue {
   if (a.method === "TRADE") {
-    return { status: "not-applicable", reason: "Trades carry the player's existing cost." };
+    return { status: "not-applicable", label: "Carried", reason: "Trades carry the player's existing cost." };
   }
   if (!Number.isFinite(a.cost) || a.cost < 0) {
     return { status: "unavailable", reason: "The stored price isn't a valid amount." };
@@ -195,7 +199,7 @@ export function findStintOrigin<T extends { seasonYear: number; date: Date; meth
  */
 export function classifyKeeperCost(record: KeeperCostInput, origin: KeeperOrigin | null): CostValue {
   if (record.status === "FORCED_BACK") {
-    return { status: "not-applicable", reason: "Forced back to the auction after five kept years - there is no keeper cost." };
+    return { status: "not-applicable", label: "None", reason: "Forced back to the auction after five kept years - there is no keeper cost." };
   }
   if (!Number.isFinite(record.keeperCost) || record.keeperCost < 0) {
     return { status: "unavailable", reason: "No keeper cost is recorded." };
@@ -226,8 +230,59 @@ export function classifyKeeperCost(record: KeeperCostInput, origin: KeeperOrigin
 
 export function costLabel(value: CostValue): string {
   if (value.status === "recorded") return `$${value.amount.toFixed(value.amount % 1 === 0 ? 0 : 2)}`;
-  if (value.status === "not-applicable") return "Carried";
+  if (value.status === "not-applicable") return value.label;
   return UNAVAILABLE;
+}
+
+/**
+ * A cost as compact row text: "$12" for a confirmed cost, otherwise
+ * "Unavailable" / "None" / "Carried" - with the reason for the tooltip.
+ * Dense rows (team roster, Players › Market, search) use this so they say
+ * the same thing as the Player Costs page.
+ */
+export function costDisplay(value: CostValue): { text: string; confirmed: boolean; title: string | undefined } {
+  return {
+    text: costLabel(value),
+    confirmed: value.status === "recorded",
+    title: value.status === "recorded" ? value.note : value.reason,
+  };
+}
+
+export interface KeeperBudget {
+  /** Sum of the confirmed (recorded or calculated-from-recorded) keeper costs. */
+  confirmedTotal: number;
+  /** Keeper costs that can't be confirmed - their amounts are left out of the total. */
+  unconfirmed: number;
+  /** Auction budget left, or null when an unconfirmed cost makes any figure misleading. */
+  budgetLeft: number | null;
+}
+
+/**
+ * What a team's keepers count against its auction budget. Only confirmed
+ * costs are added up; a "None" (forced back) costs nothing. One cost that
+ * can't be confirmed means the budget left isn't known, so it's null rather
+ * than a number that looks exact.
+ */
+export function summarizeKeeperBudget(values: (CostValue | undefined)[], auctionBudget: number): KeeperBudget {
+  let confirmedTotal = 0;
+  let unconfirmed = 0;
+  for (const v of values) {
+    if (v?.status === "recorded") confirmedTotal += v.amount;
+    else if (v?.status !== "not-applicable") unconfirmed++;
+  }
+  return { confirmedTotal, unconfirmed, budgetLeft: unconfirmed > 0 ? null : auctionBudget - confirmedTotal };
+}
+
+/**
+ * Highest cost first, for "sort by cost": confirmed amounts in order, then
+ * "None"/"Carried", then Unavailable - an unconfirmed cost never sorts as
+ * if it were a real number.
+ */
+export function compareCostDesc(a: CostValue | undefined, b: CostValue | undefined): number {
+  const rank = (v: CostValue | undefined) => (v?.status === "recorded" ? 0 : v?.status === "not-applicable" ? 1 : 2);
+  const r = rank(a) - rank(b);
+  if (r !== 0) return r;
+  return a?.status === "recorded" && b?.status === "recorded" ? b.amount - a.amount : 0;
 }
 
 export interface PlayerCostRow {
