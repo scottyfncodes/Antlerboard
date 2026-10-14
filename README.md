@@ -101,3 +101,17 @@ gracefully (with clear in-app messaging) when either is unset.
 4. Deploy to Vercel. `vercel.json` wires up two cron jobs
    (`/api/cron/yahoo-sync`, `/api/cron/notifications`) - both are protected
    by `CRON_SECRET`.
+
+### Production database
+
+Production runs on the Neon database connected through Vercel's Neon
+integration (the `DATABASE_URL_*` vars; Vercel's production branch on the
+Neon side is `main`). Prisma reads `DATABASE_URL` at runtime
+(`src/lib/db.ts`) and `scripts/build.sh` migrates through the integration's
+vars at build time; both point at that same Neon database. An earlier Render
+Postgres (`antlerboard-db`) only ever held the demo seed and the initial
+schema. Production has never used it, so letting it expire loses nothing
+from the live league.
+
+To check a backup or a restored copy against the source, run
+`scripts/db-fingerprint.sql` against both and compare the output.
