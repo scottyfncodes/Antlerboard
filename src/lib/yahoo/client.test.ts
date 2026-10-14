@@ -262,3 +262,19 @@ describe("yahooFantasyGet - failed-response diagnostics", () => {
     spy.mockRestore();
   });
 });
+
+describe("missingYahooEnvVars", () => {
+  it("is empty when all three are set", async () => {
+    const { missingYahooEnvVars, isYahooConfigured } = await import("./client");
+    expect(missingYahooEnvVars()).toEqual([]);
+    expect(isYahooConfigured()).toBe(true);
+  });
+
+  it("names unset and whitespace-only vars without revealing values", async () => {
+    vi.stubEnv("YAHOO_CLIENT_ID", "   ");
+    vi.stubEnv("YAHOO_REDIRECT_URI", "");
+    const { missingYahooEnvVars, isYahooConfigured } = await import("./client");
+    expect(missingYahooEnvVars()).toEqual(["YAHOO_CLIENT_ID", "YAHOO_REDIRECT_URI"]);
+    expect(isYahooConfigured()).toBe(false);
+  });
+});

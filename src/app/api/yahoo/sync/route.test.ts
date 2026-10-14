@@ -41,6 +41,16 @@ describe("POST /api/yahoo/sync", () => {
     expect(mockedSync).not.toHaveBeenCalled();
   });
 
+  it("refuses to sync when a Yahoo var is whitespace-only - blank counts as missing", async () => {
+    await makeLeagueWithSeason();
+    process.env.YAHOO_CLIENT_ID = "   ";
+
+    const res = await POST();
+
+    expect(res.status).toBe(503);
+    expect(mockedSync).not.toHaveBeenCalled();
+  });
+
   it("runs the sync where Yahoo is configured", async () => {
     await makeLeagueWithSeason();
     mockedSync.mockResolvedValueOnce({ status: "SUCCESS", sections: [], totalRecordsUpdated: 0 });
