@@ -147,3 +147,28 @@ export async function getCurrentHolders(
   for (const [playerId, teams] of stints) if (teams.length === 1) holders.set(playerId, teams[0]);
   return holders;
 }
+
+/**
+ * What the trade form offers: each active team in the league with the
+ * players it can trade right now. Holdings come from getCurrentHolders - the
+ * same rule the trade and offer guards enforce - so the form never lists a
+ * player the guard would refuse, or hides one it would accept. (Listing only
+ * live keeper records left every roster empty once Yahoo rosters were synced
+ * without keeper records.)
+ */
+export async function getTradeRosters(leagueId: string, seasonYear: number) {
+  const [teams, holders] = await Promise.all([
+    prisma.team.findMany({ where: { leagueId, active: true }, orderBy: { name: "asc" } }),
+    getCurrentHolders(prisma, leagueId, seasonYear),
+  ]);
+  const players = await prisma.player.findMany({
+    where: { id: { in: [...holders.keys()] } },
+    select: { id: true, name: true, mlbTeam: true },
+    orderBy: { name: "asc" },
+  });
+  return teams.map((t) => ({
+    id: t.id,
+    name: t.name,
+    roster: players.filter((p) => holders.get(p.id) === t.id),
+  }));
+}
