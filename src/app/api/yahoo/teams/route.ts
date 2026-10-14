@@ -42,9 +42,18 @@ export async function GET() {
   let yahooTeams: YahooTeamSummary[];
   try {
     const data = await yahooFantasyGet(league.id, `/league/${connection.yahooLeagueKey}/teams`);
-    yahooTeams = findLeagueTeams(fantasyContent(data).league)
+    const entries = findLeagueTeams(fantasyContent(data).league);
+    yahooTeams = entries
       .map((entry) => readYahooTeam(entry)?.summary)
       .filter((t): t is YahooTeamSummary => !!t);
+    // An empty list here would read as "this league has no teams"; when
+    // Yahoo did send team entries, that's a parsing failure, not an answer.
+    if (entries.length > 0 && yahooTeams.length === 0) {
+      return NextResponse.json(
+        { error: `Yahoo returned ${entries.length} team entries but none could be read.` },
+        { status: 502 }
+      );
+    }
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Failed to load Yahoo teams" },

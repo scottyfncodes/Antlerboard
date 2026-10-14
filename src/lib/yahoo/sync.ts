@@ -17,6 +17,7 @@ import { prisma } from "@/lib/db";
 import { yahooFantasyGet } from "./client";
 import { toArray, mergeMeta, fantasyContent, readFields } from "./parse";
 import { YahooApiError } from "./errors";
+import type { Season } from "@prisma/client";
 
 export interface SyncSectionResult {
   section: string;
@@ -32,17 +33,25 @@ export interface SyncResult {
 
 /**
  * The Antlerboard season a Yahoo league response belongs to: the Season row
- * matching the league's own `season` field, falling back to the latest
- * season only when Yahoo didn't say (so an offseason row for next year
- * never receives this year's standings).
+ * matching the league's own `season` field, and nothing else. There is
+ * deliberately no fallback to "the latest season" - when the matching row
+ * doesn't exist, guessing files a whole season of Yahoo data under the
+ * wrong year (2026 transactions landed in 2022 that way). Callers skip the
+ * write and report `missing` instead.
  */
-async function seasonForLeague(leagueId: string, leagueMeta: Record<string, unknown>) {
+async function seasonForLeague(
+  leagueId: string,
+  leagueMeta: Record<string, unknown>
+): Promise<{ season: Season; missing?: undefined } | { season: null; missing: string }> {
   const year = Number(leagueMeta.season);
-  if (Number.isInteger(year) && year > 0) {
-    const season = await prisma.season.findUnique({ where: { leagueId_year: { leagueId, year } } });
-    if (season) return season;
+  if (!Number.isInteger(year) || year <= 0) {
+    return { season: null, missing: "Yahoo didn't report which season this league is" };
   }
-  return prisma.season.findFirst({ where: { leagueId }, orderBy: { year: "desc" } });
+  const season = await prisma.season.findUnique({ where: { leagueId_year: { leagueId, year } } });
+  if (!season) {
+    return { season: null, missing: `No ${year} season exists in Antlerboard - create it before syncing` };
+  }
+  return { season };
 }
 
 /** The `{teams: ...}` list from a league response, wherever Yahoo nested it. */
@@ -104,12 +113,23 @@ async function syncTeamsAndStandings(leagueId: string, leagueKey: string): Promi
     return { section: "teams+standings", recordsUpdated: 0, error: `Yahoo returned no teams for league ${leagueKey}` };
   }
 
-  const season = await seasonForLeague(leagueId, leagueMeta);
+  // An entry readYahooTeam can't read is counted, never silently dropped:
+  // a response whose every team is unreadable must not look like a sync
+  // that simply had nothing to do.
+  const readTeams = teamEntries.map(readYahooTeam).filter((t) => t !== null);
+  const unreadable = teamEntries.length - readTeams.length;
+  if (readTeams.length === 0) {
+    return {
+      section: "teams+standings",
+      recordsUpdated: 0,
+      error: `Yahoo returned ${teamEntries.length} team entries for league ${leagueKey} but none could be read`,
+    };
+  }
+
+  const { season, missing: missingSeason } = await seasonForLeague(leagueId, leagueMeta);
   const unlinked: string[] = [];
 
-  for (const entry of teamEntries) {
-    const read = readYahooTeam(entry);
-    if (!read) continue;
+  for (const read of readTeams) {
     const { key: yahooTeamId, name } = read.summary;
     const standingsPart = read.parts.find(
       (p) => p && typeof p === "object" && "team_standings" in (p as object)
@@ -159,13 +179,21 @@ async function syncTeamsAndStandings(leagueId: string, leagueKey: string): Promi
     }
   }
 
+  const problems: string[] = [];
+  if (unreadable > 0) {
+    problems.push(`${unreadable} of ${teamEntries.length} Yahoo team entries could not be read`);
+  }
+  if (unlinked.length > 0) {
+    problems.push(
+      `${unlinked.length} Yahoo team(s) not linked to an Antlerboard team yet (${unlinked.join(", ")}) - link them on Commissioner > Yahoo`
+    );
+  }
+  if (missingSeason) problems.push(`Standings not recorded: ${missingSeason}`);
+
   return {
     section: "teams+standings",
     recordsUpdated: updated,
-    error:
-      unlinked.length > 0
-        ? `${unlinked.length} Yahoo team(s) not linked to an Antlerboard team yet (${unlinked.join(", ")}) - link them on Commissioner > Yahoo`
-        : undefined,
+    error: problems.length > 0 ? problems.join("; ") : undefined,
   };
 }
 
@@ -289,8 +317,10 @@ async function syncTransactions(leagueId: string, leagueKey: string): Promise<Sy
     (n) => n && typeof n === "object" && "transactions" in (n as object)
   ) as { transactions?: unknown } | undefined;
 
-  const season = await seasonForLeague(leagueId, readFields(toArray(leagueField)[0]));
-  if (!season) return { section: "transactions", recordsUpdated: 0, error: "No season configured" };
+  const { season, missing } = await seasonForLeague(leagueId, readFields(toArray(leagueField)[0]));
+  if (!season) {
+    return { section: "transactions", recordsUpdated: 0, error: `No transactions imported: ${missing}` };
+  }
 
   for (const entry of toArray(txContainer?.transactions)) {
     const txArray = (entry as { transaction?: unknown })?.transaction;
