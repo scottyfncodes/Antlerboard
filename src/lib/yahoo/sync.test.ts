@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterAll, vi } from "vitest";
 import { prisma } from "@/lib/db";
 import { runYahooSync } from "./sync";
-import { makeLeagueWithSeason, resetDatabase } from "@/lib/test-helpers";
+import { makeLeagueWithSeason, makeManagerAndTeam, resetDatabase } from "@/lib/test-helpers";
 
 vi.mock("./client", () => ({
   yahooFantasyGet: vi.fn(),
@@ -318,6 +318,107 @@ describe("runYahooSync - linking existing Antlerboard teams", () => {
     const section = result.sections.find((s) => s.section === "teams+standings")!;
     expect(section.error).toContain("no teams");
     expect(result.status).not.toBe("SUCCESS");
+  });
+
+  // Synthetic malformed entries (no team_key anywhere) - not a claimed Yahoo
+  // shape, just entries readYahooTeam can't read.
+  function withUnreadableTeams(response: ReturnType<typeof standingsResponse>, count: number) {
+    const teams = (response.fantasy_content.league[1] as { standings: { teams: Record<string, unknown> }[] })
+      .standings[0].teams;
+    const existing = Number(teams.count);
+    for (let i = 0; i < count; i++) teams[String(existing + i)] = { team: [[{ name: `Unreadable ${i}` }]] };
+    teams.count = existing + count;
+    return response;
+  }
+
+  it("fails the teams step - never SUCCESS - when Yahoo sends team entries but none can be read", async () => {
+    const { league } = await setupConnectedLeague();
+    await makeManagerAndTeam(league.id, "Alex");
+    wireMock({ standings: withUnreadableTeams(standingsResponse([]), 12) });
+
+    const result = await runYahooSync(league.id);
+
+    const section = result.sections.find((s) => s.section === "teams+standings")!;
+    expect(section.error).toBe("Yahoo returned 12 team entries for league 422.l.1 but none could be read");
+    expect(result.status).not.toBe("SUCCESS");
+    const log = await prisma.syncLog.findFirstOrThrow();
+    expect(log.status).not.toBe("SUCCESS");
+    expect(await prisma.team.count({ where: { yahooTeamId: { not: null } } })).toBe(0);
+  });
+
+  it("still syncs the readable teams and reports how many entries it skipped", async () => {
+    const { league } = await setupConnectedLeague();
+    wireMock({
+      standings: withUnreadableTeams(
+        standingsResponse([{ key: "422.l.1.t.1", name: "The Antlers", rank: "1", wins: "10", losses: "5" }]),
+        2
+      ),
+    });
+
+    const result = await runYahooSync(league.id);
+
+    const section = result.sections.find((s) => s.section === "teams+standings")!;
+    expect(section.error).toContain("2 of 3 Yahoo team entries could not be read");
+    expect(result.status).toBe("PARTIAL");
+    expect(await prisma.team.count({ where: { yahooTeamId: "422.l.1.t.1" } })).toBe(1);
+  });
+});
+
+describe("runYahooSync - season safety", () => {
+  it("writes no transactions or standings when Antlerboard has no season matching Yahoo's", async () => {
+    // Mirrors production: Yahoo says 2026, Antlerboard only has 2022.
+    const { league } = await makeLeagueWithSeason(2022);
+    const oldSeason = await prisma.season.findFirstOrThrow({ where: { leagueId: league.id } });
+    await prisma.yahooConnection.create({
+      data: { leagueId: league.id, accessToken: "fake-token", yahooLeagueKey: LEAGUE_KEY, yahooGameKey: "422" },
+    });
+    wireMock({
+      standings: standingsResponse([{ key: "422.l.1.t.1", name: "The Antlers", rank: "1", wins: "10", losses: "5" }], {
+        season: "2026",
+      }),
+      transactions: transactionsResponse([{ key: "422.l.1.tr.1", type: "add", timestamp: "1700000000" }]),
+    });
+
+    const result = await runYahooSync(league.id);
+
+    expect(await prisma.transaction.count()).toBe(0);
+    expect(await prisma.teamStanding.count({ where: { seasonId: oldSeason.id } })).toBe(0);
+    const tx = result.sections.find((s) => s.section === "transactions")!;
+    expect(tx.error).toBe("No transactions imported: No 2026 season exists in Antlerboard - create it before syncing");
+    const teams = result.sections.find((s) => s.section === "teams+standings")!;
+    expect(teams.error).toContain("Standings not recorded: No 2026 season exists in Antlerboard");
+    expect(result.status).not.toBe("SUCCESS");
+  });
+
+  it("leaves transactions already filed under another season untouched", async () => {
+    const { league } = await makeLeagueWithSeason(2022);
+    const oldSeason = await prisma.season.findFirstOrThrow({ where: { leagueId: league.id } });
+    await prisma.transaction.create({
+      data: { seasonId: oldSeason.id, seasonYear: 2022, type: "DROP", yahooTransactionId: "422.l.1.tr.7" },
+    });
+    await prisma.yahooConnection.create({
+      data: { leagueId: league.id, accessToken: "fake-token", yahooLeagueKey: LEAGUE_KEY, yahooGameKey: "422" },
+    });
+    wireMock({ transactions: transactionsResponse([{ key: "422.l.1.tr.8", type: "add", timestamp: "1700000000" }]) });
+
+    await runYahooSync(league.id);
+
+    const rows = await prisma.transaction.findMany();
+    expect(rows.map((r) => [r.yahooTransactionId, r.seasonId])).toEqual([["422.l.1.tr.7", oldSeason.id]]);
+  });
+
+  it("writes no transactions when Yahoo doesn't say which season the league is", async () => {
+    const { league } = await setupConnectedLeague();
+    const noSeason = transactionsResponse([{ key: "422.l.1.tr.1", type: "add", timestamp: "1700000000" }]);
+    delete (noSeason.fantasy_content.league[0] as { season?: string }).season;
+    wireMock({ transactions: noSeason });
+
+    const result = await runYahooSync(league.id);
+
+    expect(await prisma.transaction.count()).toBe(0);
+    expect(result.sections.find((s) => s.section === "transactions")!.error).toContain(
+      "Yahoo didn't report which season this league is"
+    );
   });
 });
 

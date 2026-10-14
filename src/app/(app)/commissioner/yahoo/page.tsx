@@ -3,7 +3,8 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { Card, EmptyState } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { YahooControls } from "@/components/commissioner/YahooControls";
-import { missingYahooEnvVars, yahooClientIdHint } from "@/lib/yahoo/client";
+import { missingYahooEnvVars } from "@/lib/yahoo/client";
+import { yahooClientIdFingerprint } from "@/lib/yahoo/diagnostics";
 import { timeAgo } from "@/lib/format";
 import { getCurrentManager } from "@/lib/current-manager";
 
@@ -20,6 +21,7 @@ export default async function YahooSettingsPage() {
     );
   }
 
+  const missingYahooVars = missingYahooEnvVars();
   const connection = await prisma.yahooConnection.findFirst();
   const syncLogs = connection
     ? await prisma.syncLog.findMany({ where: { connectionId: connection.id }, orderBy: { startedAt: "desc" }, take: 10 })
@@ -32,7 +34,7 @@ export default async function YahooSettingsPage() {
         subtitle="Yahoo stays the source of truth for rosters, standings, and transactions. Antlerboard layers keeper history, tags, trades, and DPUD on top - a sync never touches those."
       />
 
-      {missingYahooEnvVars().length > 0 && (
+      {missingYahooVars.length > 0 && (
         <div className="rounded-lg border border-yellow/40 bg-yellow/10 px-4 py-3 text-sm text-yellow">
           {process.env.VERCEL_ENV === "preview" ? (
             <>
@@ -46,7 +48,7 @@ export default async function YahooSettingsPage() {
           ) : (
             <>
               Yahoo OAuth isn&apos;t configured in this environment ({process.env.VERCEL_ENV ?? "local"}): missing or
-              blank {missingYahooEnvVars().join(", ")}. Set {missingYahooEnvVars().length === 1 ? "it" : "them"} in the
+              blank {missingYahooVars.join(", ")}. Set {missingYahooVars.length === 1 ? "it" : "them"} in the
               Vercel project&apos;s environment variables for this environment, then redeploy.
             </>
           )}
@@ -58,7 +60,7 @@ export default async function YahooSettingsPage() {
         <YahooControls
           connected={!!connection?.accessToken}
           selectedLeagueKey={connection?.yahooLeagueKey ?? null}
-          clientIdHint={yahooClientIdHint()}
+          clientIdFingerprint={yahooClientIdFingerprint()}
         />
       </Card>
 

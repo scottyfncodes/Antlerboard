@@ -85,6 +85,21 @@ describe("GET /api/yahoo/teams", () => {
     expect((await res.json()).error).toContain("403");
   });
 
+  it("reports a parsing failure instead of an empty list when Yahoo's team entries can't be read", async () => {
+    await setup();
+    // Synthetic entries with no team_key - not a claimed Yahoo shape.
+    mockedGet.mockResolvedValueOnce({
+      fantasy_content: {
+        league: [{ league_key: "422.l.1" }, { teams: { "0": { team: [[{ name: "A" }]] }, "1": { team: [[{ name: "B" }]] }, count: 2 } }],
+      },
+    });
+
+    const res = await GET();
+
+    expect(res.status).toBe(502);
+    expect((await res.json()).error).toBe("Yahoo returned 2 team entries but none could be read.");
+  });
+
   it("refuses a non-commissioner", async () => {
     mockedRequireCommissioner.mockResolvedValueOnce(null);
     expect((await GET()).status).toBe(403);

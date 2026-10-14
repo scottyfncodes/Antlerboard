@@ -94,6 +94,7 @@ model Season {
   dpudBets      DpudBet[]
   standings     TeamStanding[]
   draftDayDetails DraftDayDetails?
+  rosterSpots   RosterSpot[]
 
   @@unique([leagueId, year])
 }
@@ -234,6 +235,7 @@ model Team {
   fypdOrderSlots FypdDraftOrderSlot[]
   fypdSelections FypdSelection[]
   seasonRecords  TeamSeasonRecord[]
+  rosterSpots    RosterSpot[]
 
   @@unique([leagueId, yahooTeamId])
   @@index([leagueId])
@@ -371,6 +373,7 @@ model Player {
   dpudSubjects   DpudBetPlayer[]
   targetedOffers Offer[]
   fypdSelections FypdSelection[]
+  rosterSpots    RosterSpot[]
 
   @@unique([leagueId, yahooPlayerId])
   @@index([leagueId, name])
@@ -391,6 +394,36 @@ enum AcquisitionMethod {
 // between two rostered teams via TRADE. The first four start a brand new
 // keeper "stint" (tenure resets to zero); TRADE carries the existing stint's
 // tenure and cost forward untouched. See src/lib/keeper-engine.ts.
+// A player's current spot on a team's Yahoo roster for a season - the
+// Yahoo sync's own table, separate from keeper history (KeeperRecord, which
+// keeper-sync recomputes wholesale) and acquisition history (Acquisition,
+// which records events with a cost). It holds only what Yahoo's latest
+// roster says: a player who leaves a team loses the row, a traded player's
+// row moves to the new team, and a free agent has no row. History of who
+// moved where lives in Transaction and the SyncLog, never here.
+model RosterSpot {
+  id               String   @id @default(cuid())
+  season           Season   @relation(fields: [seasonId], references: [id])
+  seasonId         String
+  team             Team     @relation(fields: [teamId], references: [id])
+  teamId           String
+  player           Player   @relation(fields: [playerId], references: [id])
+  playerId         String
+  // The Yahoo player_key this spot was synced under.
+  yahooPlayerKey   String
+  // Yahoo's lineup slot (C, OF, BN, IL, NA, ...), when Yahoo sent one.
+  selectedPosition String?
+  // When a sync first saw the player on this team (reset when they move).
+  onTeamSince      DateTime
+  // When a sync last confirmed the player on this team.
+  lastSeenAt       DateTime
+  lastSyncLogId    String?
+
+  // One team per player per season, enforced by the database.
+  @@unique([seasonId, playerId])
+  @@index([teamId, seasonId])
+}
+
 model Acquisition {
   id        String            @id @default(cuid())
   season    Season            @relation(fields: [seasonId], references: [id])

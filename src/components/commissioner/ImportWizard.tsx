@@ -31,7 +31,7 @@ export function ImportWizard() {
   const [mapping, setMapping] = useState<Partial<Record<ImportFieldKey, number>>>({});
   const [checkedRows, setCheckedRows] = useState<CheckedRow[]>([]);
   const [busy, setBusy] = useState(false);
-  const [summary, setSummary] = useState<{ imported: number; skipped: number } | null>(null);
+  const [summary, setSummary] = useState<{ imported: number; skipped: number; error?: string } | null>(null);
 
   function onFile(file: File) {
     const reader = new FileReader();
@@ -242,6 +242,15 @@ export function ImportWizard() {
         >
           {busy ? "Importing…" : `Import ${includedCount} rows`}
         </button>
+      </div>
+    );
+  }
+
+  if (summary?.error) {
+    return (
+      <div className="rounded-xl border border-red/40 bg-red/10 p-6 text-sm">
+        <p className="font-medium text-red">Import rejected.</p>
+        <p className="text-muted mt-1">{summary.error}</p>
       </div>
     );
   }

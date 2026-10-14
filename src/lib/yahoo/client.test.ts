@@ -158,6 +158,111 @@ describe("yahooFantasyGet", () => {
   });
 });
 
+describe("yahooFantasyGet - failed-response diagnostics", () => {
+  const NOT_AUTHORIZED = "This application is not authorized to perform this action.";
+  const loggedEvents = (spy: { mock: { calls: unknown[][] } }) =>
+    spy.mock.calls.map((call) => String(call[0])).filter((line) => line.includes('"yahoo_api_error"'));
+
+  it("logs one sanitized event for Yahoo's 403, without changing how the request fails", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubEnv("VERCEL_DEPLOYMENT_ID", "dpl_Test123");
+    const league = await connectedLeague();
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: { description: NOT_AUTHORIZED } }), {
+        status: 403,
+        headers: { "x-request-id": "yahoo-req-42", "set-cookie": "B=cookie-secret" },
+      })
+    );
+
+    const err = (await yahooFantasyGet(league.id, "/users;use_login=1/games;game_keys=mlb/leagues").catch(
+      (e: unknown) => e
+    )) as YahooApiError;
+
+    expect(err).toBeInstanceOf(YahooApiError);
+    expect(err.isAppNotAuthorized).toBe(true);
+    expect(err.message).toBe(
+      `Yahoo API request failed (403): /users;use_login=1/games;game_keys=mlb/leagues - ${NOT_AUTHORIZED}`
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const lines = loggedEvents(spy);
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0])).toMatchObject({
+      event: "yahoo_api_error",
+      status: 403,
+      path: "/users;use_login=1/games;game_keys=mlb/leagues",
+      attempt: 0,
+      deployment: "dpl_Test123",
+      message: NOT_AUTHORIZED,
+      requestIds: { "x-request-id": "yahoo-req-42" },
+    });
+    spy.mockRestore();
+  });
+
+  it("never lets the access token, refresh token, client secret or cookies into the log", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const league = await connectedLeague({ expiresInMs: -1000 });
+    fetchMock
+      .mockResolvedValueOnce(json(200, { access_token: "fresh-access-token", refresh_token: "fresh-refresh-token", expires_in: 3600 }))
+      .mockResolvedValueOnce(
+        new Response(
+          // A body or header echoing the credentials back must not reach the log either.
+          JSON.stringify({ error: { description: "denied token=fresh-access-token secret=test-client-secret" } }),
+          { status: 403, headers: { "set-cookie": "T=cookie-secret", "x-request-id": "fresh-access-token" } }
+        )
+      );
+
+    await yahooFantasyGet(league.id, "/league/458.l.12345/standings?code=oauth-code&state=oauth-state").catch(() => {});
+
+    const output = spy.mock.calls.map((call) => call.map(String).join(" ")).join("\n");
+    for (const secret of [
+      "fresh-access-token",
+      "old-access",
+      "fresh-refresh-token",
+      "refresh-1",
+      "test-client-secret",
+      "cookie-secret",
+      "oauth-code",
+      "oauth-state",
+      "12345",
+    ]) {
+      expect(output).not.toContain(secret);
+    }
+    const event = JSON.parse(loggedEvents(spy)[0]);
+    expect(event.path).toBe("/league/{key}/standings");
+    expect(event.message).toBe("denied token=[redacted] secret=[redacted]");
+    expect(event.requestIds).toEqual({ "x-request-id": "[redacted]" });
+    spy.mockRestore();
+  });
+
+  it("logs each failed attempt once and keeps the existing retry count when Yahoo sends no headers", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const league = await connectedLeague();
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    fetchMock.mockImplementation(async () => denied());
+
+    const err = (await settleWithFakeTime(yahooFantasyGet(league.id, "/x").catch((e: unknown) => e))) as YahooApiError;
+
+    expect(err.status).toBe(999);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const events = loggedEvents(spy).map((line) => JSON.parse(line));
+    expect(events.map((e) => e.attempt)).toEqual([0, 1, 2]);
+    expect(events[0]).toMatchObject({ status: 999, message: "Request denied", requestIds: {}, headerNames: [] });
+    spy.mockRestore();
+  });
+
+  it("logs nothing when Yahoo answers successfully", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const league = await connectedLeague();
+    fetchMock.mockResolvedValueOnce(json(200, { fantasy_content: {} }));
+
+    await yahooFantasyGet(league.id, "/x");
+
+    expect(loggedEvents(spy)).toHaveLength(0);
+    spy.mockRestore();
+  });
+});
+
 describe("missingYahooEnvVars", () => {
   it("is empty when all three are set", async () => {
     const { missingYahooEnvVars, isYahooConfigured } = await import("./client");
@@ -171,19 +276,5 @@ describe("missingYahooEnvVars", () => {
     const { missingYahooEnvVars, isYahooConfigured } = await import("./client");
     expect(missingYahooEnvVars()).toEqual(["YAHOO_CLIENT_ID", "YAHOO_REDIRECT_URI"]);
     expect(isYahooConfigured()).toBe(false);
-  });
-});
-
-describe("yahooClientIdHint", () => {
-  it("shows only the last 8 characters of the Client ID", async () => {
-    vi.stubEnv("YAHOO_CLIENT_ID", "dj0yJmk9abcdefghijklmnop12345678");
-    const { yahooClientIdHint } = await import("./client");
-    expect(yahooClientIdHint()).toBe("…12345678");
-  });
-
-  it("is null when unset", async () => {
-    vi.stubEnv("YAHOO_CLIENT_ID", "");
-    const { yahooClientIdHint } = await import("./client");
-    expect(yahooClientIdHint()).toBeNull();
   });
 });
