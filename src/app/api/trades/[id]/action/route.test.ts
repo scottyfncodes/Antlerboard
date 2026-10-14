@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterAll, vi } from "vitest";
 import { prisma } from "@/lib/db";
 import { makeLeagueWithSeason, makeManagerAndTeam, makePlayer, resetDatabase } from "@/lib/test-helpers";
+import { recomputeKeeperRecordsForPlayer } from "@/lib/keeper-sync";
 
 vi.mock("@/lib/current-manager", () => ({ getCurrentManager: vi.fn() }));
 
@@ -24,6 +25,7 @@ async function setup() {
   await prisma.acquisition.create({
     data: { seasonId: season.id, seasonYear: season.year, playerId: player.id, teamId: a.team.id, method: "DRAFT", cost: 5 },
   });
+  await recomputeKeeperRecordsForPlayer(player.id, season.year);
   const trade = await prisma.trade.create({
     data: {
       seasonId: season.id,

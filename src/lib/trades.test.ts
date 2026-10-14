@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterAll } from "vitest";
 import { prisma } from "./db";
 import { acceptTrade, rejectTrade, withdrawTrade, counterTrade, createTrade, TradeActionError } from "./trades";
 import { makeLeagueWithSeason, makeManagerAndTeam, makePlayer, resetDatabase } from "./test-helpers";
+import { recomputeKeeperRecordsForPlayer } from "./keeper-sync";
 
 beforeEach(resetDatabase);
 afterAll(resetDatabase);
@@ -14,6 +15,7 @@ async function rostered(seasonId: string, year: number, leagueId: string, name: 
   await prisma.acquisition.create({
     data: { seasonId, seasonYear: year, playerId: player.id, teamId, method: "DRAFT", cost: 10 },
   });
+  await recomputeKeeperRecordsForPlayer(player.id, year);
   return player;
 }
 
@@ -184,6 +186,7 @@ describe("overlapping proposals", () => {
     const season = await prisma.season.findFirstOrThrow();
     const c = await makeManagerAndTeam(season.leagueId, "Casey");
     const base = { seasonId: season.id, seasonYear: season.year, playerId: player.id, keeperYear: 0, keeperCost: 10, yearsRemaining: 0 };
+    await prisma.keeperRecord.deleteMany({ where: { playerId: player.id } });
     await prisma.keeperRecord.createMany({
       data: [
         { ...base, teamId: c.team.id, startTeamId: c.team.id, status: "DROPPED", stintIndex: 0 },
@@ -212,5 +215,120 @@ describe("createTrade validation", () => {
       })
     ).rejects.toThrow("Every team in the trade has to send or receive something");
     expect(await prisma.trade.count()).toBe(0);
+  });
+});
+
+const tradeAcquisitions = (playerId: string) => prisma.acquisition.count({ where: { playerId, method: "TRADE" } });
+
+describe("roster checks at execution", () => {
+  it("refuses a player the sending team has since dropped", async () => {
+    const { trade, b, player } = await twoTeamTrade();
+    // Dropped after the proposal: his only stint this season has ended.
+    await prisma.keeperRecord.updateMany({ where: { playerId: player.id }, data: { status: "DROPPED" } });
+
+    await expect(acceptTrade(trade.id, b.team.id)).rejects.toThrow("no longer on");
+    expect(await status(trade.id)).toBe("PROPOSED");
+    expect(await tradeAcquisitions(player.id)).toBe(0);
+  });
+
+  it("refuses a player with no keeper record this season", async () => {
+    const { trade, b, player } = await twoTeamTrade();
+    await prisma.keeperRecord.deleteMany({ where: { playerId: player.id } });
+
+    await expect(acceptTrade(trade.id, b.team.id)).rejects.toThrow("no longer on");
+    expect(await tradeAcquisitions(player.id)).toBe(0);
+  });
+});
+
+describe("concurrent actions", () => {
+  it("lets only one of two trades moving the same player go through", async () => {
+    const { trade, a, b, player } = await twoTeamTrade();
+    const c = await makeManagerAndTeam((await prisma.team.findUniqueOrThrow({ where: { id: a.team.id } })).leagueId, "Casey");
+    const second = await createTrade({
+      proposerId: a.manager.id,
+      proposingTeamId: a.team.id,
+      teamIds: [a.team.id, c.team.id],
+      assets: [{ fromTeamId: a.team.id, toTeamId: c.team.id, assetType: "PLAYER", playerId: player.id }],
+    });
+
+    const results = await Promise.allSettled([acceptTrade(trade.id, b.team.id), acceptTrade(second.id, c.team.id)]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(await tradeAcquisitions(player.id)).toBe(1);
+    const live = await prisma.keeperRecord.findMany({ where: { playerId: player.id, status: { not: "DROPPED" } } });
+    expect(live).toHaveLength(1);
+  });
+
+  it("executes a 3-team trade when the last two teams accept at the same moment", async () => {
+    const { trade, b, c, pa, pb } = await threeTeamTrade();
+    await Promise.all([acceptTrade(trade.id, b.team.id), acceptTrade(trade.id, c.team.id)]);
+
+    expect(await status(trade.id)).toBe("ACCEPTED");
+    expect(await tradeAcquisitions(pa.id)).toBe(1);
+    expect(await tradeAcquisitions(pb.id)).toBe(1);
+  });
+
+  it("never marks an executed trade REJECTED when a reject races the final accept", async () => {
+    const { trade, b, c, pa } = await threeTeamTrade();
+    await acceptTrade(trade.id, b.team.id);
+    await Promise.allSettled([acceptTrade(trade.id, c.team.id), rejectTrade(trade.id, b.team.id)]);
+
+    const final = await status(trade.id);
+    expect(["ACCEPTED", "REJECTED"]).toContain(final);
+    // Players moved if and only if the trade ended ACCEPTED.
+    expect(await tradeAcquisitions(pa.id)).toBe(final === "ACCEPTED" ? 1 : 0);
+  });
+
+  it("can't withdraw a trade that has already executed", async () => {
+    const { trade, b } = await twoTeamTrade();
+    await acceptTrade(trade.id, b.team.id);
+    await expect(withdrawTrade(trade.id)).rejects.toThrow("no longer open");
+    expect(await status(trade.id)).toBe("ACCEPTED");
+  });
+});
+
+describe("proposal validation", () => {
+  it("refuses a player who isn't on the sending team", async () => {
+    const { league, season } = await makeLeagueWithSeason();
+    const a = await makeManagerAndTeam(league.id, "Alex");
+    const b = await makeManagerAndTeam(league.id, "Blair");
+    const bsPlayer = await rostered(season.id, season.year, league.id, "Blair's Guy", b.team.id);
+
+    await expect(
+      createTrade({
+        proposerId: a.manager.id,
+        proposingTeamId: a.team.id,
+        teamIds: [a.team.id, b.team.id],
+        assets: [{ fromTeamId: a.team.id, toTeamId: b.team.id, assetType: "PLAYER", playerId: bsPlayer.id }],
+      })
+    ).rejects.toThrow("isn't on Alex's Team's roster");
+    expect(await prisma.trade.count()).toBe(0);
+  });
+
+  it("refuses an unknown or inactive team with a clear error instead of a crash", async () => {
+    const { league } = await makeLeagueWithSeason();
+    const a = await makeManagerAndTeam(league.id, "Alex");
+    const b = await makeManagerAndTeam(league.id, "Blair");
+    await prisma.team.update({ where: { id: b.team.id }, data: { active: false } });
+    const pick = pickAsset(a.team.id, b.team.id);
+
+    for (const other of [b.team.id, "no-such-team"]) {
+      await expect(
+        createTrade({ proposerId: a.manager.id, proposingTeamId: a.team.id, teamIds: [a.team.id, other], assets: [{ ...pick, toTeamId: other }] })
+      ).rejects.toBeInstanceOf(TradeActionError);
+    }
+  });
+
+  it("leaves the original open when a counter can't be saved", async () => {
+    const { trade, a, b } = await twoTeamTrade();
+    await expect(
+      counterTrade(trade.id, {
+        proposerId: b.manager.id,
+        proposingTeamId: b.team.id,
+        teamIds: [b.team.id, a.team.id],
+        // B doesn't have this player.
+        assets: [{ fromTeamId: b.team.id, toTeamId: a.team.id, assetType: "PLAYER", playerId: "no-such-player" }],
+      })
+    ).rejects.toBeInstanceOf(TradeActionError);
+    expect(await status(trade.id)).toBe("PROPOSED");
   });
 });

@@ -13,8 +13,9 @@ export async function GET() {
     where: visibleTradesWhere(manager),
     orderBy: { updatedAt: "desc" },
     include: {
-      participants: { include: { team: { include: { manager: true } } } },
-      proposer: true,
+      // Names only - never a manager's email or other account fields.
+      participants: { include: { team: { include: { manager: { select: { id: true, name: true } } } } } },
+      proposer: { select: { id: true, name: true } },
       assets: { include: { player: true } },
     },
   });

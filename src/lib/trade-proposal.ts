@@ -22,6 +22,7 @@ export interface TradeProposalInput {
 
 /** Returns a user-facing reason the proposal is malformed, or null if it's fine. */
 export function tradeProposalProblem({ proposingTeamId, teamIds, assets }: TradeProposalInput): string | null {
+  if (!Array.isArray(teamIds) || teamIds.some((t) => typeof t !== "string")) return "Pick the teams in the trade";
   const teams = [...new Set(teamIds)];
   if (teams.length !== teamIds.length) return "Each team can only be in the trade once";
   if (teams.length < MIN_TRADE_TEAMS) return "A trade needs at least two teams";
@@ -31,12 +32,13 @@ export function tradeProposalProblem({ proposingTeamId, teamIds, assets }: Trade
 
   const seenPlayers = new Set<string>();
   for (const a of assets) {
+    if (!a || typeof a !== "object") return "Every asset needs a team, a destination and a player or pick";
     if (!teams.includes(a.fromTeamId) || !teams.includes(a.toTeamId)) {
       return "Every player and pick must move between teams in the trade";
     }
     if (a.fromTeamId === a.toTeamId) return "A team can't trade something to itself";
     if (a.assetType === "PLAYER") {
-      if (!a.playerId) return "A player asset is missing its player";
+      if (!a.playerId || typeof a.playerId !== "string") return "A player asset is missing its player";
       if (seenPlayers.has(a.playerId)) return "The same player can't be traded twice in one deal";
       seenPlayers.add(a.playerId);
     } else if (a.assetType === "DRAFT_PICK") {

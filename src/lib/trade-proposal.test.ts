@@ -34,3 +34,14 @@ describe("tradeProposalProblem", () => {
     expect(tradeProposalProblem({ proposingTeamId: "a", teamIds: ["a", "b"], assets: [] })).toMatch(/at least one/);
   });
 });
+
+describe("malformed input", () => {
+  it("rejects null assets and non-string ids instead of throwing", () => {
+    const base = { proposingTeamId: "a", teamIds: ["a", "b"] };
+    expect(tradeProposalProblem({ ...base, assets: [null as never] })).toMatch("Every asset");
+    expect(tradeProposalProblem({ ...base, teamIds: ["a", 7 as never], assets: [] })).toMatch("Pick the teams");
+    expect(
+      tradeProposalProblem({ ...base, assets: [{ fromTeamId: "a", toTeamId: "b", assetType: "PLAYER", playerId: 5 as never }] })
+    ).toMatch("missing its player");
+  });
+});

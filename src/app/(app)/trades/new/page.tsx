@@ -6,6 +6,7 @@ import { ProposeTradeForm, type TradeDraft } from "@/components/trades/ProposeTr
 import { getCurrentManager } from "@/lib/current-manager";
 import { resolveTradeAction } from "@/lib/trade-access";
 import type { TradeAssetInput } from "@/lib/trade-proposal";
+import { getTradeRosters } from "@/lib/rosters";
 
 export const dynamic = "force-dynamic";
 
@@ -47,23 +48,11 @@ export default async function NewTradePage({ searchParams }: { searchParams: Pro
     }
   }
 
-  const teams = await prisma.team.findMany({
-    where: { active: true },
-    orderBy: { name: "asc" },
-    include: {
-      keeperRecords: {
-        where: { seasonYear: CURRENT_SEASON_YEAR, status: { not: "DROPPED" } },
-        include: { player: true },
-        orderBy: { player: { name: "asc" } },
-      },
-    },
-  });
-
-  const teamOptions = teams.map((t) => ({
-    id: t.id,
-    name: t.name,
-    roster: t.keeperRecords.map((r) => ({ id: r.player.id, name: r.player.name, mlbTeam: r.player.mlbTeam })),
-  }));
+  // Each team's tradeable players come from the same rule the server
+  // enforces when the trade is proposed and executed (getCurrentHolders):
+  // the Yahoo roster plus deals agreed here since the last sync, or the live
+  // keeper stints for a season without Yahoo rosters.
+  const teamOptions = await getTradeRosters(manager.leagueId, CURRENT_SEASON_YEAR);
 
   return (
     <div className="space-y-4 max-w-2xl">
