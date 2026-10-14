@@ -157,3 +157,102 @@ describe("POST /api/commissioner/import/commit - rejects ids outside the league 
     expect(await writeCounts()).toEqual(before);
   });
 });
+
+describe("POST /api/commissioner/import/commit - existing player id must match the row's player name", () => {
+  it("rejects an in-league player id paired with a different player's name, and writes nothing", async () => {
+    const { mine, myTeam, myPlayer } = await setup();
+    // Another real player in the same league - the swap the old route allowed.
+    const gunnar = await prisma.player.create({ data: { leagueId: mine.id, name: "Gunnar Henderson" } });
+    const before = await writeCounts();
+
+    const { status, body } = await commit([
+      row({ teamId: myTeam.id, playerName: "Gunnar Henderson", existingPlayerId: myPlayer.id }),
+      row({ teamId: myTeam.id, playerName: "Brand New", existingPlayerId: gunnar.id }),
+    ]);
+
+    expect(status).toBe(400);
+    expect(body.invalidRows).toEqual([
+      { index: 0, playerName: "Gunnar Henderson", reasons: ["player id does not match the player name"] },
+      { index: 1, playerName: "Brand New", reasons: ["player id does not match the player name"] },
+    ]);
+    expect(body.error).toContain("Nothing was imported");
+    expect(await writeCounts()).toEqual(before);
+  });
+
+  it("accepts the same name with different case and surrounding whitespace, as the check step does", async () => {
+    const { myTeam, myPlayer } = await setup();
+
+    const { status, body } = await commit([row({ teamId: myTeam.id, playerName: "  nICK kurtz  ", existingPlayerId: myPlayer.id })]);
+
+    expect(status).toBe(200);
+    expect(body).toEqual({ imported: 1, skipped: 0 });
+    const acq = await prisma.acquisition.findFirstOrThrow();
+    expect(acq.playerId).toBe(myPlayer.id);
+    expect(await prisma.player.count({ where: { name: { contains: "kurtz", mode: "insensitive" } } })).toBe(1);
+  });
+
+  it("does not treat a near-miss spelling as the same player", async () => {
+    const { myTeam, myPlayer } = await setup();
+    const before = await writeCounts();
+
+    const { status, body } = await commit([row({ teamId: myTeam.id, playerName: "Nick Kurt", existingPlayerId: myPlayer.id })]);
+
+    expect(status).toBe(400);
+    expect(body.invalidRows[0].reasons).toEqual(["player id does not match the player name"]);
+    expect(await writeCounts()).toEqual(before);
+  });
+
+  it("imports a valid existing player and a new player together", async () => {
+    const { mine, myTeam, myPlayer } = await setup();
+
+    const { status, body } = await commit([
+      row({ teamId: myTeam.id, playerName: "Nick Kurtz", existingPlayerId: myPlayer.id }),
+      row({ teamId: myTeam.id, playerName: "Fresh Prospect" }),
+    ]);
+
+    expect(status).toBe(200);
+    expect(body).toEqual({ imported: 2, skipped: 0 });
+    const fresh = await prisma.player.findFirstOrThrow({ where: { name: "Fresh Prospect" } });
+    expect(fresh.leagueId).toBe(mine.id);
+    expect((await prisma.acquisition.findMany()).map((a) => a.playerId).sort()).toEqual([myPlayer.id, fresh.id].sort());
+  });
+
+  it("rejects a non-string player name sent with an existing player id", async () => {
+    const { myTeam, myPlayer } = await setup();
+    const before = await writeCounts();
+
+    const { status, body } = await commit([row({ teamId: myTeam.id, playerName: ["Nick Kurtz"], existingPlayerId: myPlayer.id })]);
+
+    expect(status).toBe(400);
+    expect(body.invalidRows[0].reasons).toEqual(["player id does not match the player name"]);
+    expect(await writeCounts()).toEqual(before);
+  });
+
+  it("rejects the whole batch when one row's id/name mismatch sits among valid rows", async () => {
+    const { myTeam, myPlayer } = await setup();
+    const before = await writeCounts();
+
+    const { status, body } = await commit([
+      row({ teamId: myTeam.id, playerName: "Nick Kurtz", existingPlayerId: myPlayer.id }),
+      row({ teamId: myTeam.id, playerName: "Someone Else", existingPlayerId: myPlayer.id }),
+      row({ teamId: myTeam.id, playerName: "Brand New" }),
+    ]);
+
+    expect(status).toBe(400);
+    expect(body).toMatchObject({ imported: 0, skipped: 3 });
+    expect(body.invalidRows.map((r: { index: number }) => r.index)).toEqual([1]);
+    expect(await writeCounts()).toEqual(before);
+  });
+
+  it("still skips an unforced conflict row without validating it", async () => {
+    const { myTeam, myPlayer } = await setup();
+
+    const { status, body } = await commit([
+      row({ teamId: myTeam.id, playerName: "Mismatched", existingPlayerId: myPlayer.id, conflict: "already has one", force: false }),
+      row({ teamId: myTeam.id, playerName: "Nick Kurtz", existingPlayerId: myPlayer.id }),
+    ]);
+
+    expect(status).toBe(200);
+    expect(body).toEqual({ imported: 1, skipped: 1 });
+  });
+});
