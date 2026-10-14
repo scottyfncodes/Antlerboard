@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
 import { LeagueHeader } from "@/components/league/LeagueHeader";
-import { Card, EmptyState } from "@/components/ui/Card";
+import { Card, CardLink, EmptyState } from "@/components/ui/Card";
 import { DraftColorBadge } from "@/components/ui/Badge";
 import { getDraftColorRange } from "@/lib/draft-color-engine";
 import { getPlayerHistoryEvents } from "@/lib/keeper-sync";
@@ -60,6 +60,11 @@ export default async function HistoryPage() {
   return (
     <div className="space-y-8">
       <LeagueHeader active="history" description="The permanent archive: champions, drafts, and keeper milestones." />
+
+      <CardLink href="/history/drafts">
+        <p className="font-display text-lg">Draft History &rarr;</p>
+        <p className="text-sm text-muted">Every auction and FYPD on record, season by season, with gaps in the data flagged.</p>
+      </CardLink>
 
       <section>
         <h2 className="font-display text-lg mb-3">Champions</h2>
