@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { getCurrentTeamForPlayer } from "@/lib/rosters";
 import { CURRENT_SEASON_YEAR } from "@/lib/config";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Card, EmptyState } from "@/components/ui/Card";
@@ -69,7 +70,10 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
   const latestRecord = player.keeperRecords[0];
   // A row whose stint ended this season is history, not a roster spot.
   const currentRecord = latestRecord && latestRecord.status !== "DROPPED" ? latestRecord : undefined;
-  const teamIdForCurrentTag = currentRecord?.teamId;
+  // Who has the player now: the Yahoo roster when the sync has recorded one
+  // this season, otherwise the live keeper stint (see getCurrentTeamForPlayer).
+  const currentTeam = await getCurrentTeamForPlayer(playerId, CURRENT_SEASON_YEAR);
+  const teamIdForCurrentTag = currentTeam.team?.id;
   const currentTag = player.tags.find((t) => t.teamId === teamIdForCurrentTag);
 
   // Group timeline rows into stints for a clear visual break between them.
@@ -91,10 +95,12 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
         <Card>
           <p className="text-xs text-muted">Current Team</p>
           <p className="mt-1 font-medium">
-            {currentRecord ? (
-              <Link href={`/teams/${currentRecord.teamId}`} className="hover:text-antler-strong">
-                {currentRecord.team.name}
+            {currentTeam.team ? (
+              <Link href={`/teams/${currentTeam.team.id}`} className="hover:text-antler-strong">
+                {currentTeam.team.name}
               </Link>
+            ) : currentTeam.status === "free_agent" ? (
+              "Free agent"
             ) : (
               "Unrostered"
             )}

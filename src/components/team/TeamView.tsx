@@ -8,6 +8,7 @@ import { PlayerRow, PlayerSection } from "@/components/players/PlayerRow";
 import { MyPlayerTagControl } from "@/components/my-team/MyPlayerTagControl";
 import { TeamHeader } from "./TeamHeader";
 import { groupHittersAndPitchers } from "@/lib/positions";
+import { getTeamRoster } from "@/lib/rosters";
 import { visibleTradesWhere, type TradeViewer } from "@/lib/trade-access";
 import { tradeTitle } from "@/lib/trades";
 import { formatCost, formatDateTime, timeAgo, PLAYER_TAG_LABEL } from "@/lib/format";
@@ -44,12 +45,9 @@ export async function TeamView({
       include: { manager: true, standings: { where: { season: { year: CURRENT_SEASON_YEAR } } } },
     }),
     prisma.season.findFirst({ where: { year: CURRENT_SEASON_YEAR } }),
-    prisma.keeperRecord.findMany({
-      // A stint that ended during the season (DROPPED) is history, not roster.
-      where: { seasonYear: CURRENT_SEASON_YEAR, teamId, status: { not: "DROPPED" } },
-      include: { player: true },
-      orderBy: [{ keeperYear: "desc" }, { stintIndex: "desc" }, { keeperCost: "desc" }, { player: { name: "asc" } }],
-    }),
+    // The Yahoo roster when the sync has recorded one for this season,
+    // otherwise the live keeper stints (see getTeamRoster).
+    getTeamRoster(teamId, CURRENT_SEASON_YEAR),
     // Keeper slots are what this team declared at the deadline, whether or
     // not the player has since been traded away.
     prisma.keeperRecord.findMany({
@@ -61,9 +59,10 @@ export async function TeamView({
   if (!team) return null;
 
   const tagByPlayer = new Map(tags.map((t) => [t.playerId, t]));
-  const expiring = roster.filter((r) => r.keeperYear >= 4);
+  const rows = roster.rows;
+  const expiring = rows.filter((r) => (r.keeper?.keeperYear ?? 0) >= 4);
   const keeperCostDeclared = keeperSlotsDeclared.reduce((sum, r) => sum + r.keeperCost, 0);
-  const { hitters, pitchers } = groupHittersAndPitchers(roster, (r) => r.player.positions);
+  const { hitters, pitchers } = groupHittersAndPitchers(rows, (r) => r.player.positions);
 
   const tabs = [
     { key: "roster", label: "Roster" },
@@ -71,18 +70,21 @@ export async function TeamView({
     { key: "draft", label: "Draft" },
   ].map((t) => ({ href: t.key === "roster" ? basePath : `${basePath}?tab=${t.key}`, label: t.label, active: tab === t.key }));
 
-  const renderRow = (r: (typeof roster)[number]) => {
-    const tag = tagByPlayer.get(r.playerId);
+  const renderRow = (r: (typeof rows)[number]) => {
+    const tag = tagByPlayer.get(r.player.id);
+    // Keeper cost and clock only where a keeper record exists - a Yahoo
+    // roster player without one has no keeper history to show yet.
     return (
       <PlayerRow
-        key={r.id}
+        key={r.key}
         player={r.player}
-        cost={r.keeperCost}
-        keeperYear={r.keeperYear}
-        keeperStatus={r.status}
+        cost={r.keeper ? r.keeper.keeperCost : undefined}
+        keeperYear={r.keeper?.keeperYear}
+        keeperStatus={r.keeper?.status}
+        meta={r.selectedPosition ? `Slot ${r.selectedPosition}` : undefined}
         trailing={
           isMine ? (
-            <MyPlayerTagControl playerId={r.playerId} currentTag={tag?.tag ?? null} />
+            <MyPlayerTagControl playerId={r.player.id} currentTag={tag?.tag ?? null} />
           ) : (
             tag && <PlayerTagBadge tag={tag.tag} label={PLAYER_TAG_LABEL[tag.tag]} />
           )
@@ -98,7 +100,7 @@ export async function TeamView({
         standing={team.standings[0]}
         eyebrow={isMine ? "My Team" : undefined}
         stats={[
-          { label: "Roster", value: String(roster.length) },
+          { label: "Roster", value: String(rows.length) },
           { label: "Keepers", value: `${keeperSlotsDeclared.length}/${KEEPER_SLOT_COUNT}` },
           { label: "Yr 4–5", value: String(expiring.length), tone: expiring.length > 0 ? "warn" : undefined },
           { label: "Budget left", value: formatCost(AUCTION_BUDGET - keeperCostDeclared) },
@@ -115,7 +117,10 @@ export async function TeamView({
               <span className="font-semibold text-antler-strong">{formatDateTime(season.keeperDeadline)}</span>
             </div>
           )}
-          {roster.length === 0 ? (
+          {roster.source === "yahoo" && roster.lastSyncedAt && (
+            <p className="text-xs text-muted">Yahoo roster · synced {timeAgo(roster.lastSyncedAt)}</p>
+          )}
+          {rows.length === 0 ? (
             <EmptyState title="No players rostered yet" />
           ) : (
             <>
