@@ -266,7 +266,12 @@ function CostCard({ row }: { row: PlayerCostRow }) {
           {keeper ? (
             <>
               <CostText value={keeper.cost} />
-              {keeper.commissionerOverride && <Badge variant="yellow" className="ml-1.5">Commissioner set</Badge>}
+              {keeper.cost.status === "recorded" && (
+                <Badge variant={keeper.cost.basis === "calculated" ? "blue" : "green"} className="ml-1.5">
+                  {keeper.cost.basis === "calculated" ? "Calculated" : "Recorded"}
+                </Badge>
+              )}
+              <CostReason value={keeper.cost} />
             </>
           ) : (
             <span className="text-muted">{UNAVAILABLE}</span>

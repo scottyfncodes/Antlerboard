@@ -4,6 +4,7 @@ import {
   classifyAcquisitionCost,
   classifyAuctionCost,
   classifyKeeperCost,
+  findStintOrigin,
   costLabel,
   filterPlayerCostRows,
   paginate,
@@ -82,10 +83,102 @@ describe("auction and keeper cost", () => {
     expect(classifyAuctionCost(23)).toEqual({ status: "recorded", amount: 23 });
   });
 
-  it("formats recorded keeper costs and rejects invalid ones", () => {
-    expect(costLabel(classifyKeeperCost(12.5))).toBe("$12.50");
-    expect(classifyKeeperCost(undefined).status).toBe("unavailable");
-    expect(classifyKeeperCost(Number.NaN).status).toBe("unavailable");
+});
+
+describe("provenance-tagged acquisition prices", () => {
+  const tagged = (price: string, o: Partial<Parameters<typeof classifyAcquisitionCost>[0]> = {}) =>
+    classifyAcquisitionCost(acq({ sourceRef: `league-history:x|price=${price}`, ...o }));
+
+  it("shows a missing price as Unavailable even though the column holds 0", () => {
+    const v = tagged("missing", { method: "DRAFT", cost: 0 });
+    expect(v.status).toBe("unavailable");
+    expect(costLabel(v)).toBe("Unavailable");
+  });
+
+  it("shows a guessed (inferred) price as Unavailable, never the guess", () => {
+    expect(tagged("inferred", { cost: 12 }).status).toBe("unavailable");
+  });
+
+  it("keeps a legitimate $0 as $0 and says why", () => {
+    expect(tagged("recorded", { cost: 0 })).toMatchObject({ status: "recorded", amount: 0, note: expect.stringContaining("$0") });
+    expect(tagged("rule", { method: "FYPD", cost: 0 })).toMatchObject({ status: "recorded", amount: 0 });
+  });
+
+  it("trusts a tag over legacy note wording (a sheet $0 that really was $0)", () => {
+    expect(tagged("recorded", { cost: 0, sourceRef: "league-history:workbook:A/2024/eoy|price=recorded" })).toMatchObject({ status: "recorded", amount: 0 });
+  });
+
+  it("never prices a trade, tagged or not", () => {
+    expect(tagged("recorded", { method: "TRADE", cost: 0 }).status).toBe("not-applicable");
+  });
+});
+
+describe("keeper cost provenance", () => {
+  const rec = (o: Partial<Parameters<typeof classifyKeeperCost>[0]> = {}) => ({
+    seasonYear: 2025,
+    keeperYear: 2,
+    keeperCost: 14,
+    status: "KEPT" as const,
+    commissionerOverride: false,
+    ...o,
+  });
+  const origin = (price: string, o: Partial<NonNullable<Parameters<typeof classifyKeeperCost>[1]>> = {}) => ({
+    seasonYear: 2023,
+    method: "DRAFT" as const,
+    cost: 10,
+    notes: null,
+    sourceRef: `league-history:auction:x|price=${price}`,
+    ...o,
+  });
+
+  it("shows a cost calculated from a recorded price, labelled as calculated", () => {
+    expect(classifyKeeperCost(rec(), origin("recorded"))).toMatchObject({ status: "recorded", amount: 14, basis: "calculated" });
+  });
+
+  it("hides a cost calculated from a missing or guessed price", () => {
+    expect(classifyKeeperCost(rec(), origin("missing", { cost: 0 })).status).toBe("unavailable");
+    expect(classifyKeeperCost(rec(), origin("inferred")).status).toBe("unavailable");
+  });
+
+  it("shows a workbook-confirmed season as recorded even when the origin price was guessed", () => {
+    const o = origin("inferred", { sourceRef: "league-history:k|price=inferred|keeper-recorded=2025" });
+    expect(classifyKeeperCost(rec(), o)).toMatchObject({ status: "recorded", basis: "recorded", amount: 14 });
+    expect(classifyKeeperCost(rec({ seasonYear: 2026, keeperYear: 3 }), o).status).toBe("unavailable");
+  });
+
+  it("always keeps a commissioner/workbook override as recorded", () => {
+    expect(classifyKeeperCost(rec({ commissionerOverride: true, keeperCost: 13 }), origin("missing"))).toMatchObject({ status: "recorded", amount: 13, basis: "recorded" });
+    expect(classifyKeeperCost(rec({ commissionerOverride: true }), null).status).toBe("recorded");
+  });
+
+  it("never shows the engine's stored $0 for a forced redraft", () => {
+    const v = classifyKeeperCost(rec({ status: "FORCED_BACK", keeperCost: 0, keeperYear: 6 }), origin("recorded"));
+    expect(v.status).toBe("not-applicable");
+    expect(costLabel(v)).not.toBe("$0");
+  });
+
+  it("is Unavailable when the cost can't be traced to an acquisition", () => {
+    expect(classifyKeeperCost(rec(), null).status).toBe("unavailable");
+  });
+
+  it("calculates from the FYPD rule base for a call-up", () => {
+    expect(classifyKeeperCost(rec({ keeperCost: 5, keeperYear: 1 }), origin("rule", { method: "FYPD", cost: 0, seasonYear: 2024 }))).toMatchObject({
+      status: "recorded",
+      amount: 5,
+      basis: "calculated",
+    });
+  });
+});
+
+describe("findStintOrigin", () => {
+  const a = (seasonYear: number, method: "DRAFT" | "WAIVER" | "TRADE", day = 1) => ({ seasonYear, method, date: new Date(Date.UTC(seasonYear, 3, day)) });
+
+  it("picks the stintIndex-th non-trade acquisition and checks it against the keeper year", () => {
+    const acqs = [a(2024, "WAIVER", 9), a(2022, "DRAFT"), a(2023, "TRADE"), a(2024, "DRAFT", 2)];
+    expect(findStintOrigin(acqs, { seasonYear: 2025, keeperYear: 3, stintIndex: 0 })).toBe(acqs[1]);
+    expect(findStintOrigin(acqs, { seasonYear: 2025, keeperYear: 1, stintIndex: 2 })).toBe(acqs[0]);
+    expect(findStintOrigin(acqs, { seasonYear: 2025, keeperYear: 2, stintIndex: 0 })).toBeNull(); // season doesn't line up
+    expect(findStintOrigin(acqs, { seasonYear: 2025, keeperYear: 0, stintIndex: 9 })).toBeNull();
   });
 });
 
@@ -109,6 +202,9 @@ describe("buildPlayerCostRows", () => {
         acquisitions: [{ id: "a1", playerId: "p1", seasonYear: 2026, method: "DRAFT", cost: 41, notes: null, sourceRef: "league-history:auction:x", date: new Date("2026-03-20"), team: A }],
         keeperRecords: [
           { id: "k1", playerId: "p1", seasonYear: 2026, keeperYear: 0, keeperCost: 41, yearsRemaining: 5, status: "KEPT", stintIndex: 0, commissionerOverride: false, team: A, startTeam: A },
+        ],
+        originAcquisitions: [
+          { id: "a1", playerId: "p1", seasonYear: 2026, method: "DRAFT", cost: 41, notes: null, sourceRef: "league-history:auction:x|price=recorded", date: new Date("2026-03-20"), team: A },
         ],
       })
     );
@@ -165,7 +261,7 @@ describe("buildPlayerCostRows", () => {
         ],
       })
     );
-    expect(rows.find((x) => x.player.id === "p1")!.keeper).toMatchObject({ key: "k1", cost: { amount: 2 } });
+    expect(rows.find((x) => x.player.id === "p1")!.keeper).toMatchObject({ key: "k1", keeperYear: 0 });
   });
 
   it("reports current team / free agent only once a roster sync exists", () => {
@@ -191,7 +287,7 @@ describe("filterPlayerCostRows", () => {
       ],
       currentRosterSynced: true,
       keeperRecords: [
-        { id: "k1", playerId: "p2", seasonYear: 2026, keeperYear: 1, keeperCost: 6, yearsRemaining: 4, status: "KEPT", stintIndex: 0, commissionerOverride: false, team: B, startTeam: B },
+        { id: "k1", playerId: "p2", seasonYear: 2026, keeperYear: 1, keeperCost: 6, yearsRemaining: 4, status: "KEPT", stintIndex: 0, commissionerOverride: true, team: B, startTeam: B },
       ],
     })
   );

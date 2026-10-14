@@ -4,6 +4,7 @@ import {
   buildAuctionHistory,
   buildFypdHistory,
   filterDraftPicks,
+  isInferredOrder,
   validateFypdOrder,
   type AuctionPickInput,
   type FypdDraftInput,
@@ -204,5 +205,56 @@ describe("filterDraftPicks", () => {
     expect(filterDraftPicks(h.picks, { q: "prospect 42" }).map((p) => p.overallPick)).toEqual([42]);
     expect(filterDraftPicks(h.picks, { q: "team 3" }).length).toBeGreaterThan(0);
     expect(filterDraftPicks(h.picks, { q: "nobody" })).toEqual([]);
+  });
+});
+
+describe("auction nomination-order provenance", () => {
+  const team = { id: "t1", name: "Team 1" };
+  const pick = (n: number, sourceRef: string | null): AuctionPickInput => ({
+    id: `d${n}`,
+    round: 1,
+    pick: n,
+    overallPick: n,
+    cost: 5,
+    isKeeperSlot: false,
+    team,
+    player: { id: `p${n}`, name: `Player ${n}`, mlbTeam: null, positions: [] },
+    sourceRef,
+  });
+
+  it("never presents workbook row order as nomination order", () => {
+    const h = buildAuctionHistory(2024, [pick(1, "league-history:Scott 2024 draft|order=sheet"), pick(2, "league-history:Scott 2024 draft|order=sheet")]);
+    expect(h.picks.map((p) => p.order)).toEqual(["sheet", "sheet"]);
+    expect(h.completeness.status).toBe("unverified");
+    expect(h.completeness.note).toMatch(/nomination order isn't recorded/);
+    expect(h.notes.join(" ")).toMatch(/row numbers, not nominations/);
+  });
+
+  it("treats an older untagged import row as unknown order, not as verified", () => {
+    const h = buildAuctionHistory(2024, [pick(1, "league-history:A1")]);
+    expect(h.picks[0].order).toBe("unknown");
+    expect(isInferredOrder(h.picks[0].order)).toBe(true);
+  });
+
+  it("keeps the source file's own pick numbers as nomination order, with gap detection", () => {
+    const h = buildAuctionHistory(2023, [pick(1, "league-history:A1|order=source"), pick(3, "league-history:A3|order=source")]);
+    expect(h.picks.every((p) => p.order === "source")).toBe(true);
+    expect(h.completeness).toMatchObject({ status: "incomplete", missing: 1 });
+    expect(h.notes.join(" ")).not.toMatch(/row order/);
+  });
+
+  it("treats hand-entered picks (no provenance) as entered order", () => {
+    expect(buildAuctionHistory(2026, [pick(1, null)]).picks[0].order).toBe("entered");
+  });
+
+  it("flags a mix of verified and row-order numbering", () => {
+    const h = buildAuctionHistory(2024, [pick(1, "league-history:A1|order=source"), pick(2, "league-history:B|order=sheet")]);
+    expect(h.completeness.status).toBe("unverified");
+    expect(h.notes.join(" ")).toMatch(/^1 pick is numbered by workbook row order|1 pick is numbered/);
+  });
+
+  it("marks every FYPD pick as source order", () => {
+    const fypd = buildFypdHistory(draft([sel(1)]));
+    expect(fypd.picks[0].order).toBe("source");
   });
 });

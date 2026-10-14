@@ -93,12 +93,23 @@ describe("player cost loaders", () => {
       data: { seasonId: s2025.id, seasonYear: 2025, playerId: kept.id, teamId: teams[0].id, startTeamId: teams[0].id, keeperYear: 2, keeperCost: 14, yearsRemaining: 3, status: "KEPT" },
     });
 
-    const rows2025 = await loadPlayerCostRows(league.id, 2025, 2026);
+    // No acquisition on record for the stint: the stored 14 can't be traced, so it isn't shown as a cost.
+    let rows2025 = await loadPlayerCostRows(league.id, 2025, 2026);
     expect(rows2025.map((r) => r.player.name)).toEqual(["Kept In 2025"]);
-    expect(rows2025[0].keeper).toMatchObject({ keeperYear: 2, cost: { status: "recorded", amount: 14 } });
+    expect(rows2025[0].keeper).toMatchObject({ keeperYear: 2, cost: { status: "unavailable" } });
+
+    // With the 2023 auction price on record it is a calculated cost.
+    const s2023 = await prisma.season.create({ data: { leagueId: league.id, year: 2023, status: "COMPLETE" } });
+    await prisma.acquisition.create({
+      data: { seasonId: s2023.id, seasonYear: 2023, playerId: kept.id, teamId: teams[0].id, method: "DRAFT", cost: 10, sourceRef: "league-history:auction:x|price=recorded" },
+    });
+    rows2025 = await loadPlayerCostRows(league.id, 2025, 2026);
+    expect(rows2025[0].keeper).toMatchObject({ keeperYear: 2, cost: { status: "recorded", amount: 14, basis: "calculated" } });
+    // The 2023 acquisition is read for provenance only - it isn't a 2025 cost.
+    expect(rows2025[0].acquisitions).toEqual([]);
 
     const rows2026 = await loadPlayerCostRows(league.id, 2026, 2026);
     expect(rows2026.map((r) => r.player.name)).toEqual(["Only Rostered Now"]);
-    expect(await listCostSeasons(league.id, 2026)).toEqual([2026, 2025]);
+    expect(await listCostSeasons(league.id, 2026)).toEqual([2026, 2025, 2023]);
   });
 });

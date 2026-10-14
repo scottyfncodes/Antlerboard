@@ -5,6 +5,8 @@ import { EmptyState } from "@/components/ui/Card";
 import { KeeperYearBadge } from "@/components/keepers/KeeperYearBadge";
 import { KeeperFilters } from "@/components/keepers/KeeperFilters";
 import { formatCost } from "@/lib/format";
+import { loadKeeperCostValues } from "@/lib/player-costs-data";
+import { costLabel, type CostValue } from "@/lib/player-costs";
 import Link from "next/link";
 import clsx from "clsx";
 import type { Prisma } from "@prisma/client";
@@ -51,6 +53,9 @@ export default async function KeeperBoardPage({
     include: { player: true, team: true, startTeam: true },
   });
 
+  // Costs calculated from a missing or guessed price read Unavailable.
+  const costValues = await loadKeeperCostValues(records);
+
   const grouped = new Map<string, typeof records>();
   for (const r of records) {
     const key = r.startTeamId ?? r.teamId;
@@ -87,12 +92,14 @@ export default async function KeeperBoardPage({
       {records.length === 0 ? (
         <EmptyState title="No keepers match those filters" />
       ) : flatView ? (
-        <KeeperTable records={records} showTeam />
+        <KeeperTable records={records} costValues={costValues} showTeam />
       ) : (
         <div className="space-y-6">
           {[...grouped.entries()].map(([teamId, teamRecords]) => {
             const team = teamRecords[0].startTeam ?? teamRecords[0].team;
-            const total = teamRecords.reduce((sum, r) => sum + r.keeperCost, 0);
+            const confirmed = teamRecords.map((r) => costValues.get(r.id)).filter((v): v is Extract<CostValue, { status: "recorded" }> => v?.status === "recorded");
+            const total = confirmed.reduce((sum, v) => sum + v.amount, 0);
+            const unconfirmed = teamRecords.filter((r) => costValues.get(r.id)?.status === "unavailable").length;
             return (
               <section key={teamId}>
                 <h2 className="font-display text-lg mb-2 flex items-baseline gap-2 flex-wrap">
@@ -100,10 +107,13 @@ export default async function KeeperBoardPage({
                     {team.name}
                   </Link>
                   <span className="text-sm text-muted font-sans">
-                    {teamRecords.length}/{KEEPER_SLOT_COUNT} · {formatCost(total)} in keepers · {formatCost(AUCTION_BUDGET - total)} left for the auction
+                    {teamRecords.length}/{KEEPER_SLOT_COUNT} · {formatCost(total)} in keepers
+                    {unconfirmed > 0
+                      ? ` · ${unconfirmed} cost${unconfirmed === 1 ? "" : "s"} unconfirmed`
+                      : ` · ${formatCost(AUCTION_BUDGET - total)} left for the auction`}
                   </span>
                 </h2>
-                <KeeperTable records={teamRecords} />
+                <KeeperTable records={teamRecords} costValues={costValues} />
               </section>
             );
           })}
@@ -115,8 +125,10 @@ export default async function KeeperBoardPage({
 
 function KeeperTable({
   records,
+  costValues,
   showTeam,
 }: {
+  costValues: Map<string, CostValue>;
   records: {
     id: string;
     keeperYear: number;
@@ -180,10 +192,7 @@ function KeeperTable({
                     </Link>
                   </td>
                 )}
-                <td className="px-2 py-2 tabular" title={r.commissionerOverride ? "Recorded by the commissioner; differs from the ladder" : undefined}>
-                  {formatCost(r.keeperCost)}
-                  {r.commissionerOverride && <span className="text-muted text-xs ml-0.5">*</span>}
-                </td>
+                <KeeperCostCell value={costValues.get(r.id)} override={r.commissionerOverride} />
                 <td className="px-2 py-2">
                   <KeeperYearBadge keeperYear={r.keeperYear} status={r.status} />
                 </td>
@@ -193,5 +202,22 @@ function KeeperTable({
         </tbody>
       </table>
     </div>
+  );
+}
+
+function KeeperCostCell({ value, override }: { value: CostValue | undefined; override: boolean }) {
+  if (!value || value.status !== "recorded") {
+    const reason = value?.status === "unavailable" || value?.status === "not-applicable" ? value.reason : "No keeper cost is recorded.";
+    return (
+      <td className="px-2 py-2 text-xs text-muted" title={reason}>
+        {value?.status === "not-applicable" ? "None" : costLabel(value ?? { status: "unavailable", reason })}
+      </td>
+    );
+  }
+  return (
+    <td className="px-2 py-2 tabular" title={override ? "Recorded by the commissioner; differs from the ladder" : value.note}>
+      {formatCost(value.amount)}
+      {override && <span className="text-muted text-xs ml-0.5">*</span>}
+    </td>
   );
 }

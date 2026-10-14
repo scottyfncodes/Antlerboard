@@ -17,6 +17,26 @@
  */
 
 import { getSnakeSlot } from "./fypd-snake-engine";
+import { readProvenance } from "./import/provenance";
+
+/**
+ * Where an auction pick's number came from:
+ *  source   the auction file's own pick/nomination column
+ *  entered  entered in Antlerboard (no import provenance)
+ *  sheet    workbook row order - the real nomination order isn't recorded
+ *  unknown  an older import row with no order tag - treated like sheet
+ */
+export type NominationOrder = "source" | "entered" | "sheet" | "unknown";
+
+export function nominationOrderOf(sourceRef: string | null | undefined): NominationOrder {
+  const tagged = readProvenance(sourceRef).order;
+  if (tagged) return tagged;
+  return sourceRef ? "unknown" : "entered";
+}
+
+export function isInferredOrder(o: NominationOrder): boolean {
+  return o === "sheet" || o === "unknown";
+}
 
 export type DraftKind = "auction" | "fypd";
 
@@ -59,6 +79,8 @@ export interface DraftHistoryPick {
   cost: number | null;
   isKeeperSlot: boolean;
   originalSlot: OriginalSlot;
+  /** Auction only: where `overallPick` came from. FYPD picks are always "source". */
+  order: NominationOrder;
   flags: string[];
 }
 
@@ -84,6 +106,7 @@ export interface AuctionPickInput {
   isKeeperSlot: boolean;
   team: TeamRef;
   player: PlayerRef | null;
+  sourceRef?: string | null;
 }
 
 export function buildAuctionHistory(year: number, rawPicks: AuctionPickInput[]): DraftHistory {
@@ -108,6 +131,7 @@ export function buildAuctionHistory(year: number, rawPicks: AuctionPickInput[]):
       cost: p.cost,
       isKeeperSlot: p.isKeeperSlot,
       originalSlot: { status: "not-applicable", reason: "Auction - there are no draft slots to own or trade." },
+      order: nominationOrderOf(p.sourceRef),
       flags,
     };
   });
@@ -116,13 +140,29 @@ export function buildAuctionHistory(year: number, rawPicks: AuctionPickInput[]):
   if (duplicates > 0) notes.push(`${duplicates} player${duplicates === 1 ? "" : "s"} recorded more than once - check the source data.`);
   const unpriced = picks.filter((p) => p.cost === null).length;
   if (unpriced > 0) notes.push(`${unpriced} pick${unpriced === 1 ? " has" : "s have"} no recorded price.`);
+  const inferred = out.filter((p) => isInferredOrder(p.order)).length;
+  if (inferred > 0) {
+    notes.push(
+      `${inferred === out.length ? "All" : inferred} pick${inferred === 1 ? " is" : "s are"} numbered by workbook row order - the real nomination order isn't recorded, so those numbers are row numbers, not nominations.`
+    );
+  }
 
-  return { kind: "auction", year, completeness: auctionCompleteness(picks), picks: out, notes };
+  return { kind: "auction", year, completeness: auctionCompleteness(out), picks: out, notes };
 }
 
-export function auctionCompleteness(picks: { overallPick: number }[]): Completeness {
+export function auctionCompleteness(picks: { overallPick: number; order?: NominationOrder }[]): Completeness {
   if (picks.length === 0) {
     return { status: "none", recorded: 0, expected: null, note: "No auction results are stored for this season." };
+  }
+  // Row-order numbering is sequential by construction, so a gap check on it
+  // would prove nothing.
+  if (picks.some((p) => p.order && isInferredOrder(p.order))) {
+    return {
+      status: "unverified",
+      recorded: picks.length,
+      expected: null,
+      note: "The real nomination order isn't recorded for this auction, and the league doesn't record how many players it should have, so neither order nor total can be verified.",
+    };
   }
   const numbers = new Set(picks.map((p) => p.overallPick));
   const max = Math.max(...numbers);
@@ -247,6 +287,7 @@ export function buildFypdHistory(draft: FypdDraftInput): DraftHistory {
       player: s.player,
       cost: null,
       isKeeperSlot: false,
+      order: "source",
       originalSlot: originalSlotFor(s, order, teamCount, expected, trustHorizon, (byPick.get(s.overallPick)?.length ?? 0) > 1),
       flags,
     };

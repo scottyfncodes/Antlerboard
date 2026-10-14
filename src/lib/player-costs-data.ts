@@ -5,7 +5,8 @@
  */
 
 import { prisma } from "./db";
-import { buildPlayerCostRows, type PlayerCostRow } from "./player-costs";
+import { buildPlayerCostRows, classifyKeeperCost, findStintOrigin, type CostValue, type PlayerCostRow } from "./player-costs";
+import type { KeeperStatus } from "@prisma/client";
 
 const teamSelect = { id: true, name: true } as const;
 
@@ -63,10 +64,18 @@ export async function loadPlayerCostRows(leagueId: string, season: number, curre
     ...(isCurrentSeason ? currentRoster.map((r) => r.playerId) : []),
   ]);
 
-  const players = await prisma.player.findMany({
-    where: { leagueId, id: { in: [...playerIds] } },
-    select: { id: true, name: true, mlbTeam: true, positions: true },
-  });
+  const [players, originAcquisitions] = await Promise.all([
+    prisma.player.findMany({
+      where: { leagueId, id: { in: [...playerIds] } },
+      select: { id: true, name: true, mlbTeam: true, positions: true },
+    }),
+    // Read only to trace where each keeper cost came from (never displayed):
+    // a keeper record's stint started in an earlier season.
+    prisma.acquisition.findMany({
+      where: { playerId: { in: [...new Set(keeperRecords.map((k) => k.playerId))] }, method: { not: "TRADE" }, seasonYear: { lte: season }, season: { leagueId } },
+      select: { id: true, seasonYear: true, method: true, cost: true, notes: true, sourceRef: true, date: true, playerId: true, team: { select: teamSelect } },
+    }),
+  ]);
 
   return buildPlayerCostRows({
     season,
@@ -74,8 +83,33 @@ export async function loadPlayerCostRows(leagueId: string, season: number, curre
     auctionPicks: auctionPicks.map((p) => ({ ...p, playerId: p.playerId! })),
     acquisitions,
     keeperRecords,
+    originAcquisitions,
     currentRoster,
     currentRosterSynced: currentRoster.length > 0,
     isCurrentSeason,
   });
+}
+
+/**
+ * Provenance-checked keeper costs for any set of KeeperRecords (see
+ * classifyKeeperCost): one query for the stints' origin acquisitions.
+ * Views that show a keeper cost use this so a cost calculated from a
+ * missing or guessed price never reads as a real one.
+ */
+export async function loadKeeperCostValues(
+  records: { id: string; playerId: string; seasonYear: number; keeperYear: number; keeperCost: number; stintIndex: number; status: KeeperStatus; commissionerOverride: boolean }[]
+): Promise<Map<string, CostValue>> {
+  const out = new Map<string, CostValue>();
+  if (records.length === 0) return out;
+  const acquisitions = await prisma.acquisition.findMany({
+    where: { playerId: { in: [...new Set(records.map((r) => r.playerId))] }, method: { not: "TRADE" } },
+    select: { seasonYear: true, method: true, cost: true, notes: true, sourceRef: true, date: true, playerId: true },
+  });
+  const byPlayer = new Map<string, typeof acquisitions>();
+  for (const a of acquisitions) {
+    if (!byPlayer.has(a.playerId)) byPlayer.set(a.playerId, []);
+    byPlayer.get(a.playerId)!.push(a);
+  }
+  for (const r of records) out.set(r.id, classifyKeeperCost(r, findStintOrigin(byPlayer.get(r.playerId) ?? [], r)));
+  return out;
 }

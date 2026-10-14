@@ -9,6 +9,7 @@ import {
   buildAuctionHistory,
   buildFypdHistory,
   fypdCompleteness,
+  nominationOrderOf,
   validateFypdOrder,
   type Completeness,
   type DraftHistory,
@@ -32,7 +33,7 @@ const teamSelect = { id: true, name: true } as const;
 export async function listDraftSeasons(leagueId: string): Promise<DraftSeasonSummary[]> {
   const [seasons, pickNumbers, fypdDrafts] = await Promise.all([
     prisma.season.findMany({ where: { leagueId }, select: { id: true, year: true } }),
-    prisma.draftPick.findMany({ where: { season: { leagueId } }, select: { seasonYear: true, overallPick: true } }),
+    prisma.draftPick.findMany({ where: { season: { leagueId } }, select: { seasonYear: true, overallPick: true, sourceRef: true } }),
     prisma.fypdDraft.findMany({
       where: { leagueId },
       select: {
@@ -56,7 +57,8 @@ export async function listDraftSeasons(leagueId: string): Promise<DraftSeasonSum
         const numbers = [...new Set(draft.selections.map((s) => s.overallPick))];
         fypd = fypdCompleteness(numbers.length, expected, numbers, order.teams ? null : order.reason);
       }
-      return { year, auction: auctionCompleteness(pickNumbers.filter((p) => p.seasonYear === year)), fypd };
+      const auction = pickNumbers.filter((p) => p.seasonYear === year).map((p) => ({ overallPick: p.overallPick, order: nominationOrderOf(p.sourceRef) }));
+      return { year, auction: auctionCompleteness(auction), fypd };
     });
 }
 
@@ -72,6 +74,7 @@ export async function loadDraftHistory(leagueId: string, year: number, kind: Dra
         overallPick: true,
         cost: true,
         isKeeperSlot: true,
+        sourceRef: true,
         team: { select: teamSelect },
         player: { select: playerSelect },
       },

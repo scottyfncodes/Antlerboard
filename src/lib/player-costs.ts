@@ -15,18 +15,30 @@
  * - Keeper year: KeeperRecord.keeperYear.
  *
  * Acquisition.cost is a non-null column defaulting to 0, and the league-
- * history import writes 0 where its source had no price (flagging that in
- * `notes`) or back-solves a price from a later keeper cost. Neither is a
- * real recorded price, so both read as Unavailable here - never as $0.
+ * history import writes 0 where its source had no price or back-solves a
+ * price from a later keeper cost. It says which on the row's sourceRef
+ * (see import/provenance.ts); neither is a real recorded price, so both
+ * read as Unavailable here - never as $0. A real $0 (a Yahoo claim with no
+ * bid, a free FYPD call-up) stays $0.
+ *
+ * Keeper costs are traced the same way: KeeperRecord.keeperCost is the
+ * engine's calculation from the stint's origin price, so it is only shown
+ * as a cost when that price is real, the workbook recorded the same number,
+ * or a commissioner override set it. Otherwise it is Unavailable.
  *
  * Nothing here ever borrows a value across seasons or from the current
  * roster: a row only shows facts recorded for the season being viewed.
  */
 
 import type { AcquisitionMethod, KeeperStatus } from "@prisma/client";
+import { readProvenance } from "./import/provenance";
 
 export type CostValue =
-  | { status: "recorded"; amount: number; note?: string }
+  /**
+   * basis "recorded": the amount itself is on record. "calculated": the
+   * keeper ladder applied to a recorded price (or the league's FYPD rule).
+   */
+  | { status: "recorded"; amount: number; note?: string; basis?: "recorded" | "calculated" }
   | { status: "unavailable"; reason: string }
   /** No price applies by design (a trade carries the existing cost). */
   | { status: "not-applicable"; reason: string };
@@ -107,15 +119,29 @@ export function classifyAcquisitionCost(a: Pick<AcquisitionInput, "method" | "co
   if (a.method === "TRADE") {
     return { status: "not-applicable", reason: "Trades carry the player's existing cost." };
   }
+  if (!Number.isFinite(a.cost) || a.cost < 0) {
+    return { status: "unavailable", reason: "The stored price isn't a valid amount." };
+  }
+  // The import states how far each price can be trusted.
+  switch (readProvenance(a.sourceRef).price) {
+    case "missing":
+      return { status: "unavailable", reason: "The source had no price for this acquisition." };
+    case "inferred":
+      return { status: "unavailable", reason: "No recorded price - the import estimated it from a later keeper cost." };
+    case "rule":
+      return { status: "recorded", amount: a.cost, note: "Free FYPD call-up - the keeper clock starts at an assumed $4." };
+    case "recorded":
+      return { status: "recorded", amount: a.cost, note: a.cost === 0 ? "A real $0 pickup (no FAAB bid)." : undefined };
+  }
+  // Untagged rows: hand-entered or app-created rows are taken as entered;
+  // rows from an import that predates provenance tags fall back to the
+  // wording of the notes it wrote.
   const notes = a.notes ?? "";
   if (MISSING_PRICE_NOTE.test(notes)) {
     return { status: "unavailable", reason: "The source had no price for this acquisition." };
   }
   if (INFERRED_PRICE_NOTE.test(notes)) {
     return { status: "unavailable", reason: "No recorded price - the import estimated it from a later keeper cost." };
-  }
-  if (!Number.isFinite(a.cost) || a.cost < 0) {
-    return { status: "unavailable", reason: "The stored price isn't a valid amount." };
   }
   if (a.method === "FYPD") {
     return { status: "recorded", amount: a.cost, note: "Free call-up - the keeper clock starts at an assumed $4." };
@@ -135,11 +161,67 @@ export function classifyAuctionCost(cost: number | null): CostValue {
   return { status: "recorded", amount: cost };
 }
 
-export function classifyKeeperCost(cost: number | null | undefined): CostValue {
-  if (cost === null || cost === undefined || !Number.isFinite(cost) || cost < 0) {
+export interface KeeperCostInput {
+  seasonYear: number;
+  keeperYear: number;
+  keeperCost: number;
+  status: KeeperStatus;
+  commissionerOverride: boolean;
+}
+
+export type KeeperOrigin = Pick<AcquisitionInput, "seasonYear" | "method" | "cost" | "notes" | "sourceRef">;
+
+/**
+ * The origin acquisition of a KeeperRecord's stint: the engine numbers
+ * stints in order of the player's non-trade acquisitions (see
+ * keeper-engine buildStints), so it's the stintIndex-th one - confirmed by
+ * its season matching the record's keeper year.
+ */
+export function findStintOrigin<T extends { seasonYear: number; date: Date; method: AcquisitionMethod }>(
+  acquisitions: T[],
+  record: { seasonYear: number; keeperYear: number; stintIndex: number }
+): T | null {
+  const starts = acquisitions
+    .filter((a) => a.method !== "TRADE")
+    .sort((a, b) => a.seasonYear - b.seasonYear || a.date.getTime() - b.date.getTime());
+  const origin = starts[record.stintIndex];
+  return origin && origin.seasonYear === record.seasonYear - record.keeperYear ? origin : null;
+}
+
+/**
+ * Whether a KeeperRecord's cost is a real cost. KeeperRecord.keeperCost is
+ * NOT NULL and the engine stores 0 when there is no cost at all (a forced
+ * redraft), so the number alone proves nothing.
+ */
+export function classifyKeeperCost(record: KeeperCostInput, origin: KeeperOrigin | null): CostValue {
+  if (record.status === "FORCED_BACK") {
+    return { status: "not-applicable", reason: "Forced back to the auction after five kept years - there is no keeper cost." };
+  }
+  if (!Number.isFinite(record.keeperCost) || record.keeperCost < 0) {
     return { status: "unavailable", reason: "No keeper cost is recorded." };
   }
-  return { status: "recorded", amount: cost };
+  if (record.commissionerOverride) {
+    return { status: "recorded", amount: record.keeperCost, basis: "recorded", note: "Recorded cost (workbook or commissioner)." };
+  }
+  if (origin && readProvenance(origin.sourceRef).keeperRecorded.includes(record.seasonYear)) {
+    return { status: "recorded", amount: record.keeperCost, basis: "recorded", note: "Matches the workbook's recorded cost." };
+  }
+  if (!origin) {
+    return { status: "unavailable", reason: "This keeper cost can't be traced to an acquisition price." };
+  }
+  const base = classifyAcquisitionCost(origin);
+  if (base.status !== "recorded") {
+    return { status: "unavailable", reason: "Calculated from an acquisition price that isn't on record, so it isn't a confirmed cost." };
+  }
+  if (record.keeperYear === 0) {
+    return { status: "recorded", amount: record.keeperCost, basis: "recorded", note: base.note };
+  }
+  return {
+    status: "recorded",
+    amount: record.keeperCost,
+    basis: "calculated",
+    note: origin.method === "FYPD" ? "Calculated by the keeper ladder from the $4 FYPD call-up base." : `Calculated by the keeper ladder from the $${base.amount} ${origin.seasonYear} price.`,
+  };
 }
 
 export function costLabel(value: CostValue): string {
@@ -176,6 +258,11 @@ export interface BuildPlayerCostRowsInput {
   auctionPicks: (AuctionPickInput & { playerId: string })[];
   acquisitions: (AcquisitionInput & { playerId: string })[];
   keeperRecords: (KeeperRecordInput & { playerId: string })[];
+  /**
+   * Every non-trade acquisition up to this season for players with a keeper
+   * record in it - read only to trace keeper-cost provenance, never shown.
+   */
+  originAcquisitions?: (AcquisitionInput & { playerId: string })[];
   /** Current-season roster spots (player -> team). Only consulted for "Now" status. */
   currentRoster: { playerId: string; team: TeamRef }[];
   /** Whether a roster sync has stored any current-season roster at all. */
@@ -201,6 +288,7 @@ export function buildPlayerCostRows(input: BuildPlayerCostRowsInput): PlayerCost
   const acqBy = groupBy(inSeason(input.acquisitions));
   const keepersBy = groupBy(inSeason(input.keeperRecords));
   const rosterBy = new Map(input.currentRoster.map((r) => [r.playerId, r.team]));
+  const originsBy = groupBy((input.originAcquisitions ?? []).filter((a) => a.seasonYear <= input.season));
 
   const rows = input.players.map((player): PlayerCostRow => {
     const flags: string[] = [];
@@ -247,7 +335,7 @@ export function buildPlayerCostRows(input: BuildPlayerCostRowsInput): PlayerCost
           statusLabel: KEEPER_STATUS_LABEL[keeper.status],
           commissionerOverride: keeper.commissionerOverride,
           team: keeper.startTeam ?? keeper.team,
-          cost: classifyKeeperCost(keeper.keeperCost),
+          cost: classifyKeeperCost(keeper, findStintOrigin(originsBy.get(player.id) ?? [], keeper)),
         }
       : null;
 
