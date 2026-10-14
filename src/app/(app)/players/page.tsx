@@ -3,6 +3,7 @@ import { CURRENT_SEASON_YEAR } from "@/lib/config";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/Card";
 import { PlayerFilters } from "@/components/players/PlayerFilters";
+import { PlayersTabs } from "@/components/players/PlayersTabs";
 import { PlayerRow, PlayerSection } from "@/components/players/PlayerRow";
 import { PlayerTagBadge } from "@/components/ui/Badge";
 import { PLAYER_TAG_LABEL } from "@/lib/format";
@@ -60,6 +61,7 @@ export default async function PlayerMarketPage({
         title="Players"
         subtitle="Everyone rostered in C&A - who's keeping, who's on the table, and what they'd cost you."
       />
+      <PlayersTabs active="market" />
       <PlayerFilters teams={teams} positions={POSITIONS} />
 
       {rows.length === 0 ? (

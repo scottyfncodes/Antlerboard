@@ -32,6 +32,15 @@ describe("middleware (login gate)", () => {
     expect(res.status).toBe(401);
   });
 
+  it.each(["/history/drafts", "/history/drafts?season=2025&type=fypd", "/players/costs"])(
+    "keeps the read-only league history page %s behind the login gate",
+    async (path) => {
+      const res = await middleware(requestFor(path));
+      expect(isRedirect(res)).toBe(true);
+      expect(res.headers.get("location")).toContain("/login");
+    }
+  );
+
   it("allows an authenticated page request through", async () => {
     const token = await createSessionToken("manager-1", "pin");
     const res = await middleware(requestFor("/", token));

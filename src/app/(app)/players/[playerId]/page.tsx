@@ -5,6 +5,8 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { Card, EmptyState } from "@/components/ui/Card";
 import { Badge, PlayerTagBadge } from "@/components/ui/Badge";
 import { KeeperYearBadge } from "@/components/keepers/KeeperYearBadge";
+import { loadKeeperCostValues } from "@/lib/player-costs-data";
+import { costLabel } from "@/lib/player-costs";
 import { formatCost, formatDate, PLAYER_TAG_LABEL } from "@/lib/format";
 import { getPlayerHistoryEvents } from "@/lib/keeper-sync";
 import {
@@ -70,6 +72,8 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
   const latestRecord = player.keeperRecords[0];
   // A row whose stint ended this season is history, not a roster spot.
   const currentRecord = latestRecord && latestRecord.status !== "DROPPED" ? latestRecord : undefined;
+  // Never shows a cost calculated from a missing or guessed price as real.
+  const currentCost = currentRecord ? (await loadKeeperCostValues([currentRecord])).get(currentRecord.id) : undefined;
   // Who has the player now: the Yahoo roster when the sync has recorded one
   // this season, otherwise the live keeper stint (see getCurrentTeamForPlayer).
   const currentTeam = await getCurrentTeamForPlayer(playerId, CURRENT_SEASON_YEAR);
@@ -108,7 +112,16 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
         </Card>
         <Card>
           <p className="text-xs text-muted">Keeper Cost</p>
-          <p className="mt-1 font-display text-xl tabular">{formatCost(currentRecord?.keeperCost)}</p>
+          {currentCost?.status === "recorded" ? (
+            <p className="mt-1 font-display text-xl tabular">{formatCost(currentCost.amount)}</p>
+          ) : currentCost ? (
+            <>
+              <p className="mt-1 font-display text-xl text-muted">{costLabel(currentCost)}</p>
+              <p className="text-xs text-muted">{currentCost.reason}</p>
+            </>
+          ) : (
+            <p className="mt-1 font-display text-xl tabular">—</p>
+          )}
         </Card>
         <Card>
           <p className="text-xs text-muted">Keeper Year</p>

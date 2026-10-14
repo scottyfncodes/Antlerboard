@@ -42,6 +42,9 @@ export default async function DraftBoardPage({ params }: { params: Promise<{ yea
         <Link href={`/history/draft/${year + 1}`} className="text-antler hover:text-antler-strong">
           {year + 1} &rarr;
         </Link>
+        <Link href={`/history/drafts?season=${year}&type=auction`} className="ml-auto text-antler hover:text-antler-strong">
+          Draft History
+        </Link>
       </div>
 
       {season && (
