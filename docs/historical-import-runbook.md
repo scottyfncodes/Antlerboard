@@ -64,6 +64,16 @@ exists for this reason.
 
 ## 1. Prepare the input files [READ]
 
+**API first.** Before asking for files, run the read-only Yahoo history
+export (`docs/yahoo-history-export.md`) within an hour of the daily sync.
+Its report says, season by season, what Yahoo still returns and what must
+come from the original files. Its per-season transaction CSVs are in the
+import's own format and can replace the manual Yahoo export, and its draft
+CSVs show which auction prices Yahoo holds. The master workbook is still
+needed for keeper costs and overrides, keeper declarations and offseason
+trades, which Yahoo doesn't hold.
+
+
 Do these on the commissioner's machine. None of them touch the app.
 
 1. **Master workbook** (`Official_Keeper_Costs…xlsx`: manager sheets, Off
