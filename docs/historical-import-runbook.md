@@ -291,24 +291,35 @@ from the backup branch. **This discards every write after the backup**
    commit is an alternative. After that, only the backup branch remains.
    Keep the backup branch at least 14 days.
 
-## Open commissioner decision: 2025 FYPD
+## 2025 FYPD: resolved, one cleanup pending
 
-Read-only facts from 2026-10-14:
+Resolved on 2026-10-15 by the commissioner:
 
-- `FypdDraft` 2025: 5 rounds × 12 order slots = 60 expected. 53 selections
-  stored (overall picks 1–53). `status` says COMPLETE. Draft History shows it
-  as Incomplete 53/60.
+- The 2025 FYPD is the 2025 MLB draft class, drafted the night before the
+  2026 auction. The commissioner's pick list matches the 53 stored
+  selections exactly (pick number, manager and player).
+- **53 is final.** The draft ended at pick #53, and the remaining 7 of the
+  order's 60 slots were passed. This is recorded as
+  `FYPD_CONFIRMED_FINAL_PICKS` in `src/lib/config.ts`, so Draft History shows
+  the draft as complete at 53. Original slots after #38 stay "Unknown",
+  because passed picks shifted the numbering.
+- Production's year labels are correct. "2024" is the 2024 class (60 picks,
+  Konnor Griffin at #1).
+
+Still pending, and separate from the import:
+
 - The `PENDING_REVIEW` import batch labelled 2025 ("Table 1 (cols A-D)", 60
-  picks, created 2026-09-22) **is the 2024 FYPD**: all 60 picks match the
-  stored 2024 draft by pick number and player, and none appears in 2025. It
-  conflicts with stored 2025 from pick 1 (not from pick 37 as reported
-  earlier). It is not a source for the missing 2025 picks.
-- From about pick #39, stored 2025 picks sit one or more slots off the snake
-  order, which suggests renumbering after skipped picks. The 7 missing
-  selections can't be placed from the data on hand.
+  picks, created 2026-09-22) **is a copy of the 2024 FYPD**. Promoting it
+  would have replaced the real 2025 picks. Promotion now refuses any batch
+  that names a different player at a stored pick, so it can't do that. It
+  should still be marked `DISCARDED`. The app has no discard action, so this
+  is a single **[PROD WRITE]** that needs the commissioner's explicit
+  approval:
 
-Decision needed (not part of the import):
-(a) discard the mislabelled pending batch, and
-(b) supply the authoritative 2025 FYPD sheet (all 60 slots, including skipped
-or forfeited picks) or confirm that 53 is final with the reason.
-No one should fill or renumber these picks by guessing.
+  ```sql
+  update "FypdImportBatch" set status = 'DISCARDED',
+    notes = 'Discarded 2026-10-15: duplicate of the 2024 FYPD mislabelled as 2025 (commissioner-confirmed).'
+  where status = 'PENDING_REVIEW' and "seasonYear" = 2025 and label = 'Table 1 (cols A-D)'
+    and jsonb_array_length("rawPicks"::jsonb) = 60;
+  -- expect exactly 1 row updated
+  ```

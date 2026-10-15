@@ -272,3 +272,38 @@ describe("auction number labels (draft board, team Draft tab, Draft History)", (
     expect(auctionNumberHeader(["source", "sheet"])).toBe("#");
   });
 });
+
+describe("FYPD that ended early (commissioner-confirmed final pick)", () => {
+  // The real 2025 pattern: picks 1-38 follow the snake, then passed picks
+  // shifted every later number, and the draft ended at #53.
+  function draft2025(final: number | null) {
+    const sels = Array.from({ length: 38 }, (_, i) => sel(i + 1));
+    for (let n = 39; n <= 53; n++) sels.push(sel(n, snakeOwner(n + 1)));
+    return buildFypdHistory(draft(sels, { confirmedFinalPicks: final }));
+  }
+
+  it("is complete at 53 of 53 when the commissioner confirmed the draft ended at #53", () => {
+    const h = draft2025(53);
+    expect(h.completeness).toMatchObject({ status: "complete", recorded: 53, expected: 53 });
+    expect(h.completeness.note).toContain("ended at pick #53");
+    expect(h.completeness.note).toContain("remaining 7 of the order's 60 slots were passed");
+  });
+
+  it("still doesn't trust renumbered picks: original slots stay unknown after #38", () => {
+    const h = draft2025(53);
+    for (const p of h.picks) expect(p.originalSlot.status).toBe(p.overallPick <= 38 ? "known" : "unknown");
+  });
+
+  it("is incomplete without the confirmation (unchanged behaviour)", () => {
+    expect(draft2025(null).completeness).toMatchObject({ status: "incomplete", recorded: 53, expected: 60 });
+  });
+
+  it("still reports a gap or an extra pick against the confirmed final pick", () => {
+    const missing = Array.from({ length: 53 }, (_, i) => sel(i + 1)).filter((s) => s.overallPick !== 40);
+    expect(buildFypdHistory(draft(missing, { confirmedFinalPicks: 53 })).completeness).toMatchObject({ status: "incomplete", missing: 1, expected: 53 });
+    const extra = Array.from({ length: 54 }, (_, i) => sel(i + 1));
+    const h = buildFypdHistory(draft(extra, { confirmedFinalPicks: 53 }));
+    expect(h.completeness.status).toBe("incomplete");
+    expect(h.completeness.note).toContain("1 pick is numbered past #53");
+  });
+});

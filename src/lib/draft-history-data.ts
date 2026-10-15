@@ -4,6 +4,7 @@
  */
 
 import { prisma } from "./db";
+import { FYPD_CONFIRMED_FINAL_PICKS } from "./config";
 import {
   auctionCompleteness,
   buildAuctionHistory,
@@ -55,7 +56,7 @@ export async function listDraftSeasons(leagueId: string): Promise<DraftSeasonSum
         const order = validateFypdOrder(draft.order);
         const expected = order.teams && draft.rounds > 0 ? order.teams.length * draft.rounds : null;
         const numbers = [...new Set(draft.selections.map((s) => s.overallPick))];
-        fypd = fypdCompleteness(numbers.length, expected, numbers, order.teams ? null : order.reason);
+        fypd = fypdCompleteness(numbers.length, expected, numbers, order.teams ? null : order.reason, FYPD_CONFIRMED_FINAL_PICKS[year]);
       }
       const auction = pickNumbers.filter((p) => p.seasonYear === year).map((p) => ({ overallPick: p.overallPick, order: nominationOrderOf(p.sourceRef) }));
       return { year, auction: auctionCompleteness(auction), fypd };
@@ -111,5 +112,5 @@ export async function loadDraftHistory(leagueId: string, year: number, kind: Dra
       notes: [],
     };
   }
-  return buildFypdHistory(draft);
+  return buildFypdHistory({ ...draft, confirmedFinalPicks: FYPD_CONFIRMED_FINAL_PICKS[year] });
 }

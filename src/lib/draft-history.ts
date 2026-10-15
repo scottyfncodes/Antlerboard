@@ -228,6 +228,8 @@ export interface FypdDraftInput {
   rounds: number;
   order: FypdOrderSlotInput[];
   selections: FypdSelectionInput[];
+  /** Commissioner-confirmed last pick of a draft that ended early (see FYPD_CONFIRMED_FINAL_PICKS). */
+  confirmedFinalPicks?: number | null;
 }
 
 /** The round-1 order as team ids, or null (with why) when it can't drive the snake logic. */
@@ -261,8 +263,11 @@ export function buildFypdHistory(draft: FypdDraftInput): DraftHistory {
   const duplicatePicks = [...byPick.values()].filter((v) => v.length > 1).length;
   if (duplicatePicks > 0) notes.push(`${duplicatePicks} overall pick number${duplicatePicks === 1 ? " is" : "s are"} recorded more than once.`);
 
-  const completeness = fypdCompleteness(distinctRecorded, expected, [...byPick.keys()], order.teams ? null : order.reason);
-  const isComplete = completeness.status === "complete";
+  const completeness = fypdCompleteness(distinctRecorded, expected, [...byPick.keys()], order.teams ? null : order.reason, draft.confirmedFinalPicks);
+  // Every snake slot accounted for. A draft confirmed complete because it
+  // ended early still had picks passed along the way, so its numbering
+  // isn't trusted past the first mismatch either.
+  const isComplete = completeness.status === "complete" && completeness.expected === expected;
 
   // Original slots come from the stored round-1 order run through the snake
   // engine - but only where the stored pick number can be trusted to mean
@@ -344,10 +349,29 @@ export function fypdCompleteness(
   recorded: number,
   expected: number | null,
   pickNumbers: number[],
-  orderProblem: string | null
+  orderProblem: string | null,
+  confirmedFinalPicks?: number | null
 ): Completeness {
   if (recorded === 0) {
     return { status: "none", recorded: 0, expected, note: "No FYPD selections are stored for this draft." };
+  }
+  // A commissioner-confirmed early end: complete only when exactly picks
+  // 1..N are stored - one missing or extra pick is still reported.
+  if (confirmedFinalPicks) {
+    const final = confirmedFinalPicks;
+    const numbers = new Set(pickNumbers);
+    const contiguous = numbers.size === final && [...numbers].every((n) => n >= 1 && n <= final);
+    const slots = expected !== null ? ` of the order's ${expected} slots` : "";
+    if (contiguous && recorded === final) {
+      const passed = expected !== null && expected > final ? ` The remaining ${expected - final}${slots} were passed.` : "";
+      return { status: "complete", recorded, expected: final, note: `All ${final} picks are recorded - the draft ended at pick #${final} (confirmed by the commissioner).${passed}` };
+    }
+    const missing = [...Array(final)].map((_, i) => i + 1).filter((n) => !numbers.has(n)).length;
+    const beyond = [...numbers].filter((n) => n < 1 || n > final).length;
+    const parts = [`${recorded} picks recorded, but the commissioner confirmed the draft ended at pick #${final}.`];
+    if (missing > 0) parts.push(`${missing} of picks #1-#${final} ${missing === 1 ? "has" : "have"} no recorded selection.`);
+    if (beyond > 0) parts.push(`${beyond} pick${beyond === 1 ? " is" : "s are"} numbered past #${final}.`);
+    return { status: "incomplete", recorded, expected: final, missing, note: parts.join(" ") };
   }
   if (expected === null) {
     return {
