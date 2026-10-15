@@ -74,6 +74,19 @@ Check the result against the import's ~4.5 MB upload limit (runbook §1).
 - **Failures:** a section that still fails is recorded in the report. An
   expired or rejected token ends the run with `409`.
 
+## Rate limits
+
+Yahoo throttles bursts with a non-standard HTTP **999**. Next.js's
+server-side `fetch` used to turn that into a thrown `RangeError` (`init["status"]
+must be in the range of 200 to 599`), so the client's retries never ran. Fixed:
+Yahoo requests now carry an `AbortSignal` (a 30-second timeout), which takes them
+out of Next's request de-duplication, so a 999 reaches the client and is retried
+with backoff. If Yahoo keeps refusing, the report says so under `notChecked`.
+Running the export straight after a Sync Now makes throttling more likely,
+since the sync has just made a burst of requests. Waiting about 10 minutes
+(still inside the token's hour) should help, though that's a guess, not a
+measured fact.
+
 ## Reading the report
 
 - `recovered`: what Yahoo returned in full, with counts.
@@ -83,7 +96,14 @@ Check the result against the import's ~4.5 MB upload limit (runbook §1).
   - Per season: a missing draft, unpriced picks, or an unreadable season.
   - Always: recorded keeper costs and overrides, which picks were keepers,
     offseason trades, pre-2021 history and FYPD (already stored).
-- `notChecked`: seasons this run didn't finish within its time budget.
-  They're neither recovered nor missing yet; download them one at a time.
+- `notChecked`: what this run couldn't read. This covers Yahoo's rate
+  limit (HTTP 999), a temporary error, a timeout or the time budget, and
+  anything after that point in a season. It's **unknown, not missing**:
+  never treat it as a gap or as complete. Retry later. A transaction log
+  cut short is never presented as the log: the season's
+  `transactions.complete` is `false`, there's no Antlerboard comparison,
+  and its CSV download answers `503`.
+- Only Yahoo's own refusal (400, 403 or 404) puts a season in
+  `inaccessible` and `requiresOriginalFiles`.
 - `seasons[].antlerboard`: for seasons Antlerboard already synced, how many
   Yahoo transaction keys match the stored ones.

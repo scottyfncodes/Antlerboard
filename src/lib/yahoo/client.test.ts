@@ -306,3 +306,59 @@ describe("yahooFantasyGet with allowRefresh: false (read-only tools)", () => {
     expect((await prisma.yahooConnection.findFirstOrThrow()).accessToken).toBe("old-access");
   });
 });
+
+describe("Yahoo's 999 rate limit through Next.js's request de-duplication (the #22 production failure)", () => {
+  // In a route handler, global fetch is wrapped by Next's createDedupeFetch,
+  // which copies each response with `new Response(body, { status })`. That
+  // constructor throws a RangeError for status 999 - so before this fix the
+  // client never saw the 999 and never retried.
+  // A 999 with a body, as Yahoo sends it (a plain object: Response can't be built with 999).
+  const denied999WithBody = () => ({
+    ok: false,
+    status: 999,
+    statusText: "Request denied",
+    headers: new Headers(),
+    body: new ReadableStream({ start: (c) => (c.enqueue(new TextEncoder().encode("Request denied")), c.close()) }),
+    text: async () => "Request denied",
+    json: async () => ({}),
+  });
+
+  it("is what broke: Next's wrapper turns a bodied 999 into a RangeError when no signal is passed", async () => {
+    const { createDedupeFetch } = await import("next/dist/server/lib/dedupe-fetch");
+    const origin = vi.fn(async () => denied999WithBody());
+    const wrapped = createDedupeFetch(origin as unknown as typeof fetch);
+    await expect(wrapped("https://fantasysports.yahooapis.com/x", { headers: {} })).rejects.toThrow(/init\["status"\] must be in the range of 200 to 599/);
+  });
+
+  it("now reaches the client's 999 handling and retries to success", async () => {
+    const { createDedupeFetch } = await import("next/dist/server/lib/dedupe-fetch");
+    const league = await connectedLeague();
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    fetchMock.mockResolvedValueOnce(denied999WithBody()).mockResolvedValueOnce(json(200, { fantasy_content: { ok: true } }));
+    vi.stubGlobal("fetch", createDedupeFetch(fetchMock as unknown as typeof fetch));
+
+    await expect(settleWithFakeTime(yahooFantasyGet(league.id, "/league/469.l.8891/transactions;start=25;count=25", { allowRefresh: false }))).resolves.toEqual({
+      fantasy_content: { ok: true },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+    expect(init.cache).toBe("no-store");
+  });
+
+  it("a 999 that outlasts the retries is a retryable YahooApiError, not a RangeError", async () => {
+    const { createDedupeFetch } = await import("next/dist/server/lib/dedupe-fetch");
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const league = await connectedLeague();
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    fetchMock.mockImplementation(async () => denied999WithBody());
+    vi.stubGlobal("fetch", createDedupeFetch(fetchMock as unknown as typeof fetch));
+
+    const err = (await settleWithFakeTime(yahooFantasyGet(league.id, "/league/458.l.2049/settings", { allowRefresh: false }).catch((e: unknown) => e))) as YahooApiError;
+    spy.mockRestore();
+    expect(err).toBeInstanceOf(YahooApiError);
+    expect(err.status).toBe(999);
+    expect(err.isRetryable).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+});

@@ -64,7 +64,8 @@ export async function GET(req: NextRequest) {
     const history = await exportLeagueHistory(get, startLeagueKey, { firstSeasonYear: LEAGUE_FIRST_SEASON_YEAR, onlySeason: season, isFatal, deadline });
     const target = history.seasons.find((s) => s.seasonYear === season);
     if (target?.incomplete) {
-      return json({ error: `Season ${season} couldn't be read completely within the time limit. Try again; nothing was saved.` }, 503);
+      // Never hand out a partial season as if it were the whole one.
+      return json({ error: `Season ${season} couldn't be read completely (Yahoo rate limit, a temporary error, or the time limit). Nothing was downloaded or saved - try again later.` }, 503);
     }
     if (!target) {
       return json({ error: `Season ${season} isn't reachable: ${history.discovery.stoppedBecause}`, seasons: history.seasons.map((s) => ({ seasonYear: s.seasonYear, leagueKey: s.leagueKey, errors: s.errors })) }, 404);
