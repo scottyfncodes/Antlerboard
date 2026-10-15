@@ -389,8 +389,14 @@ export function buildLeagueHistory(input: BuilderInput): LeagueHistoryPreview {
 
   // --- seed identities: Yahoo ids first, then every auction-file name -----
   for (const tx of yahoo) for (const p of tx.players) registry.upsertYahoo(p);
+  // An auction row with Yahoo's player id is that Yahoo player; only rows
+  // without one fall back to the name.
+  const auctionPlayer = (r: { playerName: string; yahooPlayerId?: string | null; positions: string[]; mlbTeam: string | null; sourceRef: string }) =>
+    r.yahooPlayerId
+      ? registry.upsertYahoo({ yahooPlayerId: r.yahooPlayerId, name: r.playerName, mlbTeam: r.mlbTeam, positions: r.positions })
+      : registry.resolveOrCreateByName(r.playerName, { positions: r.positions, mlbTeam: r.mlbTeam, sourceRef: r.sourceRef });
   for (const r of auctionRows) {
-    if (r.playerName) registry.resolveOrCreateByName(r.playerName, { positions: r.positions, mlbTeam: r.mlbTeam, sourceRef: r.sourceRef });
+    if (r.playerName) auctionPlayer(r);
   }
 
   const prospectKeys = new Set<string>();
@@ -530,11 +536,11 @@ export function buildLeagueHistory(input: BuilderInput): LeagueHistoryPreview {
     // 2. Keepers at the deadline.
     const newRosters: Roster = new Map();
     const canonKeepers = (auctionBySeason.get(season) ?? []).filter((r) => r.isKeeper);
-    const keeperSource: { franchise: string; name: string; cost: number | null; positions: string[]; mlbTeam: string | null; ref: string }[] = [];
+    const keeperSource: { franchise: string; name: string; cost: number | null; positions: string[]; mlbTeam: string | null; ref: string; yahooPlayerId?: string | null }[] = [];
     if (canonKeepers.length > 0) {
       for (const r of canonKeepers) {
         const f = franchiseOf(r.teamName, `auction file ${season}`);
-        if (f) keeperSource.push({ franchise: f, name: r.playerName, cost: r.salary, positions: r.positions, mlbTeam: r.mlbTeam, ref: r.sourceRef });
+        if (f) keeperSource.push({ franchise: f, name: r.playerName, cost: r.salary, positions: r.positions, mlbTeam: r.mlbTeam, ref: r.sourceRef, yahooPlayerId: r.yahooPlayerId });
       }
     } else {
       for (const b of blocksBySeason.get(season) ?? []) {
@@ -546,7 +552,7 @@ export function buildLeagueHistory(input: BuilderInput): LeagueHistoryPreview {
     for (const k of keeperSource) {
       let player: HistoryPlayer;
       if (season === firstSeason) {
-        player = registry.resolveOrCreateByName(k.name, { positions: k.positions, mlbTeam: k.mlbTeam, sourceRef: k.ref });
+        player = auctionPlayer({ playerName: k.name, yahooPlayerId: k.yahooPlayerId, positions: k.positions, mlbTeam: k.mlbTeam, sourceRef: k.ref });
         events.push({
           playerKey: player.key,
           kind: "ACQUIRED",
@@ -560,7 +566,10 @@ export function buildLeagueHistory(input: BuilderInput): LeagueHistoryPreview {
           flags: [`Pre-${firstSeason} history: treated as acquired in ${season - 1} so ${season} is keeper year 1 (the workbook's +3 step into ${season + 1} confirms this for every ${season} keeper).`],
         });
       } else {
-        const found = registry.locate(k.name, rosterOf(prevRosters, k.franchise), prevRosters);
+        const byId = k.yahooPlayerId ? registry.players.get(k.yahooPlayerId) : undefined;
+        const found: Located | null = byId
+          ? { player: byId, where: rosterOf(prevRosters, k.franchise).has(byId.key) ? "roster" : franchiseHolding(prevRosters, byId.key) ? "elsewhere" : "global" }
+          : registry.locate(k.name, rosterOf(prevRosters, k.franchise), prevRosters);
         if (found && found.where === "roster") {
           player = found.player;
         } else if (found && found.where === "elsewhere") {
@@ -635,7 +644,7 @@ export function buildLeagueHistory(input: BuilderInput): LeagueHistoryPreview {
       for (const r of canonBuys) {
         const f = franchiseOf(r.teamName, `auction file ${season}`);
         if (!f) continue;
-        const player = registry.resolveOrCreateByName(r.playerName, { positions: r.positions, mlbTeam: r.mlbTeam, sourceRef: r.sourceRef });
+        const player = auctionPlayer(r);
         events.push({
           playerKey: player.key,
           kind: "ACQUIRED",

@@ -1,3 +1,4 @@
+import { gzipSync } from "zlib";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireCommissioner } from "@/lib/current-manager";
@@ -32,6 +33,9 @@ type ExportFile = (typeof FILES)[number];
  *                                     (&part=N when a season is too large for one response - the
  *                                     response says how many parts)
  *   ?file=draft.csv&season=…          that season's draft results with player names and prices
+ *   ?file=draft.csv&season=all        every season before the connected one, in one CSV
+ *   ?file=transactions.csv&season=all every season before the connected one, in one gzipped CSV
+ *                                     (.csv.gz) - the league-history import's Yahoo file as-is
  *
  * Calls Yahoo with allowRefresh: false - it never refreshes the token, so it
  * writes nothing anywhere. It works while the stored token is valid (about
@@ -45,9 +49,13 @@ export async function GET(req: NextRequest) {
   const file = (params.get("file") ?? "report") as ExportFile;
   if (!FILES.includes(file)) return NextResponse.json({ error: `file must be one of ${FILES.join(", ")}` }, { status: 400 });
   const seasonParam = params.get("season");
-  const season = seasonParam ? Number(seasonParam) : undefined;
+  const allSeasons = seasonParam === "all";
+  if (allSeasons && file !== "draft.csv" && file !== "transactions.csv") {
+    return NextResponse.json({ error: "season=all is for draft.csv and transactions.csv" }, { status: 400 });
+  }
+  const season = seasonParam && !allSeasons ? Number(seasonParam) : undefined;
   if (season !== undefined && !Number.isInteger(season)) return NextResponse.json({ error: "season must be a year, e.g. season=2024" }, { status: 400 });
-  if (file !== "report" && season === undefined) {
+  if (file !== "report" && season === undefined && !allSeasons) {
     return NextResponse.json({ error: "season=YYYY is required for season downloads" }, { status: 400 });
   }
 
@@ -61,6 +69,50 @@ export async function GET(req: NextRequest) {
   const isFatal = (err: unknown) => err instanceof YahooTokenUnavailableError || (err instanceof YahooApiError && err.status === 401);
 
   try {
+    if (allSeasons) {
+      const transactions = file === "transactions.csv";
+      const history = await exportLeagueHistory(get, startLeagueKey, {
+        firstSeasonYear: LEAGUE_FIRST_SEASON_YEAR,
+        resolveDraftPlayers: !transactions,
+        readTransactions: transactions,
+        // The connected season is the sync's; it's passed through for its link only.
+        include: ({ leagueKey }) => leagueKey !== startLeagueKey,
+        isFatal,
+        deadline,
+        delayMs: REQUEST_DELAY_MS,
+      });
+      const seasons = history.seasons.filter((s) => s.leagueKey !== startLeagueKey).sort((a, b) => (a.seasonYear ?? 0) - (b.seasonYear ?? 0));
+      const years = seasons.map((s) => s.seasonYear);
+      const first = LEAGUE_FIRST_SEASON_YEAR;
+      const contiguous = years.length > 0 && years.every((y, i) => y === first + i);
+      const unreadable = seasons.filter((s) => s.incomplete || s.errors.length > 0);
+      if (!contiguous || unreadable.length > 0) {
+        // All or nothing: never a file that silently lacks a season or part of one.
+        return json(
+          {
+            error: `Not every season from ${first} could be read completely (Yahoo rate limit, a temporary error, or the time limit). Nothing was downloaded - try again later.`,
+            seasons: seasons.map((s) => ({ seasonYear: s.seasonYear, leagueKey: s.leagueKey, incomplete: s.incomplete, errors: s.errors })),
+            stoppedBecause: history.discovery.stoppedBecause,
+          },
+          503
+        );
+      }
+      const name = `antlerboard-yahoo-${first}-${years[years.length - 1]}`;
+      if (!transactions) {
+        const csv = seasons.map((s, i) => (i === 0 ? draftCsv(s) : draftCsv(s).split("\n").slice(1).join("\n"))).join("");
+        return download(csv, `${name}-draft.csv`, "text/csv");
+      }
+      // ~4 MB as plain CSV for 2021-2025, over Vercel's limits for this
+      // response and for the import upload; gzip brings it well under both.
+      const gz = gzipSync(transactionsCsv(seasons), { level: 9 });
+      if (gz.length > MAX_RESPONSE_BYTES) {
+        return json({ error: "The combined transactions are too large for one download. Download each season with ?file=transactions.csv&season=YYYY." }, 413);
+      }
+      return new NextResponse(new Uint8Array(gz), {
+        headers: { ...NO_STORE, "Content-Type": "application/gzip", "Content-Disposition": `attachment; filename="${name}-transactions.csv.gz"` },
+      });
+    }
+
     if (file === "report") {
       const history = await exportLeagueHistory(get, startLeagueKey, {
         firstSeasonYear: LEAGUE_FIRST_SEASON_YEAR,

@@ -43,6 +43,13 @@ export interface ExportOptions {
    * Yahoo's rate limit before the older seasons are reached.
    */
   skipTransactionsFor?: string[];
+  /** False reads no transaction log at all (a draft-only download). */
+  readTransactions?: boolean;
+  /**
+   * Seasons to export; the others on the way are read for their settings
+   * (the season link) only. Defaults to every season.
+   */
+  include?: (season: { leagueKey: string; seasonYear: number | null }) => boolean;
   /**
    * After Yahoo throttles a request (999/429/5xx, past the client's quick
    * retries), wait this long and ask again - once per entry. A wait that
@@ -139,6 +146,7 @@ const THROTTLE_WAITS_MS = [20_000, 45_000];
 /** The pause between requests once Yahoo has throttled this run. */
 const THROTTLED_DELAY_MS = 1_000;
 const SYNCED_BY_ANTLERBOARD = "Not re-read: Antlerboard's daily Yahoo sync keeps this season's transactions.";
+const DRAFT_ONLY = "Not read: draft-only download.";
 
 /** Yahoo's "slow down" (999/429) or a 5xx - worth asking again after a pause. */
 const isThrottle = (err: unknown) => (err as { isRetryable?: unknown })?.isRetryable === true;
@@ -198,8 +206,12 @@ export async function exportLeagueHistory(get: YahooGet, startLeagueKey: string,
       break;
     }
     seen.add(leagueKey);
-    const season = await exportSeason(call, leagueKey, opts.resolveDraftPlayers ?? true, opts.onlySeason, opts.isFatal ?? (() => false), skipTransactions.has(leagueKey));
-    if (opts.onlySeason === undefined || season.seasonYear === opts.onlySeason || season.errors.length > 0) seasons.push(season);
+    const key = leagueKey;
+    const included = (seasonYear: number | null) =>
+      (opts.onlySeason === undefined || seasonYear === opts.onlySeason) && (!opts.include || opts.include({ leagueKey: key, seasonYear }));
+    const skipReason = opts.readTransactions === false ? DRAFT_ONLY : skipTransactions.has(leagueKey) ? SYNCED_BY_ANTLERBOARD : null;
+    const season = await exportSeason(call, leagueKey, opts.resolveDraftPlayers ?? true, included, opts.isFatal ?? (() => false), skipReason);
+    if (included(season.seasonYear) || season.errors.length > 0) seasons.push(season);
     if (opts.onlySeason !== undefined && season.seasonYear !== null && season.seasonYear <= opts.onlySeason) {
       stoppedBecause =
         season.seasonYear < opts.onlySeason
@@ -237,9 +249,9 @@ async function exportSeason(
   call: (path: string) => Promise<unknown>,
   leagueKey: string,
   resolvePlayers: boolean,
-  onlySeason: number | undefined,
+  included: (seasonYear: number | null) => boolean,
   isFatal: (err: unknown) => boolean,
-  skipTransactions: boolean
+  skipTransactions: string | null
 ): Promise<SeasonExport> {
   const out: SeasonExport = {
     seasonYear: null,
@@ -291,7 +303,7 @@ async function exportSeason(
     stopOn(err, "settings");
     return out; // nothing else for this league is worth asking for
   }
-  if (onlySeason !== undefined && out.seasonYear !== onlySeason) return out; // passing through
+  if (!included(out.seasonYear)) return out; // passing through
 
   try {
     const data = await call(`/league/${leagueKey}/teams`);
@@ -352,8 +364,8 @@ async function exportSeason(
     for (const d of out.draftResults) d.player = (d.playerKey && players.get(d.playerKey)) || null;
   }
 
-  if (skipTransactions) {
-    out.transactionsSkipped = SYNCED_BY_ANTLERBOARD;
+  if (skipTransactions !== null) {
+    out.transactionsSkipped = skipTransactions;
     return out;
   }
 

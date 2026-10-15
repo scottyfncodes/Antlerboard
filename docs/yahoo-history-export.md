@@ -43,8 +43,18 @@ preview URL), then open these in the browser:
 | `/api/commissioner/yahoo-history?file=season.json&season=2024` | One season, complete: settings, teams, draft results with prices and player keys, and every transaction as Yahoo returned it |
 | `/api/commissioner/yahoo-history?file=transactions.csv&season=2024` | That season's transactions in the League History import's `season, league_key, transaction_raw` format |
 | `/api/commissioner/yahoo-history?file=draft.csv&season=2024` | That season's draft results: pick, round, player, ids, MLB team, positions, price, fantasy team |
+| `/api/commissioner/yahoo-history?file=draft.csv&season=all` | **The import's draft input:** every season before the connected one (2021-2025) in one CSV |
+| `/api/commissioner/yahoo-history?file=transactions.csv&season=all` | **The import's Yahoo file:** 2021-2025 transactions in one gzipped CSV (`.csv.gz`). Upload it to the import as downloaded |
 
-Downloads are one season at a time because Vercel caps a response at about
+The two `season=all` downloads are all or nothing. If Yahoo won't finish
+any season, they answer `503` and no file, so try again later. The plain
+2021-2025 transaction CSV is about 4 MB, which is too close to Vercel's
+~4.5 MB limit for both this download and the import upload. That's why
+it's served gzipped (about 0.2-0.5 MB). The import reads a `.csv.gz` as is,
+and a browser that unpacks it on download doesn't matter either: the import
+recognises gzip by its content, not its name.
+
+Per-season downloads are one season at a time because Vercel caps a response at about
 4.5 MB. If a season's transactions are still too large, the download answers
 `413` with the exact `&part=1`, `&part=2`, … links to use, and each part keeps
 the header. Join them the same way as below. The report has a 4-minute
@@ -56,7 +66,8 @@ the per-season CSVs while keeping one header:
 { head -1 antlerboard-yahoo-2021-transactions.csv; for y in 2021 2022 2023 2024 2025; do tail -n +2 antlerboard-yahoo-$y-transactions.csv; done; } > yahoo-transactions-2021-2025.csv
 ```
 
-Check the result against the import's ~4.5 MB upload limit (runbook §1).
+Check the result against the import's ~4.5 MB upload limit (runbook §1). The
+`season=all` gzipped download makes this step unnecessary.
 
 ## How it works
 
