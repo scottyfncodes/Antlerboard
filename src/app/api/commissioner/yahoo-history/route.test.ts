@@ -150,4 +150,24 @@ describe("GET /api/commissioner/yahoo-history", () => {
     expect(keys).toHaveLength(3_200);
     expect(new Set(keys).size).toBe(3_200);
   }, 60_000);
+
+  it("never downloads a partial season: throttled mid-log gives 503 and no file", async () => {
+    await connected(3_600_000);
+    const page = (n: number) => ({ transaction: [{ transaction_key: `469.l.8891.tr.${n}`, type: "commish", timestamp: "1760000000" }] });
+    fetchMock.mockImplementation(async (url: string) => {
+      const path = new URL(url).pathname;
+      if (path.endsWith("/settings")) return json(league({ settings: [{}] }));
+      if (path.endsWith("/teams")) return json(league({ teams: { count: 0 } }));
+      if (path.endsWith("/draftresults")) return json(league({ draft_results: { count: 0 } }));
+      if (path.includes("start=0")) return json(league({ transactions: { ...Object.fromEntries(Array.from({ length: 25 }, (_, i) => [String(i), page(i + 1)])), count: 25 } }));
+      // Every later page: Yahoo's rate limit, past the client's retries.
+      return { ok: false, status: 999, statusText: "Request denied", headers: new Headers(), text: async () => "Request denied", json: async () => ({}) };
+    });
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await get("?file=transactions.csv&season=2026");
+    spy.mockRestore();
+    expect(res.status).toBe(503);
+    expect(res.headers.get("content-disposition")).toBeNull();
+    expect((await res.json()).error).toMatch(/couldn't be read completely/);
+  }, 30_000);
 });

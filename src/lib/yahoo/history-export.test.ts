@@ -187,7 +187,7 @@ describe("buildRecoveryReport", () => {
     const h = await exportLeagueHistory(get, "469.l.8891", opts);
     const r = buildRecoveryReport(h, []);
     expect(r.recovered).toContain("2025 (458.l.100): 2 auction picks, all priced, in Yahoo's recorded order.");
-    expect(r.recovered).toContain("2025 (458.l.100): 60 transactions (all types, timestamps, players, teams, FAAB bids where charged).");
+    expect(r.recovered).toContain("2025 (458.l.100): 60 transactions (read until Yahoo returned no new ones; all types, timestamps, players, teams, FAAB bids where charged).");
     expect(r.requiresOriginalFiles).toContain("2024 (431.l.90): 1 draft picks have no price in Yahoo - auction history file for those.");
     expect(r.requiresOriginalFiles).toContain("2023 (422.l.80): Yahoo has no draft results for this season (auction held or recorded outside Yahoo) - auction history file.");
     // A refused league's season can't be read, so it isn't guessed either.
@@ -227,7 +227,10 @@ describe("time budget", () => {
     const r = buildRecoveryReport(h, []);
     const label = `${last.seasonYear ?? "?"} (${last.leagueKey})`;
     expect(r.notChecked.join(" ")).toContain(label);
-    expect([...r.inaccessible, ...r.requiresOriginalFiles, ...r.recovered].join(" ")).not.toContain(label);
+    // Nothing unread is reported as recovered, refused or needing files.
+    expect(r.inaccessible.join(" ")).not.toContain(label);
+    expect(r.recovered.filter((x) => x.startsWith(label) && x.includes("transactions"))).toEqual([]);
+    expect(r.requiresOriginalFiles.filter((x) => x.startsWith(label) && /transaction export|refuses/.test(x))).toEqual([]);
     expect(r.seasons.find((s) => s.leagueKey === last.leagueKey)!.incomplete).toBe(true);
   });
 });
@@ -246,10 +249,99 @@ describe("draft CSV safety", () => {
       transactionPages: 0,
       errors: [],
       incomplete: false,
+      incompleteSection: null,
     };
     const row = draftCsv(season).trim().split("\n")[1];
     expect(row).toContain("'@Player");
     expect(row).toContain(`"'=HYPERLINK(""http://x"")"`);
     expect(row).toContain(",30,");
+  });
+});
+
+describe("the #22 production failure: Yahoo stops answering partway (rate limit)", () => {
+  // Yahoo's 999 as the client now surfaces it (a YahooApiError-shaped error), or the raw
+  // RangeError the platform threw before the client fix - both must read as "unknown".
+  const throttled = (path: string) => new YahooApiError(999, path, "Request denied");
+
+  function failing(when: (path: string, n: number) => Error | null) {
+    const { get, calls } = fakeYahoo({ pageMode: "honor" });
+    let n = 0;
+    const wrapped: YahooGet = async (path) => {
+      const err = when(path, n++);
+      if (err) throw err;
+      return get(path);
+    };
+    return { get: wrapped, calls };
+  }
+
+  it("a throttled second transactions page leaves the season incomplete - never a false complete log", async () => {
+    const { get } = failing((p) => (p.startsWith("/league/458.l.100/transactions") && p.includes("start=25") ? throttled(p) : null));
+    const h = await exportLeagueHistory(get, "469.l.8891", opts);
+    const s2025 = h.seasons.find((s) => s.leagueKey === "458.l.100")!;
+    expect(s2025).toMatchObject({ incomplete: true, incompleteSection: "transactions" });
+    expect(s2025.transactionsRaw).toHaveLength(25);
+    expect(s2025.errors).toEqual([expect.objectContaining({ section: "transactions", kind: "unread" })]);
+    // Older seasons weren't walked - and that's said, not hidden.
+    expect(h.seasons.map((s) => s.leagueKey)).toEqual(["469.l.8891", "458.l.100"]);
+    expect(h.discovery.stoppedBecause).toMatch(/didn't give a usable answer for 458\.l\.100.*Older seasons weren't checked/);
+
+    const r = buildRecoveryReport(h, [{ leagueKey: "458.l.100", seasonYear: 2025, storedTransactionKeys: Array.from({ length: 60 }, (_, i) => `458.l.100.tr.${i + 1}`) }]);
+    const row = r.seasons.find((s) => s.leagueKey === "458.l.100")!;
+    expect(row.transactions).toMatchObject({ complete: false, count: 25 });
+    expect(row.antlerboard).toBeNull(); // no "35 only in Antlerboard" from a partial read
+    expect(r.recovered.join(" ")).not.toMatch(/458\.l\.100\): \d+ transactions/);
+    expect(r.recovered).toContain("2025 (458.l.100): 2 auction picks, all priced, in Yahoo's recorded order."); // read before the stop
+    expect(r.requiresOriginalFiles.join(" ")).not.toMatch(/458\.l\.100\): the Yahoo transaction export/);
+    expect(r.inaccessible.join(" ")).not.toContain("458.l.100");
+    expect(r.notChecked.join(" ")).toMatch(/2025 \(458\.l\.100\): transactions not read .*Unknown, not missing/);
+  });
+
+  it("a throttled older season's settings is 'not checked', not 'refused' - and older seasons aren't invented", async () => {
+    const { get } = failing((p) => (p === "/league/458.l.100/settings" ? throttled(p) : null));
+    const h = await exportLeagueHistory(get, "469.l.8891", opts);
+    expect(h.seasons.map((s) => s.leagueKey)).toEqual(["469.l.8891", "458.l.100"]);
+    expect(h.seasons[1]).toMatchObject({ incomplete: true, incompleteSection: "settings", seasonYear: null });
+    const r = buildRecoveryReport(h, []);
+    expect(r.inaccessible.join(" ")).not.toContain("458.l.100");
+    expect(r.requiresOriginalFiles.join(" ")).not.toContain("458.l.100");
+    expect(r.notChecked.join(" ")).toMatch(/\? \(458\.l\.100\): settings, teams, draftresults, players, transactions not read/);
+    expect(r.notChecked.join(" ")).toMatch(/Older seasons weren't checked/);
+  });
+
+  it("shows a generic message for a non-Yahoo error (e.g. the platform RangeError), not its internals", async () => {
+    const rangeError = new RangeError('init["status"] must be in the range of 200 to 599, inclusive.');
+    const { get } = failing((p) => (p === "/league/458.l.100/settings" ? rangeError : null));
+    const h = await exportLeagueHistory(get, "469.l.8891", opts);
+    const r = buildRecoveryReport(h, []);
+    expect(JSON.stringify(r)).not.toContain("init[");
+    expect(r.notChecked.join(" ")).toContain("No usable answer from Yahoo");
+  });
+
+  it("a definitive 403 is still a refusal (a real gap needing the original files)", async () => {
+    const { get } = failing((p) => (p === "/league/458.l.100/settings" ? new YahooApiError(403, p, "Forbidden") : null));
+    const r = buildRecoveryReport(await exportLeagueHistory(get, "469.l.8891", opts), []);
+    expect(r.inaccessible.join(" ")).toMatch(/458\.l\.100\): Yahoo refused the league/);
+    expect(r.requiresOriginalFiles.join(" ")).toMatch(/458\.l\.100\): auction results and transactions/);
+    expect(r.notChecked).toEqual([]);
+  });
+
+  it("never duplicates or skips when a new transaction arrives mid-read (Yahoo's newest-first list shifts down)", async () => {
+    const { get } = fakeYahoo({ pageMode: "honor" });
+    const s2025 = CHAIN.find((c) => c.key === "458.l.100")!;
+    let list = Array.from({ length: s2025.transactions }, (_, i) => tx(s2025, i + 1)).reverse(); // newest first
+    let pagesServed = 0;
+    const shifting: YahooGet = async (path) => {
+      if (!path.startsWith("/league/458.l.100/transactions")) return get(path);
+      const start = Number(path.match(/start=(\d+)/)![1]);
+      const count = Number(path.match(/count=(\d+)/)![1]);
+      const page = list.slice(start, start + count);
+      if (++pagesServed === 1) list = [tx(s2025, 999), ...list]; // a new transaction lands after page 1
+      return { fantasy_content: { league: [{ league_key: "458.l.100" }, { transactions: { ...Object.fromEntries(page.map((t, i) => [String(i), { transaction: t }])), count: page.length } }] } };
+    };
+    const h = await exportLeagueHistory(shifting, "469.l.8891", { ...opts, firstSeasonYear: 2025 });
+    const keys = h.seasons.find((s) => s.leagueKey === "458.l.100")!.transactionsRaw.map((t) => (t[0] as { transaction_key: string }).transaction_key);
+    expect(new Set(keys).size).toBe(keys.length); // the shifted-in repeat is read once
+    // Every original transaction is there; the late arrival may or may not be (it postdates the read).
+    for (let n = 1; n <= 60; n++) expect(keys).toContain(`458.l.100.tr.${n}`);
   });
 });

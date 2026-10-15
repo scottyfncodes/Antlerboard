@@ -156,6 +156,8 @@ async function getStoredAccessToken(leagueId: string): Promise<string> {
 }
 
 const RETRY_DELAYS_MS = [1_000, 3_000];
+/** One Yahoo request never hangs longer than this. */
+const REQUEST_TIMEOUT_MS = 30_000;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -184,9 +186,26 @@ export async function yahooFantasyGet(leagueId: string, path: string, opts: { al
   let refreshedAfter401 = !allowRefresh;
 
   for (let attempt = 0; ; attempt++) {
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        // Never cache Yahoo answers in Next's data cache.
+        cache: "no-store",
+        // The signal also takes this request out of Next's request
+        // de-duplication, which copies every response with
+        // `new Response(body, { status })` - and that constructor throws a
+        // RangeError for Yahoo's non-standard 999 rate-limit status, so
+        // a throttle surfaced as an exception instead of a retryable
+        // YahooApiError (#22 production report).
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+    } catch (err) {
+      // No response at all (network, timeout, or a platform error): log
+      // what's safe to log - never the URL's token or headers - then rethrow.
+      console.error("Yahoo request failed before a response", { path, attempt, error: err instanceof Error ? err.name : typeof err });
+      throw err;
+    }
     if (res.ok) return res.json();
 
     const body = await res.text().catch(() => "");

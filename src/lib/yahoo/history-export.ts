@@ -83,9 +83,31 @@ export interface SeasonExport {
   /** Each transaction exactly as Yahoo returned it: [metadata, players?]. */
   transactionsRaw: unknown[][];
   transactionPages: number;
-  errors: { section: string; message: string }[];
-  /** The time budget ran out while reading this season: whatever is here is incomplete. */
+  /**
+   * "refused": Yahoo answered no (400/403/404) - a real gap.
+   * "unread": no usable answer (rate limit, 5xx, network, timeout, time
+   * budget) - unknown, never a gap; reading stopped there.
+   */
+  errors: { section: string; message: string; kind: "refused" | "unread" }[];
+  /** Reading stopped early (see `incompleteSection`): sections from there on are unknown, not empty. */
   incomplete: boolean;
+  incompleteSection: Section | null;
+}
+
+const SECTIONS = ["settings", "teams", "draftresults", "players", "transactions"] as const;
+type Section = (typeof SECTIONS)[number];
+
+/** Only a definitive Yahoo answer is a refusal; anything else is "we don't know yet". */
+function isRefusal(err: unknown): boolean {
+  const status = (err as { status?: unknown })?.status;
+  return status === 400 || status === 403 || status === 404;
+}
+
+/** What the report may show: Yahoo's own error, or a generic line - never internal detail. */
+function userMessage(err: unknown): string {
+  if (err instanceof TimeBudgetExceeded) return err.message;
+  if (err && typeof err === "object" && "status" in err && err instanceof Error) return err.message;
+  return "No usable answer from Yahoo (network error, timeout or platform error).";
 }
 
 export interface HistoryExport {
@@ -106,7 +128,6 @@ const num = (v: unknown): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 const bool = (v: unknown): boolean | null => (v === 1 || v === "1" || v === true ? true : v === 0 || v === "0" || v === false ? false : null);
-const errorMessage = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
 /** The named sub-resource of a /league/{key}/... response (league is [metadata, {field: ...}]). */
 function leagueSection(data: unknown, field: string): unknown {
@@ -152,7 +173,11 @@ export async function exportLeagueHistory(get: YahooGet, startLeagueKey: string,
     }
 
     if (season.incomplete) {
-      stoppedBecause = `The time budget ran out while reading ${leagueKey}; download that season (and any older ones) one at a time.`;
+      const unread = season.errors.find((e) => e.kind === "unread");
+      stoppedBecause =
+        unread?.message === new TimeBudgetExceeded().message
+          ? `The time budget ran out while reading ${leagueKey}; download that season (and any older ones) one at a time.`
+          : `Yahoo didn't give a usable answer for ${leagueKey} (${season.incompleteSection}: ${unread?.message}). Older seasons weren't checked - retry later.`;
       break;
     }
     if (season.errors.some((e) => e.section === "settings")) {
@@ -191,12 +216,21 @@ async function exportSeason(
     transactionPages: 0,
     errors: [],
     incomplete: false,
+    incompleteSection: null,
   };
-  // A spent time budget ends this season's reading; it isn't a Yahoo answer.
-  const budgetSpent = (err: unknown, section: string) => {
-    if (!(err instanceof TimeBudgetExceeded)) return false;
+  /**
+   * Records a failed section. A refusal is a real gap and reading goes on;
+   * anything else means "unknown", so reading this season stops here and
+   * the season is incomplete (returns true).
+   */
+  const stopOn = (err: unknown, section: Section): boolean => {
+    if (isRefusal(err)) {
+      out.errors.push({ section, message: userMessage(err), kind: "refused" });
+      return false;
+    }
+    out.errors.push({ section, message: userMessage(err), kind: "unread" });
     out.incomplete = true;
-    out.errors.push({ section, message: err.message });
+    out.incompleteSection = section;
     return true;
   };
 
@@ -216,8 +250,7 @@ async function exportSeason(
     };
   } catch (err) {
     if (isFatal(err)) throw err;
-    if (budgetSpent(err, "settings")) return out;
-    out.errors.push({ section: "settings", message: errorMessage(err) });
+    stopOn(err, "settings");
     return out; // nothing else for this league is worth asking for
   }
   if (onlySeason !== undefined && out.seasonYear !== onlySeason) return out; // passing through
@@ -238,8 +271,7 @@ async function exportSeason(
     }
   } catch (err) {
     if (isFatal(err)) throw err;
-    if (budgetSpent(err, "teams")) return out;
-    out.errors.push({ section: "teams", message: errorMessage(err) });
+    if (stopOn(err, "teams")) return out;
   }
 
   try {
@@ -253,8 +285,7 @@ async function exportSeason(
     out.draftResults.sort((a, b) => a.pick - b.pick);
   } catch (err) {
     if (isFatal(err)) throw err;
-    if (budgetSpent(err, "draftresults")) return out;
-    out.errors.push({ section: "draftresults", message: errorMessage(err) });
+    if (stopOn(err, "draftresults")) return out;
   }
 
   if (resolvePlayers) {
@@ -278,8 +309,7 @@ async function exportSeason(
       }
     } catch (err) {
       if (isFatal(err)) throw err;
-      if (budgetSpent(err, "players")) return out;
-      out.errors.push({ section: "players", message: errorMessage(err) });
+      if (stopOn(err, "players")) return out;
     }
     for (const d of out.draftResults) d.player = (d.playerKey && players.get(d.playerKey)) || null;
   }
@@ -307,11 +337,17 @@ async function exportSeason(
       if (page.length === 0 || added === 0) break;
       start += page.length;
     }
-    if (out.transactionPages >= MAX_TX_PAGES) out.errors.push({ section: "transactions", message: `Stopped after ${MAX_TX_PAGES} pages - the log may be incomplete.` });
+    if (out.transactionPages >= MAX_TX_PAGES) {
+      out.errors.push({ section: "transactions", message: `Stopped after ${MAX_TX_PAGES} pages - the log may continue.`, kind: "unread" });
+      out.incomplete = true;
+      out.incompleteSection = "transactions";
+    }
   } catch (err) {
     if (isFatal(err)) throw err;
-    if (budgetSpent(err, "transactions")) return out;
-    out.errors.push({ section: "transactions", message: `${errorMessage(err)} (${out.transactionsRaw.length} transactions read before the error)` });
+    // A partial log is never presented as the log: the season is incomplete.
+    if (stopOn(err, "transactions")) {
+      out.errors[out.errors.length - 1].message += ` (${out.transactionsRaw.length} transactions read before it; the rest is unknown)`;
+    }
   }
 
   return out;
@@ -390,7 +426,7 @@ export interface RecoveryReport {
     leagueKey: string;
     leagueName: string | null;
     draft: { isAuction: boolean | null; picks: number; pricedPicks: number; unpricedPicks: number; playersResolved: number };
-    transactions: { count: number; pages: number; byType: Record<string, number>; withFaabBid: number; firstAt: string | null; lastAt: string | null };
+    transactions: { complete: boolean; count: number; pages: number; byType: Record<string, number>; withFaabBid: number; firstAt: string | null; lastAt: string | null };
     teams: number;
     errors: SeasonExport["errors"];
     incomplete: boolean;
@@ -431,41 +467,54 @@ export function buildRecoveryReport(history: HistoryExport, comparisons: Antlerb
       if (ts !== null) times.push(ts * 1000);
     }
     const priced = s.draftResults.filter((d) => d.cost !== null).length;
+    const label = `${s.seasonYear ?? "?"} (${s.leagueKey})`;
+    const refused = (section: Section) => s.errors.find((e) => e.section === section && e.kind === "refused");
+    // A section is known only if reading got past it without stopping.
+    const read = (section: Section) =>
+      !refused(section) && (!s.incomplete || SECTIONS.indexOf(section) < SECTIONS.indexOf(s.incompleteSection!));
+    const transactionsComplete = read("transactions");
+
+    // Only a complete log can be compared with what Antlerboard stores.
     const cmp = comparisons.find((c) => c.leagueKey === s.leagueKey);
     let antlerboard: RecoveryReport["seasons"][number]["antlerboard"] = null;
-    if (cmp) {
+    if (cmp && transactionsComplete) {
       const yahooKeys = new Set(s.transactionsRaw.map((tx) => str(readFields(tx[0]).transaction_key)).filter((k): k is string => !!k));
       const stored = new Set(cmp.storedTransactionKeys);
       const matched = [...stored].filter((k) => yahooKeys.has(k)).length;
       antlerboard = { storedTransactions: stored.size, matchedByKey: matched, onlyInYahoo: yahooKeys.size - matched, onlyInAntlerboard: stored.size - matched };
     }
-    const label = `${s.seasonYear ?? "?"} (${s.leagueKey})`;
-    const failed = new Set(s.errors.map((e) => e.section));
 
     if (s.incomplete) {
-      notChecked.push(`${label}: not fully read in this run (time budget) - open ?file=season.json&season=${s.seasonYear ?? "YYYY"} for this season on its own.`);
-    } else if (failed.has("settings")) {
-      inaccessible.push(`${label}: Yahoo refused the league (${s.errors[0].message}).`);
-      requiresOriginalFiles.push(`${label}: auction results and transactions - this season isn't readable through the connected Yahoo account.`);
+      const unread = s.errors.find((e) => e.kind === "unread")!;
+      const unknown = SECTIONS.slice(SECTIONS.indexOf(s.incompleteSection!)).join(", ");
+      notChecked.push(`${label}: ${unknown} not read - ${unread.message} Unknown, not missing; retry later (or open ?file=season.json&season=${s.seasonYear ?? "YYYY"} on its own).`);
+    }
+
+    if (refused("settings")) {
+      inaccessible.push(`${label}: Yahoo refused the league (${refused("settings")!.message}).`);
+      requiresOriginalFiles.push(`${label}: auction results and transactions - Yahoo refuses this season to the connected account.`);
     } else {
-      if (!failed.has("transactions")) recovered.push(`${label}: ${s.transactionsRaw.length} transactions (all types, timestamps, players, teams, FAAB bids where charged).`);
-      else {
-        inaccessible.push(`${label}: transactions - ${s.errors.find((e) => e.section === "transactions")!.message}`);
+      if (transactionsComplete) recovered.push(`${label}: ${s.transactionsRaw.length} transactions (read until Yahoo returned no new ones; all types, timestamps, players, teams, FAAB bids where charged).`);
+      else if (refused("transactions")) {
+        inaccessible.push(`${label}: transactions - ${refused("transactions")!.message}`);
         requiresOriginalFiles.push(`${label}: the Yahoo transaction export for this season.`);
       }
-      if (failed.has("draftresults")) {
-        inaccessible.push(`${label}: draft results - ${s.errors.find((e) => e.section === "draftresults")!.message}`);
+
+      if (refused("draftresults")) {
+        inaccessible.push(`${label}: draft results - ${refused("draftresults")!.message}`);
         requiresOriginalFiles.push(`${label}: auction results - auction history file.`);
-      } else if (s.draftResults.length === 0) {
-        requiresOriginalFiles.push(`${label}: Yahoo has no draft results for this season (auction held or recorded outside Yahoo) - auction history file.`);
-      } else if (priced < s.draftResults.length) {
-        recovered.push(`${label}: ${s.draftResults.length} draft picks, ${priced} with a price.`);
-        requiresOriginalFiles.push(`${label}: ${s.draftResults.length - priced} draft picks have no price in Yahoo - auction history file for those.`);
-      } else {
-        recovered.push(`${label}: ${s.draftResults.length} auction picks, all priced, in Yahoo's recorded order.`);
+      } else if (read("draftresults")) {
+        if (s.draftResults.length === 0) {
+          requiresOriginalFiles.push(`${label}: Yahoo has no draft results for this season (auction held or recorded outside Yahoo) - auction history file.`);
+        } else if (priced < s.draftResults.length) {
+          recovered.push(`${label}: ${s.draftResults.length} draft picks, ${priced} with a price.`);
+          requiresOriginalFiles.push(`${label}: ${s.draftResults.length - priced} draft picks have no price in Yahoo - auction history file for those.`);
+        } else {
+          recovered.push(`${label}: ${s.draftResults.length} auction picks, all priced, in Yahoo's recorded order.`);
+        }
       }
-      if (failed.has("teams")) inaccessible.push(`${label}: teams - ${s.errors.find((e) => e.section === "teams")!.message}`);
-      if (failed.has("players")) inaccessible.push(`${label}: draft player names - ${s.errors.find((e) => e.section === "players")!.message} (player keys are still exported).`);
+      if (refused("teams")) inaccessible.push(`${label}: teams - ${refused("teams")!.message}`);
+      if (refused("players")) inaccessible.push(`${label}: draft player names - ${refused("players")!.message} (player keys are still exported).`);
     }
 
     return {
@@ -480,6 +529,8 @@ export function buildRecoveryReport(history: HistoryExport, comparisons: Antlerb
         playersResolved: s.draftResults.filter((d) => d.player?.name).length,
       },
       transactions: {
+        /** False when the log was cut short: `count` is then only what was read before it stopped. */
+        complete: transactionsComplete,
         count: s.transactionsRaw.length,
         pages: s.transactionPages,
         byType,
@@ -497,6 +548,7 @@ export function buildRecoveryReport(history: HistoryExport, comparisons: Antlerb
   // A chain that simply ends (or reaches the first season) is information,
   // not a gap; a refused or runaway walk is.
   if (/^(Yahoo refused|Stopped:)/.test(history.discovery.stoppedBecause)) inaccessible.push(history.discovery.stoppedBecause);
+  else if (/^(Yahoo didn't give|The time budget)/.test(history.discovery.stoppedBecause)) notChecked.push(history.discovery.stoppedBecause);
   requiresOriginalFiles.push(...ALWAYS_FROM_FILES);
 
   return { startLeagueKey: history.startLeagueKey, discovery: history.discovery, seasons, recovered, inaccessible, requiresOriginalFiles, notChecked };
