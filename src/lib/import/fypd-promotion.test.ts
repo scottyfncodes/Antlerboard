@@ -171,4 +171,49 @@ describe("promoteFypdBatch", () => {
     });
     await expect(promoteFypdBatch(prisma, batch.id)).rejects.toThrow(/season year/i);
   });
+
+  it("refuses a batch that would overwrite a stored draft's picks with different players, writing nothing", async () => {
+    // The production hazard: a copy of the 2024 draft labelled 2025.
+    const { league } = await makeLeagueWithSeason(2025);
+    const { team } = await makeRosteredManager(league.id, "Ed", 2025);
+    const anderson = await prisma.player.create({ data: { leagueId: league.id, name: "Kade Anderson" } });
+    const draft = await prisma.fypdDraft.create({ data: { leagueId: league.id, year: 2025, rounds: 5, status: "COMPLETE" } });
+    await prisma.fypdSelection.create({ data: { draftId: draft.id, round: 1, pickInRound: 1, overallPick: 1, teamId: team.id, playerId: anderson.id } });
+    const batch = await prisma.fypdImportBatch.create({
+      data: {
+        leagueId: league.id,
+        label: "Table 1 (cols A-D)",
+        sourceSheet: "FYPD",
+        seasonYear: 2025,
+        status: "PENDING_REVIEW",
+        rawPicks: [{ overallPickInSource: 1, teamNameRaw: "Ed", playerName: "Konnor Griffin", positionRaw: "SS", extra: {} }],
+      },
+    });
+
+    await expect(prisma.$transaction((tx) => promoteFypdBatch(tx, batch.id))).rejects.toThrow(/different player at 1 of them.*Konnor Griffin vs\. stored Kade Anderson/);
+    const sel = await prisma.fypdSelection.findFirstOrThrow({ where: { draftId: draft.id }, include: { player: true } });
+    expect(sel.player.name).toBe("Kade Anderson");
+    expect((await prisma.fypdImportBatch.findUniqueOrThrow({ where: { id: batch.id } })).status).toBe("PENDING_REVIEW");
+    expect(await prisma.player.count({ where: { name: "Konnor Griffin" } })).toBe(0);
+  });
+
+  it("still allows re-promoting the same picks into an existing draft", async () => {
+    const { league } = await makeLeagueWithSeason(2025);
+    const { team } = await makeRosteredManager(league.id, "Ed", 2025);
+    const anderson = await prisma.player.create({ data: { leagueId: league.id, name: "Kade Anderson" } });
+    const draft = await prisma.fypdDraft.create({ data: { leagueId: league.id, year: 2025, rounds: 5, status: "COMPLETE" } });
+    await prisma.fypdSelection.create({ data: { draftId: draft.id, round: 1, pickInRound: 1, overallPick: 1, teamId: team.id, playerId: anderson.id } });
+    const batch = await prisma.fypdImportBatch.create({
+      data: {
+        leagueId: league.id,
+        label: "Table 1",
+        sourceSheet: "FYPD",
+        seasonYear: 2025,
+        status: "PENDING_REVIEW",
+        rawPicks: [{ overallPickInSource: 1, teamNameRaw: "Ed", playerName: "kade anderson ", positionRaw: null, extra: {} }],
+      },
+    });
+    const result = await promoteFypdBatch(prisma, batch.id);
+    expect(result.picksPromoted).toBe(1);
+  });
 });

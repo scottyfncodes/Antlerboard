@@ -66,6 +66,31 @@ export async function promoteFypdBatch(db: Db, batchId: string): Promise<FypdPro
     .filter((p): p is RawFypdPick & { overallPickInSource: number } => p.overallPickInSource !== null)
     .sort((a, b) => a.overallPickInSource - b.overallPickInSource);
 
+  // Promotion upserts by overall pick, so a batch for a year that already
+  // has a draft would silently replace those picks. Re-promoting the same
+  // picks is fine; a batch that names a different player at any stored
+  // pick (e.g. a mislabelled copy of another year's draft) is refused
+  // before anything is written.
+  const existingDraft = await db.fypdDraft.findUnique({
+    where: { leagueId_year: { leagueId: batch.leagueId, year: seasonYear } },
+    select: { selections: { select: { overallPick: true, player: { select: { name: true } } } } },
+  });
+  if (existingDraft && existingDraft.selections.length > 0) {
+    const stored = new Map(existingDraft.selections.map((s) => [s.overallPick, s.player.name.trim().toLowerCase()]));
+    const conflicts = picks.filter((p) => {
+      const current = stored.get(p.overallPickInSource);
+      return current !== undefined && current !== (p.playerName ?? "").trim().toLowerCase();
+    });
+    if (conflicts.length > 0) {
+      const first = conflicts[0];
+      throw new Error(
+        `The ${seasonYear} FYPD already has ${existingDraft.selections.length} stored picks, and this batch names a different player at ${conflicts.length} of them ` +
+          `(e.g. #${first.overallPickInSource}: ${first.playerName ?? "no player"} vs. stored ${existingDraft.selections.find((s) => s.overallPick === first.overallPickInSource)!.player.name}). ` +
+          `Nothing was changed. Check the batch's season year - it may be another year's draft.`
+      );
+    }
+  }
+
   const rounds = picks.reduce((max, p) => Math.max(max, getSnakeSlot(p.overallPickInSource, TEAM_COUNT).round), 1);
 
   const draft = await db.fypdDraft.upsert({
