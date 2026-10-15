@@ -13,7 +13,7 @@
  *
  * Completeness is always computed from the picks actually stored, never
  * from Season.status or FypdDraft.status - both can say COMPLETE over a
- * partial dataset (2025's FYPD does: 53 of 60 picks).
+ * partial dataset (the 2026 FYPD does: 53 of 60 picks).
  */
 
 import { getSnakeSlot } from "./fypd-snake-engine";
@@ -273,7 +273,7 @@ export function buildFypdHistory(draft: FypdDraftInput): DraftHistory {
   // engine - but only where the stored pick number can be trusted to mean
   // that slot. In a complete draft every number is accounted for, so it
   // always can (a different selector there means the pick changed hands).
-  // In an incomplete draft, skipped picks may have been renumbered (2025's
+  // In an incomplete draft, skipped picks may have been renumbered (the 2026 FYPD's
   // were: every pick after #38 is shifted), so a mismatch is ambiguous -
   // trust stops at the first gap or first selector/slot mismatch.
   let trustHorizon = Infinity;

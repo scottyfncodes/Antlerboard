@@ -104,7 +104,7 @@ describe("FYPD original slot", () => {
     expect(p.originalSlot).toEqual({ status: "known", team: TEAMS[10], differsFromSelector: true });
   });
 
-  it("stops trusting pick numbers after the first renumbering mismatch in an incomplete draft (the 2025 pattern)", () => {
+  it("stops trusting pick numbers after the first renumbering mismatch in an incomplete draft (the 2026 FYPD pattern)", () => {
     // Picks 1-38 match the snake. Then the slot-39 team passed and every
     // later pick was renumbered down by one: pick 39 is really slot 40's.
     const sels = Array.from({ length: 38 }, (_, i) => sel(i + 1));
@@ -274,28 +274,28 @@ describe("auction number labels (draft board, team Draft tab, Draft History)", (
 });
 
 describe("FYPD that ended early (commissioner-confirmed final pick)", () => {
-  // The real 2025 pattern: picks 1-38 follow the snake, then passed picks
+  // The real 2026 FYPD pattern: picks 1-38 follow the snake, then passed picks
   // shifted every later number, and the draft ended at #53.
-  function draft2025(final: number | null) {
+  function draft2026(final: number | null) {
     const sels = Array.from({ length: 38 }, (_, i) => sel(i + 1));
     for (let n = 39; n <= 53; n++) sels.push(sel(n, snakeOwner(n + 1)));
     return buildFypdHistory(draft(sels, { confirmedFinalPicks: final }));
   }
 
   it("is complete at 53 of 53 when the commissioner confirmed the draft ended at #53", () => {
-    const h = draft2025(53);
+    const h = draft2026(53);
     expect(h.completeness).toMatchObject({ status: "complete", recorded: 53, expected: 53 });
     expect(h.completeness.note).toContain("ended at pick #53");
     expect(h.completeness.note).toContain("remaining 7 of the order's 60 slots were passed");
   });
 
   it("still doesn't trust renumbered picks: original slots stay unknown after #38", () => {
-    const h = draft2025(53);
+    const h = draft2026(53);
     for (const p of h.picks) expect(p.originalSlot.status).toBe(p.overallPick <= 38 ? "known" : "unknown");
   });
 
   it("is incomplete without the confirmation (unchanged behaviour)", () => {
-    expect(draft2025(null).completeness).toMatchObject({ status: "incomplete", recorded: 53, expected: 60 });
+    expect(draft2026(null).completeness).toMatchObject({ status: "incomplete", recorded: 53, expected: 60 });
   });
 
   it("still reports a gap or an extra pick against the confirmed final pick", () => {

@@ -29,8 +29,8 @@ describe("draft history loaders", () => {
   });
 
   it("reports a COMPLETE-status FYPD with missing picks as incomplete", async () => {
-    // A synthetic 2-pick draft. Not 2025: that year has a confirmed final
-    // pick (FYPD_CONFIRMED_FINAL_PICKS), tested separately below.
+    // A synthetic 2-pick draft, in a year with no confirmed final pick
+    // (FYPD_CONFIRMED_FINAL_PICKS is tested separately below).
     const { league, teams } = await setup();
     const draft = await prisma.fypdDraft.create({ data: { leagueId: league.id, year: 2024, rounds: 2, status: "COMPLETE" } });
     await prisma.fypdDraftOrderSlot.createMany({
@@ -118,7 +118,22 @@ describe("player cost loaders", () => {
 });
 
 describe("commissioner-confirmed FYPD final pick", () => {
-  it("uses the commissioner-confirmed final pick for 2025 (FYPD_CONFIRMED_FINAL_PICKS)", async () => {
+  it("uses the commissioner-confirmed final pick for the 2026 FYPD (FYPD_CONFIRMED_FINAL_PICKS)", async () => {
+    const { league, teams } = await setup();
+    const draft = await prisma.fypdDraft.create({ data: { leagueId: league.id, year: 2026, rounds: 30, status: "COMPLETE" } });
+    await prisma.fypdDraftOrderSlot.createMany({ data: teams.map((t, i) => ({ draftId: draft.id, teamId: t.id, slot: i + 1, reason: "test" })) });
+    for (let n = 1; n <= 53; n++) {
+      const p = await makePlayer(league.id, `Prospect ${n}`);
+      await prisma.fypdSelection.create({
+        data: { draftId: draft.id, round: Math.ceil(n / 2), pickInRound: ((n - 1) % 2) + 1, overallPick: n, teamId: teams[(n - 1) % 2].id, playerId: p.id },
+      });
+    }
+    const summary = (await listDraftSeasons(league.id)).find((s) => s.year === 2026)!;
+    expect(summary.fypd).toMatchObject({ status: "complete", recorded: 53, expected: 53 });
+    expect((await loadDraftHistory(league.id, 2026, "fypd")).completeness).toMatchObject({ status: "complete", expected: 53 });
+  });
+
+  it("applies only to the 2026 FYPD: a short 2025 FYPD is still incomplete", async () => {
     const { league, teams } = await setup();
     const draft = await prisma.fypdDraft.create({ data: { leagueId: league.id, year: 2025, rounds: 30, status: "COMPLETE" } });
     await prisma.fypdDraftOrderSlot.createMany({ data: teams.map((t, i) => ({ draftId: draft.id, teamId: t.id, slot: i + 1, reason: "test" })) });
@@ -128,8 +143,6 @@ describe("commissioner-confirmed FYPD final pick", () => {
         data: { draftId: draft.id, round: Math.ceil(n / 2), pickInRound: ((n - 1) % 2) + 1, overallPick: n, teamId: teams[(n - 1) % 2].id, playerId: p.id },
       });
     }
-    const summary = (await listDraftSeasons(league.id)).find((s) => s.year === 2025)!;
-    expect(summary.fypd).toMatchObject({ status: "complete", recorded: 53, expected: 53 });
-    expect((await loadDraftHistory(league.id, 2025, "fypd")).completeness).toMatchObject({ status: "complete", expected: 53 });
+    expect((await listDraftSeasons(league.id)).find((s) => s.year === 2025)!.fypd).toMatchObject({ status: "incomplete", recorded: 53, expected: 60 });
   });
 });
