@@ -3,6 +3,7 @@ import { auctionHistoryWorkbook, generateAuctionHistory, parseYahooDraftCsv, typ
 import { buildResolver, loadWorkbook, readAuctionWorkbook } from "./league-history-sources";
 import { draftCsv, type SeasonExport } from "../yahoo/history-export";
 import type { ManagerSeasonBlock } from "./league-history-types";
+import { FranchiseResolver } from "./team-aliases";
 
 const block = (managerSheetName: string, teamName: string, keepers: [string, number][], draft: [string, number][], seasonYear = 2024): ManagerSeasonBlock => ({
   managerSheetName,
@@ -177,7 +178,7 @@ describe("parseYahooDraftCsv", () => {
     const { picks, flags } = parseYahooDraftCsv(draftCsv(season));
     expect(flags).toEqual([]);
     expect(picks).toEqual([
-      { seasonYear: 2024, pick: 1, round: 1, playerName: "Bryce Harper", playerId: "1", playerKey: "431.p.1", mlbTeam: "PHI", positions: ["1B", "DH"], cost: 41, teamKey: "431.l.2411.t.1", teamName: "=Lost and Confused", line: 2 },
+      { seasonYear: 2024, pick: 1, round: 1, playerName: "Bryce Harper", playerId: "1", playerKey: "431.p.1", mlbTeam: "PHI", positions: ["1B", "DH"], cost: 41, teamKey: "431.l.2411.t.1", teamName: "=Lost and Confused", sourceKeeper: null, line: 2 },
     ]);
   });
 });
@@ -192,5 +193,56 @@ describe("ambiguous workbook names", () => {
     expect(g.issues).toEqual([]);
     expect(g.keepers.map((k) => k.player).sort()).toEqual(["Aaron Nola", "Jarren Duran"]);
     expect(g.auctions.map((a) => a.player).sort()).toEqual(["Austin Nola", "Jhoan Duran"]);
+  });
+});
+
+describe("Yahoo's truncated team names", () => {
+  it("treats two truncations of one team name as the same team, but not two different teams", () => {
+    n = 0;
+    const blocks = [block("MattyJ", "Cron & Cronenworth LLP", [], [["Ann Alpha", 3], ["Bob Beta", 4]], 2023)];
+    const picks = [pick("Cron & Cronenwort...", "Ann Alpha", 3, 2023), pick("Cron & Cronenworth...", "Bob Beta", 4, 2023)];
+    expect(generateAuctionHistory({ picks, blocks, resolver: buildResolver(blocks), seasons: [2023] }).issues).toEqual([]);
+  });
+
+  it("still blocks two names that only share a start (no truncation), or two different Yahoo team keys", () => {
+    n = 0;
+    const blocks = [block("MattyJ", "Cron & Cronenworth LLP", [], [["Ann Alpha", 3], ["Bob Beta", 4]], 2023)];
+    const resolver = new FranchiseResolver([{ managerSheetName: "MattyJ", seasonYear: 2023, teamName: "Cron" }, { managerSheetName: "MattyJ", seasonYear: 2023, teamName: "Cron & Cronenworth LLP" }], ["MattyJ"]);
+    const untruncated = [pick("Cron", "Ann Alpha", 3, 2023), pick("Cron & Cronenworth LLP", "Bob Beta", 4, 2023)];
+    expect(generateAuctionHistory({ picks: untruncated, blocks, resolver, seasons: [2023] }).issues.map((i) => i.kind)).toEqual(["team-mapping"]);
+    n = 0;
+    const twoKeys = [
+      { ...pick("Cron & Cronenwort...", "Ann Alpha", 3, 2023), teamKey: "422.l.1954.t.1" },
+      { ...pick("Cron & Cronenworth...", "Bob Beta", 4, 2023), teamKey: "422.l.1954.t.2" },
+    ];
+    expect(generateAuctionHistory({ picks: twoKeys, blocks, resolver: buildResolver(blocks), seasons: [2023] }).issues.map((i) => i.kind)).toEqual(["team-mapping"]);
+  });
+});
+
+describe("real-data name differences (2021-2025 league auction file)", () => {
+  it("matches a multi-word surname written as one word, and pairs same-price spelling differences", () => {
+    n = 0;
+    const blocks = [block("Jorge", "Pitches Be Trippin'", [["E.DeLaCruz", 6]], [["T.Stroy", 47]], 2024)];
+    const picks = [pick("Pitches Be Trippin'", "Elly De La Cruz", 6, 2024), pick("Pitches Be Trippin'", "Trevor Story", 47, 2024)];
+    const g = generateAuctionHistory({ picks, blocks, resolver: buildResolver(blocks), seasons: [2024] });
+    expect(g.ok).toBe(true);
+    expect(g.keepers.map((k) => k.player)).toEqual(["Elly De La Cruz"]);
+    expect(g.issues).toEqual([expect.objectContaining({ kind: "name-differs", severity: "review", message: expect.stringMatching(/"T\.Stroy" and Yahoo pick 2 Trevor Story, both \$47/) })]);
+  });
+
+  it("cross-checks the source's own keeper flags when they're usable, and ignores all-or-nothing flags", () => {
+    n = 0;
+    const blocks = [block("Andrew", "Lost and Confused", [["C.Keith", 2]], [["Hunter Brown", 19]], 2024)];
+    const flagged = (keeper: [boolean, boolean]) => [
+      { ...pick("Lost and Confused", "Colt Keith", 2, 2024), sourceKeeper: keeper[0] },
+      { ...pick("Lost and Confused", "Hunter Brown", 19, 2024), sourceKeeper: keeper[1] },
+    ];
+    const run = (k: [boolean, boolean]) => generateAuctionHistory({ picks: flagged(k), blocks, resolver: buildResolver(blocks), seasons: [2024] }).issues;
+    n = 0;
+    expect(run([true, false])).toEqual([]);
+    n = 0;
+    expect(run([false, true]).map((i) => i.kind)).toEqual(["keeper-flag-differs", "keeper-flag-differs"]);
+    n = 0;
+    expect(run([true, true])).toEqual([]); // every pick flagged: the flags say nothing
   });
 });

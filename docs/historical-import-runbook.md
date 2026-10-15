@@ -78,7 +78,18 @@ trades, which Yahoo doesn't hold.
 1. `?file=transactions.csv&season=all` gives `antlerboard-yahoo-2021-2025-transactions.csv.gz`.
    This is the import's Yahoo file as downloaded: 4,335 transactions, about
    4 MB unpacked, so it has to stay gzipped to fit the upload.
+   The commissioner's own `2021-2025_League_Transaction_History.csv` (uploaded
+   2026-10-15) holds the same 4,335 transactions, with the same per-season type
+   counts as the Yahoo report. Gzipped with `gzip -9` it's 0.3 MB and can be
+   used in place of this download.
 2. `?file=draft.csv&season=all` gives `antlerboard-yahoo-2021-2026-draft.csv`.
+   It's still needed even though the league's
+   `2021-2025_League_Auction_History.xlsx` exists. That paste has no 2023
+   keepers and no 2026, and it carries no Yahoo player ids. Without ids, the
+   two halves of Ohtani in 2021 can't be matched to the stored players. The
+   paste does reconcile for 2021, 2022, 2024 and 2025, and its own keeper flags
+   agree with every keeper/buy call the generator makes, so use it to
+   cross-check the download (pass both to `--draft`).
    This is Yahoo's priced picks, keepers included. They aren't marked as
    keepers. It covers 2026 as well, so the 2026 auction is imported in
    Yahoo's real order. The workbook's 2026 sheet order is never used:

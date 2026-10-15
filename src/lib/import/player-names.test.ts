@@ -22,6 +22,17 @@ describe("normalizePlayerName", () => {
     expect(normalizePlayerName("Bobby Witt Jr.").fullKey).toBe("bobby witt");
   });
 
+  it("never reads a 'V.' initial as a roman-numeral suffix", () => {
+    for (const [raw, full] of [["V.Guerrero", "Vladimir Guerrero Jr."], ["V. Robles", "Victor Robles"], ["V.Grissom", "Vaughn Grissom"]] as const) {
+      const a = normalizePlayerName(raw);
+      expect(a.abbreviated).toBe(true);
+      expect(a.initialKey).toBe(normalizePlayerName(full).initialKey);
+    }
+    expect(normalizePlayerName("Vladimir Guerrero Jr.").fullKey).toBe("vladimir guerrero");
+    expect(normalizePlayerName("Michael Harris II").fullKey).toBe("michael harris");
+    expect(matchPlayerName("V.Guerrero", [{ name: "Vladimir Guerrero Jr.", value: 1 }, { name: "Vaughn Grissom", value: 2 }])?.value).toBe(1);
+  });
+
   it("expands league nicknames the commissioner confirmed", () => {
     expect(normalizePlayerName("CES").fullKey).toBe("christian encarnacion-strand");
   });
