@@ -51,15 +51,16 @@ export const FYPD_CALL_UP_BASE_COST = 4;
 export const DEFAULT_TEAM_COUNT = 12;
 
 /**
- * FYPD drafts that ended before every snake slot was used, keyed by draft
- * year (the MLB draft class - the 2025 class was drafted the night before
- * the 2026 auction): the last overall pick actually made. The remaining
- * slots were passed, not lost. Confirmed by the commissioner on 2026-10-15
- * against the league's own pick list (53 picks for 2025). Draft History
- * reads this so a short draft shows as complete instead of "53 of 60".
- * Only a commissioner-confirmed count belongs here - never an inference.
+ * FYPD drafts that ended before every snake slot was used, keyed by FYPD
+ * year - the season the draft precedes, as FypdDraft.year is everywhere
+ * (the 2026 FYPD was held the night before the 2026 auction and drafted
+ * the 2025 MLB class). Value: the last overall pick actually made; the
+ * remaining slots were passed, not lost. Confirmed by the commissioner on
+ * 2026-10-15 against the league's own pick list (53 picks in the 2026
+ * FYPD). Draft History reads this so a short draft shows as complete
+ * instead of "53 of 60". Only a commissioner-confirmed count belongs here.
  */
-export const FYPD_CONFIRMED_FINAL_PICKS: Readonly<Record<number, number>> = { 2025: 53 };
+export const FYPD_CONFIRMED_FINAL_PICKS: Readonly<Record<number, number>> = { 2026: 53 };
 
 /** Live auction budget per team each season, before keeper costs come off. */
 export const AUCTION_BUDGET = 300;

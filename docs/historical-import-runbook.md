@@ -291,35 +291,28 @@ from the backup branch. **This discards every write after the backup**
    commit is an alternative. After that, only the backup branch remains.
    Keep the backup branch at least 14 days.
 
-## 2025 FYPD: resolved, one cleanup pending
+## FYPD drafts: confirmed, one data correction pending
 
-Resolved on 2026-10-15 by the commissioner:
+Confirmed by the commissioner on 2026-10-15, against the league's own pick
+lists (every pick number, manager and player matched):
 
-- The 2025 FYPD is the 2025 MLB draft class, drafted the night before the
-  2026 auction. The commissioner's pick list matches the 53 stored
-  selections exactly (pick number, manager and player).
-- **53 is final.** The draft ended at pick #53, and the remaining 7 of the
-  order's 60 slots were passed. This is recorded as
-  `FYPD_CONFIRMED_FINAL_PICKS` in `src/lib/config.ts`, so Draft History shows
-  the draft as complete at 53. Original slots after #38 stay "Unknown",
-  because passed picks shifted the numbering.
-- Production's year labels are correct. "2024" is the 2024 class (60 picks,
-  Konnor Griffin at #1).
+- FYPDs are labelled by the season they precede, which is how the app
+  labels `FypdDraft.year` everywhere. The **2026 FYPD** (held the night
+  before the 2026 auction) drafted the 2025 MLB class: Kade Anderson at #1,
+  **53 picks, final**. The draft ended at #53 and the remaining 7 of the
+  order's 60 slots were passed. The **2025 FYPD** drafted the 2024 class:
+  Konnor Griffin at #1, 60 picks.
+- `FYPD_CONFIRMED_FINAL_PICKS = { 2026: 53 }` (`src/lib/config.ts`) makes
+  Draft History show the 2026 FYPD as complete at 53. Original slots after
+  #38 stay "Unknown", because passed picks shifted the numbering.
 
-Still pending, and separate from the import:
-
-- The `PENDING_REVIEW` import batch labelled 2025 ("Table 1 (cols A-D)", 60
-  picks, created 2026-09-22) **is a copy of the 2024 FYPD**. Promoting it
-  would have replaced the real 2025 picks. Promotion now refuses any batch
-  that names a different player at a stored pick, so it can't do that. It
-  should still be marked `DISCARDED`. The app has no discard action, so this
-  is a single **[PROD WRITE]** that needs the commissioner's explicit
-  approval:
-
-  ```sql
-  update "FypdImportBatch" set status = 'DISCARDED',
-    notes = 'Discarded 2026-10-15: duplicate of the 2024 FYPD mislabelled as 2025 (commissioner-confirmed).'
-  where status = 'PENDING_REVIEW' and "seasonYear" = 2025 and label = 'Table 1 (cols A-D)'
-    and jsonb_array_length("rawPicks"::jsonb) = 60;
-  -- expect exactly 1 row updated
-  ```
+Pending, and separate from the import: production stores both drafts **one
+year low** (Anderson as 2025, Griffin as 2024; written 2026-09-21). Their
+players' `mlbDraftYear` values are already correct. `scripts/fix-fypd-years.sql`
+corrects this in one guarded transaction. It relabels both drafts and their
+confirmed staging batches, discards the pending batch (a second copy of the
+Griffin picks), and writes a historical-correction audit entry. It refuses
+to run unless production is exactly in the expected state, and re-checks the
+result before committing. It was rehearsed on a local copy, and a second run
+is refused. This is a **[PROD WRITE]**: take a Neon backup branch of `main`
+first, and run it only with the commissioner's explicit approval.
