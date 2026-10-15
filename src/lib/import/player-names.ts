@@ -64,7 +64,10 @@ export function normalizePlayerName(raw: string): NormalizedPlayerName {
     .trim();
 
   // "J.Soto" becomes "j soto" after punctuation removal; "JJ Wetherholt" stays.
-  const tokens = clean.split(" ").filter((t) => t && !SUFFIXES.has(t));
+  // Suffixes only after the first name: "V.Guerrero" is Vladimir, not a
+  // roman-numeral "V" (dropping it left just "guerrero" and broke every
+  // "V." initial - V.Guerrero, V.Robles, V.Reyes, V.Grissom).
+  const tokens = clean.split(" ").filter((t, i) => t && !(i > 0 && SUFFIXES.has(t)));
   const abbreviated = tokens.length >= 2 && tokens[0].length === 1;
   const first = tokens[0] ?? "";
   // Last token only, so "C.J. Cron" and "C.Cron" agree ("cron"), as do

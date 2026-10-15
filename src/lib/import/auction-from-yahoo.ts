@@ -46,6 +46,8 @@ export interface YahooDraftPick {
   cost: number | null;
   teamKey: string | null;
   teamName: string;
+  /** The source's own keeper flag, when it has one (the league's pasted auction history does). */
+  sourceKeeper?: boolean | null;
   line: number;
 }
 
@@ -70,6 +72,7 @@ export function parseYahooDraftCsv(text: string): { picks: YahooDraftPick[]; fla
     salary: col("salary"),
     teamKey: col("team_key"),
     team: col("fantasy_team"),
+    isKeeper: col("iskeeper"),
   };
   if (c.season === -1 || c.pick === -1 || c.player === -1 || c.salary === -1 || c.team === -1) {
     return { picks: [], flags: ["Expected the history export's draft CSV (Season, Pick, Player, Salary, Fantasy_Team ...)."] };
@@ -96,6 +99,7 @@ export function parseYahooDraftCsv(text: string): { picks: YahooDraftPick[]; fla
       cost: num(r[c.salary]),
       teamKey: c.teamKey === -1 ? null : r[c.teamKey] || null,
       teamName: unguard(r[c.team] ?? "").trim(),
+      sourceKeeper: c.isKeeper === -1 || (r[c.isKeeper] ?? "").trim() === "" ? null : num(r[c.isKeeper]) !== 0,
       line: i + 2,
     });
   });
@@ -146,6 +150,8 @@ export interface Issue {
     | "auction-cost-differs"
     | "workbook-buy-not-in-yahoo"
     | "yahoo-buy-not-in-workbook"
+    | "name-differs"
+    | "keeper-flag-differs"
     | "missing-season";
   message: string;
 }
@@ -205,7 +211,20 @@ function matchPick(name: string, cost: number | null, picks: YahooDraftPick[]): 
   const atPrice = picks.filter((p) => cost !== null && p.cost === cost);
   const m = matchPlayerName(name, atPrice.map((p) => ({ name: p.playerName, value: p })));
   if (m && m.confidence !== "fuzzy") return m.value;
-  return matchPlayerName(name, picks.map((p) => ({ name: p.playerName, value: p })))?.value ?? null;
+  const any = matchPlayerName(name, picks.map((p) => ({ name: p.playerName, value: p })));
+  if (any) return any.value;
+  // A multi-word surname written as one ("E.DeLaCruz" = Elly De La Cruz):
+  // same first initial, same surname with the spaces taken out.
+  const surname = (n: string) => {
+    const t = normalizePlayerName(n).fullKey.split(" ");
+    return { initial: t[0]?.charAt(0) ?? "", rest: t.slice(1).join("").replace(/-/g, "") };
+  };
+  const want = surname(name);
+  const joined = picks.filter((p) => {
+    const got = surname(p.playerName);
+    return want.rest.length >= 5 && got.initial === want.initial && got.rest === want.rest;
+  });
+  return joined.length === 1 ? joined[0] : null;
 }
 
 export function generateAuctionHistory(opts: GenerateOptions): GeneratedAuctionHistory {
@@ -235,7 +254,11 @@ export function generateAuctionHistory(opts: GenerateOptions): GeneratedAuctionH
     const owners = new Map<string, string[]>();
     for (const [team, f] of franchiseOfTeam) owners.set(f, [...(owners.get(f) ?? []), team]);
     for (const [f, teams] of owners) {
-      if (teams.length > 1) issue(f, "blocking", "team-mapping", `${season}: Yahoo teams ${teams.map((t) => `"${t}"`).join(" and ")} both resolve to ${f}.`);
+      // Yahoo's draft page truncates long names, and not always at the same
+      // length ("Cron & Cronenwort..." / "Cron & Cronenworth..."): one team.
+      const stem = (t: string) => t.replace(/\s*(\.\.\.|…)$/, "");
+      const sameTeam = teams.every((t) => teams.every((u) => stem(t).startsWith(stem(u)) || stem(u).startsWith(stem(t))));
+      if (teams.length > 1 && !sameTeam) issue(f, "blocking", "team-mapping", `${season}: Yahoo teams ${teams.map((t) => `"${t}"`).join(" and ")} both resolve to ${f}.`);
     }
     for (const p of picks) if (p.cost === null) issue(franchiseOfTeam.get(p.teamName) ?? null, "blocking", "unpriced-pick", `${season} pick ${p.pick} (${p.playerName}) has no price in Yahoo.`);
 
@@ -309,12 +332,23 @@ export function generateAuctionHistory(opts: GenerateOptions): GeneratedAuctionH
         if (d.cost !== null && p.cost !== null && d.cost !== p.cost)
           issue(f, "review", "auction-cost-differs", `${season} ${f}: auction buy ${p.playerName} - Yahoo $${p.cost}, workbook $${d.cost}. Yahoo's price is used.`);
       }
-      for (const p of free()) {
-        written.add(p);
-        issue(f, "review", "yahoo-buy-not-in-workbook", `${season} ${f}: Yahoo pick ${p.pick} ${p.playerName} ($${p.cost ?? "?"}) isn't in the workbook's auction list. Written as an auction buy.`);
-      }
+      // One unmatched row on each side at the same price: almost always the
+      // same player spelled differently ("T.Stroy" / Trevor Story). Said as a pair.
+      const unmatchedPicks = free();
+      const paired = new Set<YahooDraftPick>();
       for (const d of extraBuyRows) {
-        issue(f, "review", "workbook-buy-not-in-yahoo", `${season} ${f}: workbook auction row "${d.name}" ($${d.cost ?? "?"}) has no matching Yahoo pick. Not written.`);
+        const samePrice = unmatchedPicks.filter((p) => !paired.has(p) && d.cost !== null && p.cost === d.cost);
+        const rowsAtPrice = extraBuyRows.filter((x) => x.cost === d.cost);
+        if (samePrice.length === 1 && rowsAtPrice.length === 1) {
+          paired.add(samePrice[0]);
+          issue(f, "review", "name-differs", `${season} ${f}: workbook "${d.name}" and Yahoo pick ${samePrice[0].pick} ${samePrice[0].playerName}, both $${d.cost} - probably one player spelled differently. Written as Yahoo's ${samePrice[0].playerName}.`);
+        } else {
+          issue(f, "review", "workbook-buy-not-in-yahoo", `${season} ${f}: workbook auction row "${d.name}" ($${d.cost ?? "?"}) has no matching Yahoo pick. Not written.`);
+        }
+      }
+      for (const p of unmatchedPicks) {
+        written.add(p);
+        if (!paired.has(p)) issue(f, "review", "yahoo-buy-not-in-workbook", `${season} ${f}: Yahoo pick ${p.pick} ${p.playerName} ($${p.cost ?? "?"}) isn't in the workbook's auction list. Written as an auction buy.`);
       }
     }
 
@@ -324,6 +358,18 @@ export function generateAuctionHistory(opts: GenerateOptions): GeneratedAuctionH
       const block = blocks.find((b) => b.managerSheetName === franchiseOfTeam.get(p.teamName))!;
       auctions.push({ ...row(p, block, p.cost, "Auction buy (Yahoo draft results)"), pick: i + 1 });
     });
+
+    // Cross-check against the source's own keeper flags where they're usable
+    // (some seasons flag every pick, or none - those say nothing).
+    const flagged = picks.filter((p) => p.sourceKeeper === true).length;
+    const flaggable = picks.every((p) => p.sourceKeeper !== undefined && p.sourceKeeper !== null) && flagged > 0 && flagged < picks.length;
+    if (flaggable) {
+      const keptPicks = new Set(keepers.filter((k) => k.season === season).map((k) => k.yahooPick));
+      for (const p of picks) {
+        if (!written.has(p) || p.sourceKeeper === keptPicks.has(p.pick)) continue;
+        issue(franchiseOfTeam.get(p.teamName) ?? null, "review", "keeper-flag-differs", `${season}: pick ${p.pick} ${p.playerName} (${p.teamName}) is ${keptPicks.has(p.pick) ? "a keeper on the workbook's list" : "an auction buy by the workbook"} but the source file marks it ${p.sourceKeeper ? "a keeper" : "an auction buy"}.`);
+      }
+    }
 
     rec.keepers = keepers.filter((k) => k.season === season).length;
     rec.auctionBuys = seasonBuys.length;
