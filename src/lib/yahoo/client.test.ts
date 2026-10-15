@@ -278,3 +278,31 @@ describe("missingYahooEnvVars", () => {
     expect(isYahooConfigured()).toBe(false);
   });
 });
+
+describe("yahooFantasyGet with allowRefresh: false (read-only tools)", () => {
+  it("uses the stored token while it's valid, without touching the token endpoint", async () => {
+    const league = await connectedLeague();
+    fetchMock.mockResolvedValueOnce(json(200, { fantasy_content: { ok: true } }));
+    await expect(yahooFantasyGet(league.id, "/league/469.l.1/settings", { allowRefresh: false })).resolves.toEqual({ fantasy_content: { ok: true } });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).toContain("fantasysports.yahooapis.com");
+  });
+
+  it("refuses an expired token without refreshing it or writing anything", async () => {
+    const league = await connectedLeague({ expiresInMs: -60_000 });
+    const before = await prisma.yahooConnection.findFirstOrThrow();
+    await expect(yahooFantasyGet(league.id, "/league/469.l.1/settings", { allowRefresh: false })).rejects.toThrow(/expired.*doesn't refresh/);
+    expect(fetchMock).not.toHaveBeenCalled();
+    const after = await prisma.yahooConnection.findFirstOrThrow();
+    expect(after.updatedAt).toEqual(before.updatedAt);
+    expect(after.accessToken).toBe("old-access");
+  });
+
+  it("fails on a 401 instead of refreshing", async () => {
+    const league = await connectedLeague();
+    fetchMock.mockResolvedValueOnce(json(401, { error: { description: "token rejected" } }));
+    await expect(yahooFantasyGet(league.id, "/league/469.l.1/settings", { allowRefresh: false })).rejects.toBeInstanceOf(YahooApiError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect((await prisma.yahooConnection.findFirstOrThrow()).accessToken).toBe("old-access");
+  });
+});

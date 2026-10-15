@@ -134,6 +134,27 @@ export async function getValidAccessToken(leagueId: string, opts: { forceRefresh
   return refreshed.access_token;
 }
 
+/** The stored token is missing or expired and refreshing it wasn't allowed. */
+export class YahooTokenUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "YahooTokenUnavailableError";
+  }
+}
+
+/** The stored access token if it's still valid for at least 30 seconds - never refreshes, never writes. */
+async function getStoredAccessToken(leagueId: string): Promise<string> {
+  const connection = await prisma.yahooConnection.findUnique({ where: { leagueId }, select: { accessToken: true, tokenExpiresAt: true } });
+  if (!connection?.accessToken) throw new YahooTokenUnavailableError("Yahoo is not connected for this league yet.");
+  if (!connection.tokenExpiresAt || connection.tokenExpiresAt.getTime() - Date.now() < 30_000) {
+    throw new YahooTokenUnavailableError(
+      "The stored Yahoo access token has expired, and this read-only tool doesn't refresh it (refreshing writes new tokens to the database). " +
+        "Run it within about an hour of the daily Yahoo sync, or after a commissioner's Sync Now."
+    );
+  }
+  return connection.accessToken;
+}
+
 const RETRY_DELAYS_MS = [1_000, 3_000];
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -147,13 +168,20 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
  * app's Client ID isn't approved for the Fantasy API - fails immediately as a
  * YahooApiError carrying Yahoo's own description. Every failed response is
  * also logged once, sanitized, by logYahooApiError (see ./diagnostics).
+ *
+ * `allowRefresh: false` never refreshes the token - it uses the stored
+ * access token while it's valid and otherwise throws YahooTokenUnavailable.
+ * That path writes nothing to the database (refreshing writes the new
+ * tokens), for strictly read-only tools like the history export.
  */
-export async function yahooFantasyGet(leagueId: string, path: string): Promise<unknown> {
+export async function yahooFantasyGet(leagueId: string, path: string, opts: { allowRefresh?: boolean } = {}): Promise<unknown> {
   const separator = path.includes("?") ? "&" : "?";
   const url = `${FANTASY_API_BASE}${path}${separator}format=json`;
+  const allowRefresh = opts.allowRefresh ?? true;
 
-  let accessToken = await getValidAccessToken(leagueId);
-  let refreshedAfter401 = false;
+  let accessToken = allowRefresh ? await getValidAccessToken(leagueId) : await getStoredAccessToken(leagueId);
+  // Without refresh there's nothing to retry a 401 with.
+  let refreshedAfter401 = !allowRefresh;
 
   for (let attempt = 0; ; attempt++) {
     const res = await fetch(url, {
