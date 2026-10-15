@@ -38,6 +38,21 @@ export interface ExportOptions {
    */
   isFatal?: (err: unknown) => boolean;
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Epoch ms after which no new Yahoo request starts. Whatever wasn't read
+   * by then is reported as not checked - never as refused or missing - so a
+   * slow run degrades to a partial report instead of a timed-out request.
+   */
+  deadline?: number;
+  now?: () => number;
+}
+
+/** Raised instead of making a request once the time budget is spent. */
+export class TimeBudgetExceeded extends Error {
+  constructor() {
+    super("Not read in this run: the time budget ran out before this request.");
+    this.name = "TimeBudgetExceeded";
+  }
 }
 
 export interface ExportedTeam {
@@ -69,6 +84,8 @@ export interface SeasonExport {
   transactionsRaw: unknown[][];
   transactionPages: number;
   errors: { section: string; message: string }[];
+  /** The time budget ran out while reading this season: whatever is here is incomplete. */
+  incomplete: boolean;
 }
 
 export interface HistoryExport {
@@ -106,10 +123,12 @@ export function renewToLeagueKey(renew: string | null): string | null {
 
 export async function exportLeagueHistory(get: YahooGet, startLeagueKey: string, opts: ExportOptions): Promise<HistoryExport> {
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-  const delay = opts.delayMs ?? 250;
+  const delay = opts.delayMs ?? 150;
+  const now = opts.now ?? Date.now;
   let calls = 0;
   const call = async (path: string) => {
     if (calls++ > 0 && delay > 0) await sleep(delay);
+    if (opts.deadline !== undefined && now() >= opts.deadline) throw new TimeBudgetExceeded();
     return get(path);
   };
 
@@ -132,6 +151,10 @@ export async function exportLeagueHistory(get: YahooGet, startLeagueKey: string,
       break;
     }
 
+    if (season.incomplete) {
+      stoppedBecause = `The time budget ran out while reading ${leagueKey}; download that season (and any older ones) one at a time.`;
+      break;
+    }
     if (season.errors.some((e) => e.section === "settings")) {
       stoppedBecause = `Yahoo refused ${leagueKey}'s settings, so older seasons linked from it can't be found.`;
       break;
@@ -167,6 +190,14 @@ async function exportSeason(
     transactionsRaw: [],
     transactionPages: 0,
     errors: [],
+    incomplete: false,
+  };
+  // A spent time budget ends this season's reading; it isn't a Yahoo answer.
+  const budgetSpent = (err: unknown, section: string) => {
+    if (!(err instanceof TimeBudgetExceeded)) return false;
+    out.incomplete = true;
+    out.errors.push({ section, message: err.message });
+    return true;
   };
 
   try {
@@ -185,6 +216,7 @@ async function exportSeason(
     };
   } catch (err) {
     if (isFatal(err)) throw err;
+    if (budgetSpent(err, "settings")) return out;
     out.errors.push({ section: "settings", message: errorMessage(err) });
     return out; // nothing else for this league is worth asking for
   }
@@ -206,6 +238,7 @@ async function exportSeason(
     }
   } catch (err) {
     if (isFatal(err)) throw err;
+    if (budgetSpent(err, "teams")) return out;
     out.errors.push({ section: "teams", message: errorMessage(err) });
   }
 
@@ -220,6 +253,7 @@ async function exportSeason(
     out.draftResults.sort((a, b) => a.pick - b.pick);
   } catch (err) {
     if (isFatal(err)) throw err;
+    if (budgetSpent(err, "draftresults")) return out;
     out.errors.push({ section: "draftresults", message: errorMessage(err) });
   }
 
@@ -244,6 +278,7 @@ async function exportSeason(
       }
     } catch (err) {
       if (isFatal(err)) throw err;
+      if (budgetSpent(err, "players")) return out;
       out.errors.push({ section: "players", message: errorMessage(err) });
     }
     for (const d of out.draftResults) d.player = (d.playerKey && players.get(d.playerKey)) || null;
@@ -275,6 +310,7 @@ async function exportSeason(
     if (out.transactionPages >= MAX_TX_PAGES) out.errors.push({ section: "transactions", message: `Stopped after ${MAX_TX_PAGES} pages - the log may be incomplete.` });
   } catch (err) {
     if (isFatal(err)) throw err;
+    if (budgetSpent(err, "transactions")) return out;
     out.errors.push({ section: "transactions", message: `${errorMessage(err)} (${out.transactionsRaw.length} transactions read before the error)` });
   }
 
@@ -305,6 +341,14 @@ export function transactionsCsv(seasons: SeasonExport[]): string {
   return lines.join("\n") + "\n";
 }
 
+/**
+ * Spreadsheet apps run a cell starting with = + - @ as a formula, and team
+ * names are user-chosen - so text cells in the draft CSV get a leading
+ * apostrophe there. (The transactions CSV is raw JSON for the importer and
+ * is never altered.)
+ */
+const safeText = (v: string | null | undefined) => (v && /^[=+\-@\t\r]/.test(v) ? `'${v}` : (v ?? ""));
+
 export function draftCsv(season: SeasonExport): string {
   const teamName = new Map(season.teams.map((t) => [t.teamKey, t.name]));
   const lines = [csvLine(["Season", "Pick", "Round", "Player", "Player_ID", "Player_Key", "MLB_Team", "Positions", "Salary", "Team_Key", "Fantasy_Team"])];
@@ -314,14 +358,14 @@ export function draftCsv(season: SeasonExport): string {
         season.seasonYear ?? "",
         d.pick,
         d.round ?? "",
-        d.player?.name ?? "",
+        safeText(d.player?.name),
         d.player?.playerId ?? "",
         d.playerKey ?? "",
         d.player?.mlbTeam ?? "",
         d.player?.positions.join("/") ?? "",
         d.cost ?? "",
         d.teamKey ?? "",
-        (d.teamKey && teamName.get(d.teamKey)) ?? "",
+        safeText(d.teamKey ? teamName.get(d.teamKey) : null),
       ])
     );
   }
@@ -349,11 +393,14 @@ export interface RecoveryReport {
     transactions: { count: number; pages: number; byType: Record<string, number>; withFaabBid: number; firstAt: string | null; lastAt: string | null };
     teams: number;
     errors: SeasonExport["errors"];
+    incomplete: boolean;
     antlerboard: { storedTransactions: number; matchedByKey: number; onlyInYahoo: number; onlyInAntlerboard: number } | null;
   }[];
   recovered: string[];
   inaccessible: string[];
   requiresOriginalFiles: string[];
+  /** Seasons this run didn't finish reading (time budget) - neither recovered nor missing; check them one at a time. */
+  notChecked: string[];
 }
 
 /** Facts no Yahoo endpoint holds for this league - they come from the commissioner's workbook regardless. */
@@ -369,6 +416,7 @@ export function buildRecoveryReport(history: HistoryExport, comparisons: Antlerb
   const recovered: string[] = [];
   const inaccessible: string[] = [];
   const requiresOriginalFiles: string[] = [];
+  const notChecked: string[] = [];
 
   const seasons = history.seasons.map((s) => {
     const byType: Record<string, number> = {};
@@ -394,7 +442,9 @@ export function buildRecoveryReport(history: HistoryExport, comparisons: Antlerb
     const label = `${s.seasonYear ?? "?"} (${s.leagueKey})`;
     const failed = new Set(s.errors.map((e) => e.section));
 
-    if (failed.has("settings")) {
+    if (s.incomplete) {
+      notChecked.push(`${label}: not fully read in this run (time budget) - open ?file=season.json&season=${s.seasonYear ?? "YYYY"} for this season on its own.`);
+    } else if (failed.has("settings")) {
       inaccessible.push(`${label}: Yahoo refused the league (${s.errors[0].message}).`);
       requiresOriginalFiles.push(`${label}: auction results and transactions - this season isn't readable through the connected Yahoo account.`);
     } else {
@@ -439,6 +489,7 @@ export function buildRecoveryReport(history: HistoryExport, comparisons: Antlerb
       },
       teams: s.teams.length,
       errors: s.errors,
+      incomplete: s.incomplete,
       antlerboard,
     };
   });
@@ -448,5 +499,5 @@ export function buildRecoveryReport(history: HistoryExport, comparisons: Antlerb
   if (/^(Yahoo refused|Stopped:)/.test(history.discovery.stoppedBecause)) inaccessible.push(history.discovery.stoppedBecause);
   requiresOriginalFiles.push(...ALWAYS_FROM_FILES);
 
-  return { startLeagueKey: history.startLeagueKey, discovery: history.discovery, seasons, recovered, inaccessible, requiresOriginalFiles };
+  return { startLeagueKey: history.startLeagueKey, discovery: history.discovery, seasons, recovered, inaccessible, requiresOriginalFiles, notChecked };
 }

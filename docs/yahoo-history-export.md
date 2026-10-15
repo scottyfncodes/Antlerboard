@@ -20,6 +20,8 @@ has, and use the commissioner's files only where the report says so.
   import's safeguards (signed preview, conflict checks, rollback) all apply
   unchanged.
 - **Safe to re-run:** every run re-reads Yahoo, and it is commissioner-only.
+  Responses are marked `private, no-store`, so nothing is cached, and an
+  unexpected server error returns a generic message, not internal detail.
 
 ## When to run it
 
@@ -42,7 +44,11 @@ preview URL), then open these in the browser:
 | `/api/commissioner/yahoo-history?file=draft.csv&season=2024` | That season's draft results: pick, round, player, ids, MLB team, positions, price, fantasy team |
 
 Downloads are one season at a time because Vercel caps a response at about
-4.5 MB. To build the import's single 2025-and-earlier transaction file, join
+4.5 MB. If a season's transactions are still too large, the download answers
+`413` with the exact `&part=1`, `&part=2`, … links to use, and each part keeps
+the header. Join them the same way as below. The report has a 4-minute
+budget: any season it couldn't finish is listed under `notChecked` (never as
+missing). Open that season on its own with `?file=season.json&season=YYYY`. To build the import's single 2025-and-earlier transaction file, join
 the per-season CSVs while keeping one header:
 
 ```bash
@@ -63,7 +69,7 @@ Check the result against the import's ~4.5 MB upload limit (runbook §1).
   - `/draftresults`
   - `/players;player_keys=…`, 25 players per request
   - `/transactions;start=…;count=25`, paged until a page adds nothing new
-- **Pacing and retries:** requests are 250 ms apart. The client retries
+- **Pacing and retries:** requests are 150 ms apart. The client retries
   Yahoo rate limits (999/429) and server errors twice with backoff.
 - **Failures:** a section that still fails is recorded in the report. An
   expired or rejected token ends the run with `409`.
@@ -77,5 +83,7 @@ Check the result against the import's ~4.5 MB upload limit (runbook §1).
   - Per season: a missing draft, unpriced picks, or an unreadable season.
   - Always: recorded keeper costs and overrides, which picks were keepers,
     offseason trades, pre-2021 history and FYPD (already stored).
+- `notChecked`: seasons this run didn't finish within its time budget.
+  They're neither recovered nor missing yet; download them one at a time.
 - `seasons[].antlerboard`: for seasons Antlerboard already synced, how many
   Yahoo transaction keys match the stored ones.

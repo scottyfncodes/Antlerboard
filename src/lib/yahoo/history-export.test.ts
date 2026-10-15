@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildRecoveryReport, draftCsv, exportLeagueHistory, renewToLeagueKey, transactionsCsv, type YahooGet } from "./history-export";
+import { buildRecoveryReport, draftCsv, exportLeagueHistory, renewToLeagueKey, transactionsCsv, type SeasonExport, type YahooGet } from "./history-export";
 import { parseYahooTransactionsCsv } from "../import/yahoo-transactions";
 import { YahooApiError } from "./errors";
 
@@ -203,5 +203,53 @@ describe("buildRecoveryReport", () => {
     const h = await exportLeagueHistory(get, "469.l.8891", { firstSeasonYear: 2026, delayMs: 0 });
     const r = buildRecoveryReport(h, [{ leagueKey: "469.l.8891", seasonYear: 2026, storedTransactionKeys: ["469.l.8891.tr.1", "469.l.8891.tr.2", "469.l.8891.tr.99"] }]);
     expect(r.seasons[0].antlerboard).toEqual({ storedTransactions: 3, matchedByKey: 2, onlyInYahoo: 1, onlyInAntlerboard: 1 });
+  });
+});
+
+describe("time budget", () => {
+  it("stops starting requests at the deadline and reports the unread season as not checked - never refused or missing", async () => {
+    const { get, calls } = fakeYahoo();
+    let clock = 0;
+    // Each request advances the clock; the budget runs out partway through 2024.
+    const h = await exportLeagueHistory(
+      async (p) => {
+        clock += 1;
+        return get(p);
+      },
+      "469.l.8891",
+      { ...opts, deadline: 14, now: () => clock }
+    );
+    const last = h.seasons[h.seasons.length - 1];
+    expect(last.incomplete).toBe(true);
+    expect(h.discovery.stoppedBecause).toMatch(/time budget ran out while reading/);
+    expect(calls.length).toBe(14);
+
+    const r = buildRecoveryReport(h, []);
+    const label = `${last.seasonYear ?? "?"} (${last.leagueKey})`;
+    expect(r.notChecked.join(" ")).toContain(label);
+    expect([...r.inaccessible, ...r.requiresOriginalFiles, ...r.recovered].join(" ")).not.toContain(label);
+    expect(r.seasons.find((s) => s.leagueKey === last.leagueKey)!.incomplete).toBe(true);
+  });
+});
+
+describe("draft CSV safety", () => {
+  it("neutralizes spreadsheet formulas in user-chosen names, leaving prices and keys alone", () => {
+    const season: SeasonExport = {
+      seasonYear: 2024,
+      leagueKey: "431.l.90",
+      leagueName: null,
+      renew: null,
+      settings: { draftType: null, isAuctionDraft: true, usesFaab: true, draftStatus: null, numTeams: 12 },
+      teams: [{ teamKey: "431.l.90.t.1", name: "=HYPERLINK(\"http://x\")", managers: [] }],
+      draftResults: [{ pick: 1, round: 1, teamKey: "431.l.90.t.1", playerKey: "431.p.3", cost: 30, player: { playerId: "3", name: "@Player", mlbTeam: "NYY", positions: [] } }],
+      transactionsRaw: [],
+      transactionPages: 0,
+      errors: [],
+      incomplete: false,
+    };
+    const row = draftCsv(season).trim().split("\n")[1];
+    expect(row).toContain("'@Player");
+    expect(row).toContain(`"'=HYPERLINK(""http://x"")"`);
+    expect(row).toContain(",30,");
   });
 });
