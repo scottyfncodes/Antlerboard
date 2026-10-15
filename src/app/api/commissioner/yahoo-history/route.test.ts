@@ -21,7 +21,15 @@ beforeEach(async () => {
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
 });
-afterEach(() => vi.unstubAllGlobals());
+// Skip the real pauses: the route's pacing, the client's 1-3 s retries and the export's 20-45 s throttle waits.
+const realSetTimeout = globalThis.setTimeout;
+beforeEach(() => {
+  vi.spyOn(globalThis, "setTimeout").mockImplementation(((fn: () => void, ms?: number) => realSetTimeout(fn, (ms ?? 0) >= 100 ? 0 : ms)) as typeof setTimeout);
+});
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.mocked(globalThis.setTimeout).mockRestore();
+});
 afterAll(resetDatabase);
 
 async function connected(expiresInMs: number) {
@@ -79,7 +87,11 @@ describe("GET /api/commissioner/yahoo-history", () => {
     const res = await get("?file=report");
     expect(res.status).toBe(200);
     const report = await res.json();
-    expect(report.seasons[0]).toMatchObject({ seasonYear: 2026, draft: { picks: 1, pricedPicks: 1 }, transactions: { count: 1 }, antlerboard: { matchedByKey: 1, onlyInYahoo: 0 } });
+    // The connected season's log is the daily sync's: counted from Antlerboard, not re-read from Yahoo.
+    expect(report.seasons[0]).toMatchObject({ seasonYear: 2026, draft: { picks: 1, pricedPicks: 1 }, transactions: { count: 0, complete: false, skipped: expect.stringMatching(/daily Yahoo sync/) } });
+    expect(report.recovered).toContain("2026 (469.l.8891): transactions not re-read - Antlerboard's daily Yahoo sync keeps this season's log (1 stored).");
+    expect(report.notChecked).toEqual([]);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/transactions"))).toBe(false);
     expect(await counts()).toEqual(before);
     // Only Yahoo's Fantasy API was called - never the token endpoint.
     expect(fetchMock.mock.calls.every(([url]) => String(url).startsWith("https://fantasysports.yahooapis.com/"))).toBe(true);
@@ -100,6 +112,10 @@ describe("GET /api/commissioner/yahoo-history", () => {
     wireYahoo();
     expect((await get("?file=season.json&season=2019")).status).toBe(404);
     expect((await get("?file=season.json")).status).toBe(400);
+    expect((await get("?file=report&season=abc")).status).toBe(400);
+    const one = await (await get("?file=report&season=2026")).json();
+    expect(one.seasons.map((x: { seasonYear: number }) => x.seasonYear)).toEqual([2026]);
+    expect(one.discovery.stoppedBecause).toBe("Read season 2026 only.");
     expect((await get("?file=everything")).status).toBe(400);
   });
 
@@ -166,6 +182,8 @@ describe("GET /api/commissioner/yahoo-history", () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     const res = await get("?file=transactions.csv&season=2026");
     spy.mockRestore();
+    // Asked again after each throttle wait before giving up.
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("start=25")).length).toBe(9);
     expect(res.status).toBe(503);
     expect(res.headers.get("content-disposition")).toBeNull();
     expect((await res.json()).error).toMatch(/couldn't be read completely/);
