@@ -256,8 +256,19 @@ export function generateAuctionHistory(opts: GenerateOptions): GeneratedAuctionH
     for (const [f, teams] of owners) {
       // Yahoo's draft page truncates long names, and not always at the same
       // length ("Cron & Cronenwort..." / "Cron & Cronenworth..."): one team.
+      // Only a name Yahoo actually cut ("...") can be a prefix of another, and
+      // picks carrying two different Yahoo team keys are never one team.
+      const truncated = (t: string) => /(\.\.\.|…)$/.test(t.trim());
       const stem = (t: string) => t.replace(/\s*(\.\.\.|…)$/, "");
-      const sameTeam = teams.every((t) => teams.every((u) => stem(t).startsWith(stem(u)) || stem(u).startsWith(stem(t))));
+      const keysOf = (t: string) => new Set(picks.filter((p) => p.teamName === t && p.teamKey).map((p) => p.teamKey));
+      const sameTeam = teams.every((t) =>
+        teams.every((u) => {
+          if (t === u) return true;
+          const keys = new Set([...keysOf(t), ...keysOf(u)]);
+          if (keys.size > 1) return false;
+          return (truncated(t) && stem(u).startsWith(stem(t))) || (truncated(u) && stem(t).startsWith(stem(u)));
+        })
+      );
       if (teams.length > 1 && !sameTeam) issue(f, "blocking", "team-mapping", `${season}: Yahoo teams ${teams.map((t) => `"${t}"`).join(" and ")} both resolve to ${f}.`);
     }
     for (const p of picks) if (p.cost === null) issue(franchiseOfTeam.get(p.teamName) ?? null, "blocking", "unpriced-pick", `${season} pick ${p.pick} (${p.playerName}) has no price in Yahoo.`);

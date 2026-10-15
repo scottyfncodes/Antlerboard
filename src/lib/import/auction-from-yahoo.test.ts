@@ -3,6 +3,7 @@ import { auctionHistoryWorkbook, generateAuctionHistory, parseYahooDraftCsv, typ
 import { buildResolver, loadWorkbook, readAuctionWorkbook } from "./league-history-sources";
 import { draftCsv, type SeasonExport } from "../yahoo/history-export";
 import type { ManagerSeasonBlock } from "./league-history-types";
+import { FranchiseResolver } from "./team-aliases";
 
 const block = (managerSheetName: string, teamName: string, keepers: [string, number][], draft: [string, number][], seasonYear = 2024): ManagerSeasonBlock => ({
   managerSheetName,
@@ -201,6 +202,20 @@ describe("Yahoo's truncated team names", () => {
     const blocks = [block("MattyJ", "Cron & Cronenworth LLP", [], [["Ann Alpha", 3], ["Bob Beta", 4]], 2023)];
     const picks = [pick("Cron & Cronenwort...", "Ann Alpha", 3, 2023), pick("Cron & Cronenworth...", "Bob Beta", 4, 2023)];
     expect(generateAuctionHistory({ picks, blocks, resolver: buildResolver(blocks), seasons: [2023] }).issues).toEqual([]);
+  });
+
+  it("still blocks two names that only share a start (no truncation), or two different Yahoo team keys", () => {
+    n = 0;
+    const blocks = [block("MattyJ", "Cron & Cronenworth LLP", [], [["Ann Alpha", 3], ["Bob Beta", 4]], 2023)];
+    const resolver = new FranchiseResolver([{ managerSheetName: "MattyJ", seasonYear: 2023, teamName: "Cron" }, { managerSheetName: "MattyJ", seasonYear: 2023, teamName: "Cron & Cronenworth LLP" }], ["MattyJ"]);
+    const untruncated = [pick("Cron", "Ann Alpha", 3, 2023), pick("Cron & Cronenworth LLP", "Bob Beta", 4, 2023)];
+    expect(generateAuctionHistory({ picks: untruncated, blocks, resolver, seasons: [2023] }).issues.map((i) => i.kind)).toEqual(["team-mapping"]);
+    n = 0;
+    const twoKeys = [
+      { ...pick("Cron & Cronenwort...", "Ann Alpha", 3, 2023), teamKey: "422.l.1954.t.1" },
+      { ...pick("Cron & Cronenworth...", "Bob Beta", 4, 2023), teamKey: "422.l.1954.t.2" },
+    ];
+    expect(generateAuctionHistory({ picks: twoKeys, blocks, resolver: buildResolver(blocks), seasons: [2023] }).issues.map((i) => i.kind)).toEqual(["team-mapping"]);
   });
 });
 
