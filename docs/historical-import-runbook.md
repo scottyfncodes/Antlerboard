@@ -73,20 +73,23 @@ CSVs show which auction prices Yahoo holds. The master workbook is still
 needed for keeper costs and overrides, keeper declarations and offseason
 trades, which Yahoo doesn't hold.
 
-**2021-2025 (report of 2026-10-15: every season complete).** Three inputs:
+**2021-2025 (report of 2026-10-15: every season complete), plus the 2026 auction.** Three inputs:
 
 1. `?file=transactions.csv&season=all` gives `antlerboard-yahoo-2021-2025-transactions.csv.gz`.
    This is the import's Yahoo file as downloaded: 4,335 transactions, about
    4 MB unpacked, so it has to stay gzipped to fit the upload.
-2. `?file=draft.csv&season=all` gives `antlerboard-yahoo-2021-2025-draft.csv`.
+2. `?file=draft.csv&season=all` gives `antlerboard-yahoo-2021-2026-draft.csv`.
    This is Yahoo's priced picks, keepers included. They aren't marked as
-   keepers.
+   keepers. It covers 2026 as well, so the 2026 auction is imported in
+   Yahoo's real order. The workbook's 2026 sheet order is never used:
+   `/check` refuses any season the auction file has no buys for
+   (commissioner, 2026-10-15).
 3. The original `Auctions_AllSeasons`/`Keepers_AllSeasons` file isn't
    available, so build it from (2) and the master workbook:
 
    ```bash
    npx tsx scripts/build-auction-history.ts --workbook Official_Keeper_Costs.xlsx \
-     --draft antlerboard-yahoo-2021-2025-draft.csv --decisions decisions.json \
+     --draft antlerboard-yahoo-2021-2026-draft.csv --decisions scripts/data/league-history-decisions.json \
      --out Auction_History_From_Yahoo.xlsx --report auction-report.json
    ```
 
@@ -106,7 +109,14 @@ trades, which Yahoo doesn't hold.
    - a player the workbook lists as both a keeper and a buy when Yahoo has
      one pick for him (2024 Andrew, Colt Keith).
 
-   That last one needs the commissioner's written ruling in `decisions.json`.
+   That last one needs the commissioner's written ruling. The ruling is in
+   `scripts/data/league-history-decisions.json`: Colt Keith was a keeper at
+   $2 for Andrew in 2024, approved 2026-10-15.
+
+   Historical trades: the import only fills in **empty** team links on
+   existing trade rows. It never changes trade content or a link that's
+   already set, and the rehearsal checks both. The 43 duplicated trade rows
+   are left alone (see `docs/historical-trades-dedupe-plan.md`).
    Every price difference between the two sources is listed for review.
 
 

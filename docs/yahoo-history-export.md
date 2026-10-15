@@ -43,7 +43,7 @@ preview URL), then open these in the browser:
 | `/api/commissioner/yahoo-history?file=season.json&season=2024` | One season, complete: settings, teams, draft results with prices and player keys, and every transaction as Yahoo returned it |
 | `/api/commissioner/yahoo-history?file=transactions.csv&season=2024` | That season's transactions in the League History import's `season, league_key, transaction_raw` format |
 | `/api/commissioner/yahoo-history?file=draft.csv&season=2024` | That season's draft results: pick, round, player, ids, MLB team, positions, price, fantasy team |
-| `/api/commissioner/yahoo-history?file=draft.csv&season=all` | **The import's draft input:** every season before the connected one (2021-2025) in one CSV |
+| `/api/commissioner/yahoo-history?file=draft.csv&season=all` | **The import's draft input:** every season's draft results, 2021-2026 (the connected season included), in one CSV. Draft downloads never read the transaction log |
 | `/api/commissioner/yahoo-history?file=transactions.csv&season=all` | **The import's Yahoo file:** 2021-2025 transactions in one gzipped CSV (`.csv.gz`). Upload it to the import as downloaded |
 
 The two `season=all` downloads are all or nothing. If Yahoo won't finish

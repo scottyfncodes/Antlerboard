@@ -80,6 +80,18 @@ export function readAuctionWorkbook(wb: ExcelJS.Workbook, firstSeasonYear: numbe
   return rows;
 }
 
+/**
+ * Seasons whose auction buys the workbook lists but the auction file
+ * doesn't. The builder would fall back to the workbook's lists, numbered in
+ * sheet order - not the real auction order - so /check refuses instead
+ * (commissioner, 2026-10-15: 2026 comes from Yahoo's real draft order).
+ */
+export function seasonsMissingAuctionResults(blocks: ManagerSeasonBlock[], auction: AuctionRow[]): number[] {
+  const withBuys = new Set(auction.filter((r) => !r.isKeeper && r.seasonYear !== null).map((r) => r.seasonYear));
+  const listed = new Set(blocks.filter((b) => b.seasonYear !== null && b.draft.length > 0).map((b) => b.seasonYear as number));
+  return [...listed].filter((y) => !withBuys.has(y)).sort((a, b) => a - b);
+}
+
 export function readYahooExport(text: string): ParsedYahooTransactions {
   return parseYahooTransactionsCsv(text);
 }

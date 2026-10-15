@@ -41,8 +41,8 @@ unless all of these hold:
 - **Sizes.** The upload, the `/check` response and the `/commit` body are each under 4.0 MB.
 - **Transactions.** Every Yahoo transaction with players is written. Commissioner
   entries without players are counted separately.
-- **Auction picks.** Per season, 2021-2025: draft picks and their total salary equal
-  the auction file's buys.
+- **Auction picks.** Per season, 2021-2026: draft picks and their total salary equal
+  the auction file's buys. 2026 comes in Yahoo's real order.
 - **No duplicates.**
   - No player has two picks or two draft acquisitions in a season.
   - No declared keeper (by Yahoo id) is also an auction pick.
@@ -51,7 +51,8 @@ unless all of these hold:
   - roster spots
   - FYPD drafts, order and picks
   - team-season records
-  - historical trades (team-id backfill excepted; the report counts it)
+  - historical trades (team-id backfill excepted; the report counts it). Team links
+    that were already set must not change.
   - existing players, teams, managers, seasons and league settings
 - **Repeat.** The second run's writes equal the first run's.
 

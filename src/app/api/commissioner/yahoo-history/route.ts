@@ -33,7 +33,7 @@ type ExportFile = (typeof FILES)[number];
  *                                     (&part=N when a season is too large for one response - the
  *                                     response says how many parts)
  *   ?file=draft.csv&season=…          that season's draft results with player names and prices
- *   ?file=draft.csv&season=all        every season before the connected one, in one CSV
+ *   ?file=draft.csv&season=all        every season's draft results, the connected one included, in one CSV
  *   ?file=transactions.csv&season=all every season before the connected one, in one gzipped CSV
  *                                     (.csv.gz) - the league-history import's Yahoo file as-is
  *
@@ -75,13 +75,15 @@ export async function GET(req: NextRequest) {
         firstSeasonYear: LEAGUE_FIRST_SEASON_YEAR,
         resolveDraftPlayers: !transactions,
         readTransactions: transactions,
-        // The connected season is the sync's; it's passed through for its link only.
-        include: ({ leagueKey }) => leagueKey !== startLeagueKey,
+        // The connected season's transactions are the sync's, so the
+        // transactions file skips that season. Its draft isn't stored
+        // anywhere else, so the draft file includes it.
+        include: ({ leagueKey }) => !transactions || leagueKey !== startLeagueKey,
         isFatal,
         deadline,
         delayMs: REQUEST_DELAY_MS,
       });
-      const seasons = history.seasons.filter((s) => s.leagueKey !== startLeagueKey).sort((a, b) => (a.seasonYear ?? 0) - (b.seasonYear ?? 0));
+      const seasons = history.seasons.filter((s) => !transactions || s.leagueKey !== startLeagueKey).sort((a, b) => (a.seasonYear ?? 0) - (b.seasonYear ?? 0));
       const years = seasons.map((s) => s.seasonYear);
       const first = LEAGUE_FIRST_SEASON_YEAR;
       const contiguous = years.length > 0 && years.every((y, i) => y === first + i);
@@ -126,7 +128,15 @@ export async function GET(req: NextRequest) {
       return json(buildRecoveryReport(history, await storedTransactionKeys(history.seasons.map((s) => s.leagueKey))));
     }
 
-    const history = await exportLeagueHistory(get, startLeagueKey, { firstSeasonYear: LEAGUE_FIRST_SEASON_YEAR, onlySeason: season, isFatal, deadline, delayMs: REQUEST_DELAY_MS });
+    const history = await exportLeagueHistory(get, startLeagueKey, {
+      firstSeasonYear: LEAGUE_FIRST_SEASON_YEAR,
+      onlySeason: season,
+      isFatal,
+      deadline,
+      delayMs: REQUEST_DELAY_MS,
+      // A draft download never pages through the transaction log.
+      readTransactions: file !== "draft.csv",
+    });
     const target = history.seasons.find((s) => s.seasonYear === season);
     if (target?.incomplete) {
       // Never hand out a partial season as if it were the whole one.

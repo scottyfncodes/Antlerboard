@@ -27,7 +27,10 @@ const env = (k: string) => {
   return v;
 };
 const files = { workbook: env("REHEARSAL_WORKBOOK"), auction: env("REHEARSAL_AUCTION"), yahoo: env("REHEARSAL_YAHOO") };
+/** Seasons the Yahoo transaction file covers (2026 is the sync's). */
 const SEASONS = [2021, 2022, 2023, 2024, 2025];
+/** Seasons the auction file covers: 2026 too, in Yahoo's real order. */
+const AUCTION_SEASONS = [...SEASONS, 2026];
 const LIMIT = 4.0 * 1024 * 1024; // the runbook's margin under Vercel's ~4.5 MB
 
 const sha = (v: unknown) => createHash("sha256").update(JSON.stringify(v)).digest("hex").slice(0, 16);
@@ -103,6 +106,8 @@ describe("league-history import rehearsal (local replica)", () => {
     const preexisting = (await prisma.player.findMany({ select: { id: true } })).map((p) => p.id);
     const before = await untouched(preexisting);
     const tradesBefore = await prisma.historicalTrade.count({ where: { teamAId: { not: null }, teamBId: { not: null } } });
+    // Team links already set must survive as they are; only empty ones may be filled.
+    const linksBefore = await prisma.historicalTrade.findMany({ select: { id: true, teamAId: true, teamBId: true } });
 
     const first = await runOnce();
     const afterFirst = await imported();
@@ -130,7 +135,7 @@ describe("league-history import rehearsal (local replica)", () => {
     // --- auction picks and keepers against the approved auction file ---------
     const auction = readAuctionWorkbook(await loadWorkbook(readFileSync(files.auction)), LEAGUE_FIRST_SEASON_YEAR);
     const yahooIdOf = new Map((await prisma.player.findMany({ select: { id: true, yahooPlayerId: true } })).map((p) => [p.id, canonicalYahooPlayerId(p.yahooPlayerId)]));
-    const recon = SEASONS.map((season) => {
+    const recon = AUCTION_SEASONS.map((season) => {
       const buys = auction.filter((r) => r.seasonYear === season && !r.isKeeper);
       const keepersDeclared = auction.filter((r) => r.seasonYear === season && r.isKeeper);
       const picks = afterSecond.picks.filter((p) => p.seasonYear === season);
@@ -162,6 +167,9 @@ describe("league-history import rehearsal (local replica)", () => {
 
     // --- untouched data and repeatability ------------------------------------
     report.untouched = Object.fromEntries(Object.keys(before).map((k) => [k, { before: before[k], after: after[k], unchanged: before[k].hash === after[k].hash }]));
+    const linksAfter = new Map((await prisma.historicalTrade.findMany({ select: { id: true, teamAId: true, teamBId: true } })).map((t) => [t.id, t]));
+    const linksChanged = linksBefore.filter((b) => (b.teamAId && linksAfter.get(b.id)?.teamAId !== b.teamAId) || (b.teamBId && linksAfter.get(b.id)?.teamBId !== b.teamBId)).length;
+    report.historicalTradeLinksChanged = linksChanged;
     report.historicalTradeTeamIdsBackfilled = (await prisma.historicalTrade.count({ where: { teamAId: { not: null }, teamBId: { not: null } } })) - tradesBefore;
     const keySet = (rows: unknown[]) => new Set(rows.map((r) => JSON.stringify(r)));
     const k1 = keySet(afterFirst.keepers), k2 = keySet(afterSecond.keepers);
@@ -184,6 +192,7 @@ describe("league-history import rehearsal (local replica)", () => {
       expect(r.draftPickSalary).toBe(r.auctionSalary);
     }
     for (const [k, v] of Object.entries(report.untouched as Record<string, { unchanged: boolean }>)) expect(v.unchanged, k).toBe(true);
+    expect(linksChanged).toBe(0);
     expect((report.repeat as { identical: boolean }).identical).toBe(true);
   });
 });

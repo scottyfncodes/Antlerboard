@@ -105,6 +105,10 @@ describe("GET /api/commissioner/yahoo-history", () => {
     expect((await csv.text()).split("\n")[0]).toBe("season,league_key,transaction_raw");
     const draft = await (await get("?file=draft.csv&season=2026")).text();
     expect(draft.split("\n")[1]).toBe("2026,1,1,Aaron Judge,7,469.p.7,,,40,469.l.8891.t.1,");
+    // The draft download never pages through the transaction log.
+    fetchMock.mockClear();
+    await get("?file=draft.csv&season=2026");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/transactions"))).toBe(false);
   });
 
   it("explains a season outside the chain, and validates parameters", async () => {
@@ -219,17 +223,16 @@ describe("season=all: every season before the connected one, in one download", (
     return calls;
   }
 
-  it("draft.csv: 2021-2025 in one CSV, oldest first, one header - the connected season only passed through", async () => {
+  it("draft.csv: 2021-2026 in one CSV (the connected season's draft included), oldest first, one header, no transactions read", async () => {
     await connected(3_600_000);
     const calls = wireChain();
     const res = await get("?file=draft.csv&season=all");
     expect(res.status).toBe(200);
-    expect(res.headers.get("content-disposition")).toContain("antlerboard-yahoo-2021-2025-draft.csv");
+    expect(res.headers.get("content-disposition")).toContain("antlerboard-yahoo-2021-2026-draft.csv");
     const lines = (await res.text()).trim().split("\n");
     expect(lines[0]).toMatch(/^Season,Pick/);
-    expect(lines.slice(1).map((l) => l.split(",")[0])).toEqual(["2021", "2022", "2023", "2024", "2025"]);
+    expect(lines.slice(1).map((l) => l.split(",")[0])).toEqual(["2021", "2022", "2023", "2024", "2025", "2026"]);
     expect(lines.filter((l) => l.startsWith("Season,"))).toHaveLength(1);
-    expect(calls.filter((c) => c.startsWith("/league/469.l.8891/"))).toEqual(["/league/469.l.8891/settings"]);
     expect(calls.some((c) => c.includes("/transactions"))).toBe(false);
     expect(calls.some((c) => c.startsWith("/league/398.l.6179"))).toBe(false);
   });

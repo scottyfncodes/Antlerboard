@@ -6,9 +6,13 @@
  *
  *   npx tsx scripts/build-auction-history.ts \
  *     --workbook Official_Keeper_Costs.xlsx \
- *     --draft antlerboard-yahoo-2021-2025-draft.csv \
- *     --out Auction_History_From_Yahoo.xlsx \
- *     [--decisions decisions.json] [--report report.json]
+ *     --draft antlerboard-yahoo-2021-2026-draft.csv \
+ *     --decisions scripts/data/league-history-decisions.json \
+ *     --out Auction_History_From_Yahoo.xlsx [--report report.json]
+ *
+ * Seasons: every season from LEAGUE_FIRST_SEASON_YEAR through the latest in
+ * the draft file (2026 included - its real Yahoo order, never the
+ * workbook's sheet order); a gap is a blocking "missing-season" issue.
  *
  * --draft can repeat (one CSV per season works too). --decisions is a JSON
  * array of the commissioner's rulings on players the workbook lists as both
@@ -29,7 +33,7 @@ function args() {
   const a = process.argv.slice(2);
   const all = (flag: string) => a.flatMap((v, i) => (a[i - 1] === flag ? [v] : []));
   const one = (flag: string) => all(flag)[0];
-  return { workbook: one("--workbook"), drafts: all("--draft"), out: one("--out"), decisions: one("--decisions"), report: one("--report"), lastSeason: Number(one("--last-season") ?? 2025) };
+  return { workbook: one("--workbook"), drafts: all("--draft"), out: one("--out"), decisions: one("--decisions"), report: one("--report"), lastSeason: one("--last-season") ? Number(one("--last-season")) : null };
 }
 
 const sha256 = (buf: Buffer) => createHash("sha256").update(buf).digest("hex");
@@ -54,7 +58,8 @@ async function main() {
   const decisions: DuplicateDecision[] = opt.decisions ? JSON.parse(readFileSync(opt.decisions, "utf8")) : [];
   for (const d of decisions) provenance.push(`  Decision: ${d.season} ${d.franchise} ${d.player} was a ${d.was} (approved by ${d.approvedBy})`);
 
-  const seasons = Array.from({ length: opt.lastSeason - LEAGUE_FIRST_SEASON_YEAR + 1 }, (_, i) => LEAGUE_FIRST_SEASON_YEAR + i);
+  const lastSeason = opt.lastSeason ?? Math.max(...picks.map((p) => p.seasonYear));
+  const seasons = Array.from({ length: lastSeason - LEAGUE_FIRST_SEASON_YEAR + 1 }, (_, i) => LEAGUE_FIRST_SEASON_YEAR + i);
   const g = generateAuctionHistory({ picks, blocks: master.blocks, resolver: buildResolver(master.blocks), seasons, decisions });
 
   console.table(g.seasons);
