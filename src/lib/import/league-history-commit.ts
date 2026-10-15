@@ -26,7 +26,8 @@ import { rebuildKeeperRecordsBulk } from "../keeper-sync";
 import type { FranchiseResolver } from "./team-aliases";
 import type { LeagueHistoryPreview } from "./league-history-builder";
 import { canonicalYahooPlayerId } from "../yahoo/player-id";
-import { planPlayerIdentities, reviewNotes, type IdentityPlan, type IdentityReviewItem } from "./player-identity";
+import { planPlayerIdentities, reviewNotes, sharedNameNotes, type IdentityPlan, type IdentityReviewItem } from "./player-identity";
+import { normalizePlayerName } from "./player-names";
 import { findTransactionConflicts, type SyncedTransactionState } from "./league-history-conflicts";
 import { tagRef, type PriceProvenance } from "./provenance";
 
@@ -180,6 +181,13 @@ export async function commitLeagueHistory(db: Db, leagueId: string, preview: Lea
   const playerIdByKey = new Map<string, string>();
   const toCreate: { id: string; leagueId: string; yahooPlayerId: string | null; name: string; mlbTeam: string | null; positions: string[]; notes: string | null }[] = [];
   const reviewByKey = new Map(plan.review.map((r) => [r.importKey, r]));
+  // Names more than one player carries (in this import or already stored).
+  const nameCount = new Map<string, number>();
+  const existingNames = await db.player.findMany({ where: { leagueId }, select: { name: true } });
+  for (const n of [...preview.players.map((p) => p.name), ...existingNames.map((e) => e.name)]) {
+    const k = normalizePlayerName(n).fullKey;
+    nameCount.set(k, (nameCount.get(k) ?? 0) + 1);
+  }
   for (const p of preview.players) {
     const decision = plan.decisions.get(p.key);
     if (decision?.kind === "existing") {
@@ -196,7 +204,11 @@ export async function commitLeagueHistory(db: Db, leagueId: string, preview: Lea
       name: p.name,
       mlbTeam: p.mlbTeam,
       positions: p.positions,
-      notes: review ? reviewNotes(review) : null,
+      notes: review
+        ? reviewNotes(review)
+        : !canonicalYahooPlayerId(p.yahooPlayerId) && (nameCount.get(normalizePlayerName(p.name).fullKey) ?? 0) > 1
+          ? sharedNameNotes(p.name, p.key)
+          : null,
     });
     playerIdByKey.set(p.key, id);
   }

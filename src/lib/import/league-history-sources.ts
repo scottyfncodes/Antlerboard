@@ -4,6 +4,7 @@
  * against files on disk.
  */
 
+import { gunzipSync } from "zlib";
 import ExcelJS from "exceljs";
 import { worksheetToRows } from "./workbook-reader";
 import { parseManagerSheetBlocks } from "./manager-blocks";
@@ -79,8 +80,34 @@ export function readAuctionWorkbook(wb: ExcelJS.Workbook, firstSeasonYear: numbe
   return rows;
 }
 
+/**
+ * Seasons whose auction buys the workbook lists but the auction file
+ * doesn't. The builder would fall back to the workbook's lists, numbered in
+ * sheet order - not the real auction order - so /check refuses instead
+ * (commissioner, 2026-10-15: 2026 comes from Yahoo's real draft order).
+ */
+export function seasonsMissingAuctionResults(blocks: ManagerSeasonBlock[], auction: AuctionRow[]): number[] {
+  const withBuys = new Set(auction.filter((r) => !r.isKeeper && r.seasonYear !== null).map((r) => r.seasonYear));
+  const listed = new Set(blocks.filter((b) => b.seasonYear !== null && b.draft.length > 0).map((b) => b.seasonYear as number));
+  return [...listed].filter((y) => !withBuys.has(y)).sort((a, b) => a - b);
+}
+
 export function readYahooExport(text: string): ParsedYahooTransactions {
   return parseYahooTransactionsCsv(text);
+}
+
+/** Generous for 2021-2025 (~4 MB unpacked) and still a hard stop on a gzip bomb. */
+const MAX_YAHOO_CSV_BYTES = 64 * 1024 * 1024;
+
+/**
+ * The Yahoo export's text. The history export serves 2021-2025 gzipped
+ * (.csv.gz), because the plain CSV alone is near Vercel's ~4.5 MB request
+ * limit. A gzip file is recognised by its magic bytes, not its name, so a
+ * browser that unpacked it on download still works.
+ */
+export function yahooCsvText(buf: Buffer): string {
+  if (buf.length >= 2 && buf[0] === 0x1f && buf[1] === 0x8b) return gunzipSync(buf, { maxOutputLength: MAX_YAHOO_CSV_BYTES }).toString("utf8");
+  return buf.toString("utf8");
 }
 
 export function buildResolver(blocks: ManagerSeasonBlock[], extraRecords: FranchiseNameRecord[] = []): FranchiseResolver {

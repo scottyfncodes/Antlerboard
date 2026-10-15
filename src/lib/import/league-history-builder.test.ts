@@ -246,3 +246,37 @@ describe("buildLeagueHistory - price and order provenance", () => {
     expect(synced.events.some((e) => e.season === 2023 && e.method === "DRAFT")).toBe(true);
   });
 });
+
+describe("auction rows that carry Yahoo's player id", () => {
+  const run = (rows: AuctionRow[], txs: YahooTransaction[] = []) =>
+    buildLeagueHistory({ blocks: [], auctionRows: rows, yahoo: txs, offseasonTrades: [], resolver, firstSeason: 2021, currentSeason: 2023 });
+
+  it("keeps two players who share a name apart (2024's two Will Smiths) - one pick each", () => {
+    const rows = [
+      { ...auction(2021, "Will Smith", "Alpha", 21, false, 1), yahooPlayerId: "10642", positions: ["C"] },
+      { ...auction(2021, "Will Smith", "Bravo", 1, false, 2), yahooPlayerId: "9999", positions: ["RP"] },
+    ];
+    const p = run(rows);
+    const picks = p.draftPicks.filter((d) => d.season === 2021);
+    expect(picks).toHaveLength(2);
+    expect(new Set(picks.map((d) => d.playerKey)).size).toBe(2);
+    expect(p.players.filter((x) => x.name === "Will Smith").map((x) => x.yahooPlayerId).sort()).toEqual(["10642", "9999"]);
+  });
+
+  it("is the same player as his Yahoo transactions, and a later keeper is found by id, not by name", () => {
+    const rows = [
+      { ...auction(2021, "Jarren Duran", "Alpha", 3, false, 1), yahooPlayerId: "10542" },
+      { ...auction(2021, "Jhoan Duran", "Bravo", 12, false, 2), yahooPlayerId: "11495" },
+      { ...auction(2022, "Jarren Duran", "Alpha", 6, true), yahooPlayerId: "10542" },
+    ];
+    const txs = [tx(2021, "t1", "add", "2021-04-02T12:00:00Z", [yPlayer("10542", "Jarren Duran", "add", null, "Alpha", "freeagents")], null)];
+    const p = run(rows, txs);
+    const jarren = p.players.find((x) => x.yahooPlayerId === "10542")!;
+    expect(p.players.filter((x) => x.yahooPlayerId === "10542")).toHaveLength(1);
+    expect(p.events.filter((e) => e.playerKey === jarren.key && e.kind === "ACQUIRED").map((e) => e.season)).toEqual([2021, 2021]);
+    // Kept in 2022 from Alpha's own roster: no invented trade or acquisition
+    // (his 2023 release, with no 2023 keepers in this fixture, is the only 2022 event).
+    expect(p.events.filter((e) => e.playerKey === jarren.key && e.season === 2022).map((e) => e.kind)).toEqual(["DROPPED"]);
+    expect(p.flags.join(" ")).not.toMatch(/Jarren Duran|Jhoan Duran/);
+  });
+});

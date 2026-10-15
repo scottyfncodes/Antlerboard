@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import { requireCommissioner } from "@/lib/current-manager";
 import { CURRENT_SEASON_YEAR, LEAGUE_FIRST_SEASON_YEAR } from "@/lib/config";
 import { buildLeagueHistory } from "@/lib/import/league-history-builder";
-import { buildResolver, loadWorkbook, readAuctionWorkbook, readMasterWorkbook, readYahooExport, MANAGER_SHEETS } from "@/lib/import/league-history-sources";
+import { buildResolver, loadWorkbook, readAuctionWorkbook, readMasterWorkbook, readYahooExport, seasonsMissingAuctionResults, yahooCsvText, MANAGER_SHEETS } from "@/lib/import/league-history-sources";
 import { checkLeagueHistoryAgainstDb, loadSyncedTransactionState } from "@/lib/import/league-history-commit";
 import { signPreview } from "@/lib/import/preview-signature";
 
@@ -47,7 +47,22 @@ export async function POST(req: Request) {
   if (auction.length === 0) {
     return NextResponse.json({ error: "The auction history workbook has no rows with Season / Player / Salary / Fantasy_Team columns." }, { status: 400 });
   }
-  const yahoo = readYahooExport(await yahooFile.text());
+  const missing = seasonsMissingAuctionResults(master.blocks, auction);
+  if (missing.length > 0) {
+    return NextResponse.json(
+      {
+        error: `The auction history has no auction results for ${missing.join(", ")}. The workbook's draft lists aren't used instead - their order isn't the real auction order. Add ${missing.length === 1 ? "that season" : "those seasons"} from Yahoo's draft results (scripts/build-auction-history.ts).`,
+      },
+      { status: 400 }
+    );
+  }
+  let yahooText: string;
+  try {
+    yahooText = yahooCsvText(Buffer.from(await yahooFile.arrayBuffer()));
+  } catch {
+    return NextResponse.json({ error: "Could not read the Yahoo transaction export (a .csv, or the history export's .csv.gz)." }, { status: 400 });
+  }
+  const yahoo = readYahooExport(yahooText);
   if (yahoo.transactions.length === 0) {
     return NextResponse.json({ error: `The Yahoo export has no transactions. ${yahoo.flags[0] ?? ""}`.trim() }, { status: 400 });
   }
@@ -93,3 +108,4 @@ export async function POST(req: Request) {
     },
   });
 }
+

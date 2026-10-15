@@ -50,6 +50,15 @@ export function reviewNotes(item: IdentityReviewItem): string {
   return `Needs review: the league-history import couldn't confidently match ${item.name} to an existing player (${item.reason}) [import-key:${item.importKey}]`;
 }
 
+/**
+ * Notes for a new player with no Yahoo id whose name another player shares.
+ * The marker lets a re-run find this exact row (rule 0); without it, the
+ * next run would see two same-name rows, trust neither, and add more.
+ */
+export function sharedNameNotes(name: string, importKey: string): string {
+  return `Imported from league history with no Yahoo id; another player has the same name (${name}), so this one is kept apart. [import-key:${importKey}]`;
+}
+
 export type IdentityDecision =
   | { kind: "existing"; playerId: string; via: "review-marker" | "yahoo-id" | "name" }
   | { kind: "new" };

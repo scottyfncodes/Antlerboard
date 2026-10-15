@@ -59,6 +59,12 @@ export interface AuctionRow {
   salary: number | null;
   teamName: string;
   isKeeper: boolean;
+  /**
+   * Yahoo's player_id, when the file has one (the auction history built from
+   * Yahoo's draft results does). It ties the pick to the same player as his
+   * Yahoo transactions, instead of a name two people can share.
+   */
+  yahooPlayerId?: string | null;
   sourceRef: string;
   flags: string[];
 }

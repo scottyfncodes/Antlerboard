@@ -105,6 +105,10 @@ describe("GET /api/commissioner/yahoo-history", () => {
     expect((await csv.text()).split("\n")[0]).toBe("season,league_key,transaction_raw");
     const draft = await (await get("?file=draft.csv&season=2026")).text();
     expect(draft.split("\n")[1]).toBe("2026,1,1,Aaron Judge,7,469.p.7,,,40,469.l.8891.t.1,");
+    // The draft download never pages through the transaction log.
+    fetchMock.mockClear();
+    await get("?file=draft.csv&season=2026");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/transactions"))).toBe(false);
   });
 
   it("explains a season outside the chain, and validates parameters", async () => {
@@ -188,4 +192,82 @@ describe("GET /api/commissioner/yahoo-history", () => {
     expect(res.headers.get("content-disposition")).toBeNull();
     expect((await res.json()).error).toMatch(/couldn't be read completely/);
   }, 30_000);
+});
+
+describe("season=all: every season before the connected one, in one download", () => {
+  // 2026 (connected) renews 2025 ... back to 2021, which links an older 2020 league.
+  const KEYS: Record<number, string> = { 2026: "469.l.8891", 2025: "458.l.2049", 2024: "431.l.2411", 2023: "422.l.1954", 2022: "412.l.2989", 2021: "404.l.3033", 2020: "398.l.6179" };
+  const yearOf = (key: string) => Number(Object.entries(KEYS).find(([, k]) => k === key)![0]);
+  const prev = (y: number) => KEYS[y - 1].replace(".l.", "_");
+
+  function wireChain(opts: { throttle?: (path: string) => boolean } = {}) {
+    const calls: string[] = [];
+    fetchMock.mockImplementation(async (url: string) => {
+      const path = new URL(url).pathname.replace("/fantasy/v2", "");
+      calls.push(path);
+      if (opts.throttle?.(path)) return { ok: false, status: 999, statusText: "Request denied", headers: new Headers(), text: async () => "Request denied", json: async () => ({}) };
+      const key = path.split("/")[2].split(";")[0];
+      const y = yearOf(key);
+      const lg = (sub: object) => json({ fantasy_content: { league: [{ league_key: key, name: "Claw & Antler League", season: String(y), renew: prev(y), num_teams: 12 }, sub] } });
+      if (path.endsWith("/settings")) return lg({ settings: [{ is_auction_draft: "1", uses_faab: "1" }] });
+      if (path.endsWith("/teams")) return lg({ teams: { "0": { team: [[{ team_key: `${key}.t.1` }, { name: `Team ${y}` }]] }, count: 1 } });
+      if (path.endsWith("/draftresults")) return lg({ draft_results: { "0": { draft_result: { pick: 1, round: 1, team_key: `${key}.t.1`, player_key: `${key.split(".")[0]}.p.7`, cost: String(y - 2000) } }, count: 1 } });
+      if (path.includes("/players;player_keys=")) return lg({ players: { "0": { player: [[{ player_key: `${key.split(".")[0]}.p.7` }, { player_id: "7" }, { name: { full: "Aaron Judge" } }, { editorial_team_abbr: "NYY" }, { display_position: "OF" }]] }, count: 1 } });
+      if (path.includes("/transactions")) {
+        const start = Number(path.match(/start=(\d+)/)![1]);
+        const tx = { transaction: [{ transaction_key: `${key}.tr.1`, type: "add", status: "successful", timestamp: "1700000000" }, { players: { "0": { player: [[{ player_key: "p" }, { player_id: "7" }, { name: { full: "Aaron Judge" } }], { transaction_data: [{ type: "add", source_type: "freeagents", destination_type: "team", destination_team_name: `Team ${y}` }] }] }, count: 1 } }] };
+        return lg({ transactions: start === 0 ? { "0": tx, count: 1 } : { count: 0 } });
+      }
+      throw new Error(`unexpected ${path}`);
+    });
+    return calls;
+  }
+
+  it("draft.csv: 2021-2026 in one CSV (the connected season's draft included), oldest first, one header, no transactions read", async () => {
+    await connected(3_600_000);
+    const calls = wireChain();
+    const res = await get("?file=draft.csv&season=all");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-disposition")).toContain("antlerboard-yahoo-2021-2026-draft.csv");
+    const lines = (await res.text()).trim().split("\n");
+    expect(lines[0]).toMatch(/^Season,Pick/);
+    expect(lines.slice(1).map((l) => l.split(",")[0])).toEqual(["2021", "2022", "2023", "2024", "2025", "2026"]);
+    expect(lines.filter((l) => l.startsWith("Season,"))).toHaveLength(1);
+    expect(calls.some((c) => c.includes("/transactions"))).toBe(false);
+    expect(calls.some((c) => c.startsWith("/league/398.l.6179"))).toBe(false);
+  });
+
+  it("transactions.csv: 2021-2025 gzipped, exactly the import's file - and the importer reads it", async () => {
+    await connected(3_600_000);
+    const calls = wireChain();
+    const res = await get("?file=transactions.csv&season=all");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/gzip");
+    expect(res.headers.get("content-disposition")).toContain("antlerboard-yahoo-2021-2025-transactions.csv.gz");
+    const { yahooCsvText, readYahooExport } = await import("@/lib/import/league-history-sources");
+    const parsed = readYahooExport(yahooCsvText(Buffer.from(await res.arrayBuffer())));
+    expect(parsed.flags).toEqual([]);
+    expect(parsed.transactions.map((t) => [t.seasonYear, t.transactionKey])).toEqual([2021, 2022, 2023, 2024, 2025].map((y) => [y, `${KEYS[y]}.tr.1`]));
+    expect(calls.some((c) => c.startsWith("/league/469.l.8891/transactions"))).toBe(false);
+    expect(calls.some((c) => c.includes("/players;player_keys="))).toBe(false);
+  });
+
+  it("all or nothing: a season Yahoo won't finish gives 503 and no file", async () => {
+    await connected(3_600_000);
+    wireChain({ throttle: (p) => p.startsWith("/league/422.l.1954/transactions") });
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await get("?file=transactions.csv&season=all");
+    spy.mockRestore();
+    expect(res.status).toBe(503);
+    expect(res.headers.get("content-disposition")).toBeNull();
+    const body = await res.json();
+    expect(body.error).toMatch(/Nothing was downloaded/);
+    expect(body.seasons.find((s: { seasonYear: number }) => s.seasonYear === 2023)).toMatchObject({ incomplete: true });
+  });
+
+  it("is only for the two downloads", async () => {
+    await connected(3_600_000);
+    expect((await get("?file=report&season=all")).status).toBe(400);
+    expect((await get("?file=season.json&season=all")).status).toBe(400);
+  });
 });

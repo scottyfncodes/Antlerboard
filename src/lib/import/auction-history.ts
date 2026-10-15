@@ -64,6 +64,7 @@ export function parseAuctionHistorySheet(rows: Cell[][], options: AuctionSheetOp
     salary: findColumn(header, "salary", "cost", "price"),
     team: findColumn(header, "fantasy_team", "fantasy team", "team"),
     isKeeper: findColumn(header, "iskeeper", "is_keeper", "keeper"),
+    yahooPlayerId: findColumn(header, "yahoo_player_id", "player_id"),
   };
   if (col.player === -1 || col.team === -1 || col.season === -1) return [];
 
@@ -101,6 +102,7 @@ export function parseAuctionHistorySheet(rows: Cell[][], options: AuctionSheetOp
       salary,
       teamName: teamName ?? "",
       isKeeper,
+      yahooPlayerId: col.yahooPlayerId === -1 ? null : asTrimmedString(row[col.yahooPlayerId]),
       sourceRef: `${options.sheetName} row ${i + 2}`,
       flags,
     });

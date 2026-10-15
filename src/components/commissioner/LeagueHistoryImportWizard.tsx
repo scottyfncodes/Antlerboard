@@ -129,7 +129,7 @@ export function LeagueHistoryImportWizard() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
           <FileField label="Master workbook (.xlsx)" hint="Official_Keeper_Costs - manager sheets, Off Season Trades, FYPD" accept=".xlsx" onChange={(f) => setFiles((s) => ({ ...s, workbook: f }))} />
           <FileField label="Auction history (.xlsx)" hint="Auctions_AllSeasons + Keepers_AllSeasons" accept=".xlsx" onChange={(f) => setFiles((s) => ({ ...s, auction: f }))} />
-          <FileField label="Yahoo transactions (.csv)" hint="season, league_key, transaction_raw" accept=".csv" onChange={(f) => setFiles((s) => ({ ...s, yahoo: f }))} />
+          <FileField label="Yahoo transactions (.csv or .csv.gz)" hint="season, league_key, transaction_raw - the history export's 2021-2025 .csv.gz as downloaded" accept=".csv,.gz,application/gzip" onChange={(f) => setFiles((s) => ({ ...s, yahoo: f }))} />
         </div>
         <button
           disabled={busy}

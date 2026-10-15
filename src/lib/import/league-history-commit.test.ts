@@ -107,4 +107,32 @@ describe("commitLeagueHistory", () => {
     expect(r2025.keeperCost).toBe(14);
     expect(r2025.commissionerOverride).toBe(false);
   });
+
+  it("re-runs without adding players when two new players share a name and neither has a Yahoo id", async () => {
+    const twins = (): LeagueHistoryPreview => {
+      const p = preview();
+      p.players.push(
+        { key: "n:s ohtani:H", yahooPlayerId: null, name: "S. Ohtani", mlbTeam: null, positions: ["DH"], isFypdProspect: false, flags: [] },
+        { key: "n:s ohtani:P", yahooPlayerId: null, name: "S. Ohtani", mlbTeam: null, positions: ["SP"], isFypdProspect: false, flags: [] }
+      );
+      p.events.push(
+        { playerKey: "n:s ohtani:H", kind: "ACQUIRED", season: 2024, date: "2024-03-23T00:00:00.000Z", franchise: "Scott", method: "DRAFT", cost: 30, sourceRef: "auction:3", flags: [] },
+        { playerKey: "n:s ohtani:P", kind: "ACQUIRED", season: 2024, date: "2024-03-23T00:00:00.000Z", franchise: "Ed", method: "DRAFT", cost: 6, sourceRef: "auction:4", flags: [] }
+      );
+      return p;
+    };
+    const opts = { currentSeason: 2025, applyRecordedKeeperCosts: true, actorName: "Scott" };
+    const first = await prisma.$transaction((tx) => commitLeagueHistory(tx, leagueId, twins(), opts));
+    expect(first.playersCreated).toBe(4);
+    const notes = (await prisma.player.findMany({ where: { name: "S. Ohtani" }, select: { notes: true } })).map((p) => p.notes).sort();
+    expect(notes).toEqual([expect.stringMatching(/same name.*\[import-key:n:s ohtani:H\]$/), expect.stringMatching(/same name.*\[import-key:n:s ohtani:P\]$/)]);
+
+    const second = await prisma.$transaction((tx) => commitLeagueHistory(tx, leagueId, twins(), opts));
+    expect(second.playersCreated).toBe(0);
+    expect(second.identityReview).toEqual([]);
+    expect(await prisma.player.count({ where: { name: "S. Ohtani" } })).toBe(2);
+    const keepersAfterSecond = await prisma.keeperRecord.count();
+    await prisma.$transaction((tx) => commitLeagueHistory(tx, leagueId, twins(), opts));
+    expect(await prisma.keeperRecord.count()).toBe(keepersAfterSecond);
+  });
 });
