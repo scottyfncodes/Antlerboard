@@ -37,6 +37,18 @@ export interface ExportOptions {
    * section would misreport accessible seasons as refused.
    */
   isFatal?: (err: unknown) => boolean;
+  /**
+   * League keys whose transaction log isn't read - the connected season,
+   * whose log Antlerboard's daily sync already keeps. Re-reading it spends
+   * Yahoo's rate limit before the older seasons are reached.
+   */
+  skipTransactionsFor?: string[];
+  /**
+   * After Yahoo throttles a request (999/429/5xx, past the client's quick
+   * retries), wait this long and ask again - once per entry. A wait that
+   * would pass the deadline isn't started.
+   */
+  throttleWaitsMs?: number[];
   sleep?: (ms: number) => Promise<void>;
   /**
    * Epoch ms after which no new Yahoo request starts. Whatever wasn't read
@@ -83,6 +95,8 @@ export interface SeasonExport {
   /** Each transaction exactly as Yahoo returned it: [metadata, players?]. */
   transactionsRaw: unknown[][];
   transactionPages: number;
+  /** Why the transaction log wasn't read (see ExportOptions.skipTransactionsFor); null when it was. */
+  transactionsSkipped: string | null;
   /**
    * "refused": Yahoo answered no (400/403/404) - a real gap.
    * "unread": no usable answer (rate limit, 5xx, network, timeout, time
@@ -121,6 +135,13 @@ const TX_PAGE_SIZE = 25;
 const PLAYER_BATCH = 25;
 const MAX_SEASONS = 20;
 const MAX_TX_PAGES = 400;
+const THROTTLE_WAITS_MS = [20_000, 45_000];
+/** The pause between requests once Yahoo has throttled this run. */
+const THROTTLED_DELAY_MS = 1_000;
+const SYNCED_BY_ANTLERBOARD = "Not re-read: Antlerboard's daily Yahoo sync keeps this season's transactions.";
+
+/** Yahoo's "slow down" (999/429) or a 5xx - worth asking again after a pause. */
+const isThrottle = (err: unknown) => (err as { isRetryable?: unknown })?.isRetryable === true;
 
 const str = (v: unknown): string | null => (typeof v === "string" && v.length > 0 ? v : typeof v === "number" ? String(v) : null);
 const num = (v: unknown): number | null => {
@@ -144,13 +165,25 @@ export function renewToLeagueKey(renew: string | null): string | null {
 
 export async function exportLeagueHistory(get: YahooGet, startLeagueKey: string, opts: ExportOptions): Promise<HistoryExport> {
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-  const delay = opts.delayMs ?? 150;
+  let delay = opts.delayMs ?? 150;
   const now = opts.now ?? Date.now;
+  const waits = opts.throttleWaitsMs ?? THROTTLE_WAITS_MS;
+  const skipTransactions = new Set(opts.skipTransactionsFor ?? []);
   let calls = 0;
   const call = async (path: string) => {
-    if (calls++ > 0 && delay > 0) await sleep(delay);
-    if (opts.deadline !== undefined && now() >= opts.deadline) throw new TimeBudgetExceeded();
-    return get(path);
+    for (let retry = 0; ; retry++) {
+      if (calls++ > 0 && delay > 0) await sleep(delay);
+      if (opts.deadline !== undefined && now() >= opts.deadline) throw new TimeBudgetExceeded();
+      try {
+        return await get(path);
+      } catch (err) {
+        const wait = waits[retry];
+        if (!isThrottle(err) || wait === undefined || (opts.deadline !== undefined && now() + wait >= opts.deadline)) throw err;
+        // Yahoo's throttle lasts longer than the client's 1-3 s retries: pause, then go slower.
+        await sleep(wait);
+        delay = Math.max(delay, THROTTLED_DELAY_MS);
+      }
+    }
   };
 
   const seasons: SeasonExport[] = [];
@@ -165,10 +198,13 @@ export async function exportLeagueHistory(get: YahooGet, startLeagueKey: string,
       break;
     }
     seen.add(leagueKey);
-    const season = await exportSeason(call, leagueKey, opts.resolveDraftPlayers ?? true, opts.onlySeason, opts.isFatal ?? (() => false));
+    const season = await exportSeason(call, leagueKey, opts.resolveDraftPlayers ?? true, opts.onlySeason, opts.isFatal ?? (() => false), skipTransactions.has(leagueKey));
     if (opts.onlySeason === undefined || season.seasonYear === opts.onlySeason || season.errors.length > 0) seasons.push(season);
     if (opts.onlySeason !== undefined && season.seasonYear !== null && season.seasonYear <= opts.onlySeason) {
-      if (season.seasonYear < opts.onlySeason) stoppedBecause = `Season ${opts.onlySeason} isn't in the chain linked from the connected league.`;
+      stoppedBecause =
+        season.seasonYear < opts.onlySeason
+          ? `Season ${opts.onlySeason} isn't in the chain linked from the connected league.`
+          : `Read season ${opts.onlySeason} only.`;
       break;
     }
 
@@ -202,7 +238,8 @@ async function exportSeason(
   leagueKey: string,
   resolvePlayers: boolean,
   onlySeason: number | undefined,
-  isFatal: (err: unknown) => boolean
+  isFatal: (err: unknown) => boolean,
+  skipTransactions: boolean
 ): Promise<SeasonExport> {
   const out: SeasonExport = {
     seasonYear: null,
@@ -214,6 +251,7 @@ async function exportSeason(
     draftResults: [],
     transactionsRaw: [],
     transactionPages: 0,
+    transactionsSkipped: null,
     errors: [],
     incomplete: false,
     incompleteSection: null,
@@ -312,6 +350,11 @@ async function exportSeason(
       if (stopOn(err, "players")) return out;
     }
     for (const d of out.draftResults) d.player = (d.playerKey && players.get(d.playerKey)) || null;
+  }
+
+  if (skipTransactions) {
+    out.transactionsSkipped = SYNCED_BY_ANTLERBOARD;
+    return out;
   }
 
   // Paged by start/count. Advances by what each page actually returned and
@@ -426,7 +469,8 @@ export interface RecoveryReport {
     leagueKey: string;
     leagueName: string | null;
     draft: { isAuction: boolean | null; picks: number; pricedPicks: number; unpricedPicks: number; playersResolved: number };
-    transactions: { complete: boolean; count: number; pages: number; byType: Record<string, number>; withFaabBid: number; firstAt: string | null; lastAt: string | null };
+    /** `skipped` says why the log wasn't read this run (then `complete` is false and `count` is 0). */
+    transactions: { complete: boolean; skipped: string | null; count: number; pages: number; byType: Record<string, number>; withFaabBid: number; firstAt: string | null; lastAt: string | null };
     teams: number;
     errors: SeasonExport["errors"];
     incomplete: boolean;
@@ -472,7 +516,7 @@ export function buildRecoveryReport(history: HistoryExport, comparisons: Antlerb
     // A section is known only if reading got past it without stopping.
     const read = (section: Section) =>
       !refused(section) && (!s.incomplete || SECTIONS.indexOf(section) < SECTIONS.indexOf(s.incompleteSection!));
-    const transactionsComplete = read("transactions");
+    const transactionsComplete = read("transactions") && s.transactionsSkipped === null;
 
     // Only a complete log can be compared with what Antlerboard stores.
     const cmp = comparisons.find((c) => c.leagueKey === s.leagueKey);
@@ -494,7 +538,10 @@ export function buildRecoveryReport(history: HistoryExport, comparisons: Antlerb
       inaccessible.push(`${label}: Yahoo refused the league (${refused("settings")!.message}).`);
       requiresOriginalFiles.push(`${label}: auction results and transactions - Yahoo refuses this season to the connected account.`);
     } else {
-      if (transactionsComplete) recovered.push(`${label}: ${s.transactionsRaw.length} transactions (read until Yahoo returned no new ones; all types, timestamps, players, teams, FAAB bids where charged).`);
+      if (s.transactionsSkipped !== null && read("transactions")) {
+        const stored = cmp ? ` (${cmp.storedTransactionKeys.length} stored)` : "";
+        recovered.push(`${label}: transactions not re-read - Antlerboard's daily Yahoo sync keeps this season's log${stored}.`);
+      } else if (transactionsComplete) recovered.push(`${label}: ${s.transactionsRaw.length} transactions (read until Yahoo returned no new ones; all types, timestamps, players, teams, FAAB bids where charged).`);
       else if (refused("transactions")) {
         inaccessible.push(`${label}: transactions - ${refused("transactions")!.message}`);
         requiresOriginalFiles.push(`${label}: the Yahoo transaction export for this season.`);
@@ -531,6 +578,7 @@ export function buildRecoveryReport(history: HistoryExport, comparisons: Antlerb
       transactions: {
         /** False when the log was cut short: `count` is then only what was read before it stopped. */
         complete: transactionsComplete,
+        skipped: s.transactionsSkipped,
         count: s.transactionsRaw.length,
         pages: s.transactionPages,
         byType,

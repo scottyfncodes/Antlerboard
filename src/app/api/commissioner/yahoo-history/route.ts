@@ -13,6 +13,8 @@ export const maxDuration = 300;
 const TIME_BUDGET_MS = 240_000;
 /** Vercel rejects function responses over ~4.5 MB; stay clear of it. */
 const MAX_RESPONSE_BYTES = 4_000_000;
+/** Pause between Yahoo requests: Yahoo throttled the report at its 150 ms default after ~20 quick calls. */
+const REQUEST_DELAY_MS = 500;
 
 const FILES = ["report", "season.json", "transactions.csv", "draft.csv"] as const;
 type ExportFile = (typeof FILES)[number];
@@ -22,7 +24,9 @@ type ExportFile = (typeof FILES)[number];
  * docs/yahoo-history-export.md). Commissioner only.
  *
  *   ?file=report                      every reachable season: what Yahoo has, what's missing, and a
- *                                     comparison with the transactions Antlerboard already stores
+ *                                     comparison with the transactions Antlerboard already stores.
+ *                                     The connected season's log isn't re-read (the daily sync keeps it).
+ *   ?file=report&season=2024          the same report for one season only
  *   ?file=season.json&season=2024     one season: settings, teams, priced draft results, raw transactions
  *   ?file=transactions.csv&season=…   that season in the league-history import's Yahoo export format
  *                                     (&part=N when a season is too large for one response - the
@@ -42,7 +46,8 @@ export async function GET(req: NextRequest) {
   if (!FILES.includes(file)) return NextResponse.json({ error: `file must be one of ${FILES.join(", ")}` }, { status: 400 });
   const seasonParam = params.get("season");
   const season = seasonParam ? Number(seasonParam) : undefined;
-  if (file !== "report" && (season === undefined || !Number.isInteger(season))) {
+  if (season !== undefined && !Number.isInteger(season)) return NextResponse.json({ error: "season must be a year, e.g. season=2024" }, { status: 400 });
+  if (file !== "report" && season === undefined) {
     return NextResponse.json({ error: "season=YYYY is required for season downloads" }, { status: 400 });
   }
 
@@ -57,11 +62,19 @@ export async function GET(req: NextRequest) {
 
   try {
     if (file === "report") {
-      const history = await exportLeagueHistory(get, startLeagueKey, { firstSeasonYear: LEAGUE_FIRST_SEASON_YEAR, resolveDraftPlayers: false, isFatal, deadline });
+      const history = await exportLeagueHistory(get, startLeagueKey, {
+        firstSeasonYear: LEAGUE_FIRST_SEASON_YEAR,
+        resolveDraftPlayers: false,
+        onlySeason: season,
+        isFatal,
+        deadline,
+        delayMs: REQUEST_DELAY_MS,
+        skipTransactionsFor: [startLeagueKey],
+      });
       return json(buildRecoveryReport(history, await storedTransactionKeys(history.seasons.map((s) => s.leagueKey))));
     }
 
-    const history = await exportLeagueHistory(get, startLeagueKey, { firstSeasonYear: LEAGUE_FIRST_SEASON_YEAR, onlySeason: season, isFatal, deadline });
+    const history = await exportLeagueHistory(get, startLeagueKey, { firstSeasonYear: LEAGUE_FIRST_SEASON_YEAR, onlySeason: season, isFatal, deadline, delayMs: REQUEST_DELAY_MS });
     const target = history.seasons.find((s) => s.seasonYear === season);
     if (target?.incomplete) {
       // Never hand out a partial season as if it were the whole one.

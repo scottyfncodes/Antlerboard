@@ -75,7 +75,7 @@ function fakeYahoo(opts: { pageMode?: "honor" | "ignore" | "cap10"; refuse?: str
   return { get, calls };
 }
 
-const opts = { firstSeasonYear: 2021, delayMs: 0 };
+const opts = { firstSeasonYear: 2021, delayMs: 0, sleep: async () => {} };
 
 describe("renewToLeagueKey", () => {
   it("turns Yahoo's renew link into the previous season's league key", () => {
@@ -247,6 +247,7 @@ describe("draft CSV safety", () => {
       draftResults: [{ pick: 1, round: 1, teamKey: "431.l.90.t.1", playerKey: "431.p.3", cost: 30, player: { playerId: "3", name: "@Player", mlbTeam: "NYY", positions: [] } }],
       transactionsRaw: [],
       transactionPages: 0,
+      transactionsSkipped: null,
       errors: [],
       incomplete: false,
       incompleteSection: null,
@@ -296,6 +297,49 @@ describe("the #22 production failure: Yahoo stops answering partway (rate limit)
     expect(r.notChecked.join(" ")).toMatch(/2025 \(458\.l\.100\): transactions not read .*Unknown, not missing/);
   });
 
+  it("waits out a throttle and carries on: a page refused once, then answered, gives the complete log", async () => {
+    let refusedOnce = false;
+    const { get } = failing((p) => {
+      if (!refusedOnce && p.startsWith("/league/458.l.100/transactions") && p.includes("start=25")) {
+        refusedOnce = true;
+        return throttled(p);
+      }
+      return null;
+    });
+    const sleeps: number[] = [];
+    const h = await exportLeagueHistory(get, "469.l.8891", { ...opts, delayMs: 150, sleep: async (ms) => void sleeps.push(ms) });
+    expect(h.seasons.every((s) => !s.incomplete)).toBe(true);
+    expect(h.seasons.find((s) => s.leagueKey === "458.l.100")!.transactionsRaw).toHaveLength(60);
+    expect(h.seasons.map((s) => s.seasonYear)).toEqual([2026, 2025, 2024, 2023, 2022, 2021]);
+    // One long pause, then a slower pace for the rest of the run.
+    const at = sleeps.indexOf(20_000);
+    expect(at).toBeGreaterThan(0);
+    expect(sleeps.slice(0, at).every((ms) => ms === 150)).toBe(true);
+    expect(sleeps.slice(at + 1).every((ms) => ms === 1_000)).toBe(true);
+  });
+
+  it("gives up after the configured waits, and never starts a wait that would pass the deadline", async () => {
+    const { get } = failing((p) => (p === "/league/458.l.100/settings" ? throttled(p) : null));
+    const sleeps: number[] = [];
+    await exportLeagueHistory(get, "469.l.8891", { ...opts, sleep: async (ms) => void sleeps.push(ms) });
+    expect(sleeps.filter((ms) => ms > 1_000)).toEqual([20_000, 45_000]);
+
+    let clock = 0;
+    const late: number[] = [];
+    const h = await exportLeagueHistory(get, "469.l.8891", { ...opts, deadline: 10_000, now: () => clock, sleep: async (ms) => void late.push((clock += ms)) });
+    expect(late).toEqual([]);
+    expect(h.seasons[1]).toMatchObject({ incomplete: true, incompleteSection: "settings" });
+  });
+
+  it("a definitive refusal is never retried", async () => {
+    let asked = 0;
+    const { get } = failing((p) => (p === "/league/458.l.100/settings" && ++asked ? new YahooApiError(403, p, "Forbidden") : null));
+    const sleeps: number[] = [];
+    await exportLeagueHistory(get, "469.l.8891", { ...opts, sleep: async (ms) => void sleeps.push(ms) });
+    expect(sleeps).toEqual([]);
+    expect(asked).toBe(1);
+  });
+
   it("a throttled older season's settings is 'not checked', not 'refused' - and older seasons aren't invented", async () => {
     const { get } = failing((p) => (p === "/league/458.l.100/settings" ? throttled(p) : null));
     const h = await exportLeagueHistory(get, "469.l.8891", opts);
@@ -343,5 +387,36 @@ describe("the #22 production failure: Yahoo stops answering partway (rate limit)
     expect(new Set(keys).size).toBe(keys.length); // the shifted-in repeat is read once
     // Every original transaction is there; the late arrival may or may not be (it postdates the read).
     for (let n = 1; n <= 60; n++) expect(keys).toContain(`458.l.100.tr.${n}`);
+  });
+});
+
+describe("the connected season's transactions aren't re-read for the report", () => {
+  it("skips only that log, reads every older season in full, and says Antlerboard holds it - not missing, not unchecked", async () => {
+    const { get, calls } = fakeYahoo({ pageMode: "honor" });
+    const h = await exportLeagueHistory(get, "469.l.8891", { ...opts, skipTransactionsFor: ["469.l.8891"] });
+    expect(calls.some((c) => c.startsWith("/league/469.l.8891/transactions"))).toBe(false);
+    expect(calls.some((c) => c.startsWith("/league/469.l.8891/draftresults"))).toBe(true);
+    expect(h.seasons.map((s) => s.seasonYear)).toEqual([2026, 2025, 2024, 2023, 2022, 2021]);
+    expect(h.seasons[0]).toMatchObject({ incomplete: false, transactionsSkipped: expect.stringMatching(/daily Yahoo sync/), transactionsRaw: [] });
+    expect(h.seasons[1].transactionsRaw).toHaveLength(60);
+
+    const r = buildRecoveryReport(h, [{ leagueKey: "469.l.8891", seasonYear: 2026, storedTransactionKeys: ["469.l.8891.tr.1", "469.l.8891.tr.2"] }]);
+    expect(r.seasons[0].transactions).toMatchObject({ complete: false, skipped: expect.stringMatching(/daily Yahoo sync/), count: 0 });
+    expect(r.seasons[0].antlerboard).toBeNull();
+    expect(r.recovered).toContain("2026 (469.l.8891): transactions not re-read - Antlerboard's daily Yahoo sync keeps this season's log (2 stored).");
+    expect(JSON.stringify([r.notChecked, r.inaccessible])).not.toContain("469.l.8891");
+    expect(r.requiresOriginalFiles.join(" ")).not.toMatch(/469\.l\.8891\): the Yahoo transaction export/);
+    expect(r.seasons[1].transactions).toMatchObject({ complete: true, skipped: null, count: 60 });
+  });
+
+  it("reports one season on its own, passing through newer ones by their settings only", async () => {
+    const { get, calls } = fakeYahoo({ pageMode: "honor" });
+    const h = await exportLeagueHistory(get, "469.l.8891", { ...opts, onlySeason: 2024, skipTransactionsFor: ["469.l.8891"] });
+    expect(h.seasons.map((s) => s.seasonYear)).toEqual([2024]);
+    expect(calls.filter((c) => !c.endsWith("/settings")).every((c) => c.startsWith("/league/431.l.90/"))).toBe(true);
+    expect(h.discovery.stoppedBecause).toBe("Read season 2024 only.");
+    const r = buildRecoveryReport(h, []);
+    expect(r.notChecked).toEqual([]);
+    expect(r.recovered).toContain("2024 (431.l.90): 5 transactions (read until Yahoo returned no new ones; all types, timestamps, players, teams, FAAB bids where charged).");
   });
 });

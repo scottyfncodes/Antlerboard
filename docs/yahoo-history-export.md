@@ -38,7 +38,8 @@ preview URL), then open these in the browser:
 
 | URL | What you get |
 |---|---|
-| `/api/commissioner/yahoo-history?file=report` | The recovery report (JSON): every season reachable from the connected league, what was recovered, what's inaccessible, what needs the original files, and how Yahoo's transaction keys compare with the ones Antlerboard stores |
+| `/api/commissioner/yahoo-history?file=report` | The recovery report (JSON): every season reachable from the connected league, what was recovered, what's inaccessible, what needs the original files, and how Yahoo's transaction keys compare with the ones Antlerboard stores. The connected season's transactions aren't re-read: Antlerboard's daily sync already keeps them |
+| `/api/commissioner/yahoo-history?file=report&season=2024` | The same report for one season only. Use it for any season the full report lists under `notChecked` |
 | `/api/commissioner/yahoo-history?file=season.json&season=2024` | One season, complete: settings, teams, draft results with prices and player keys, and every transaction as Yahoo returned it |
 | `/api/commissioner/yahoo-history?file=transactions.csv&season=2024` | That season's transactions in the League History import's `season, league_key, transaction_raw` format |
 | `/api/commissioner/yahoo-history?file=draft.csv&season=2024` | That season's draft results: pick, round, player, ids, MLB team, positions, price, fantasy team |
@@ -48,7 +49,7 @@ Downloads are one season at a time because Vercel caps a response at about
 `413` with the exact `&part=1`, `&part=2`, … links to use, and each part keeps
 the header. Join them the same way as below. The report has a 4-minute
 budget: any season it couldn't finish is listed under `notChecked` (never as
-missing). Open that season on its own with `?file=season.json&season=YYYY`. To build the import's single 2025-and-earlier transaction file, join
+missing). Check that season on its own with `?file=report&season=YYYY`. To build the import's single 2025-and-earlier transaction file, join
 the per-season CSVs while keeping one header:
 
 ```bash
@@ -68,9 +69,16 @@ Check the result against the import's ~4.5 MB upload limit (runbook §1).
   - `/teams`
   - `/draftresults`
   - `/players;player_keys=…`, 25 players per request
-  - `/transactions;start=…;count=25`, paged until a page adds nothing new
-- **Pacing and retries:** requests are 150 ms apart. The client retries
-  Yahoo rate limits (999/429) and server errors twice with backoff.
+  - `/transactions;start=…;count=25`, paged until a page adds nothing new.
+    The report skips this for the connected season (2026), whose log the
+    daily sync keeps. Re-reading it used up Yahoo's rate limit before the
+    older seasons were reached (production report, 2026-10-15).
+- **Pacing and retries:** requests are 500 ms apart. The client retries
+  Yahoo rate limits (999/429) and server errors twice with backoff
+  (1 s, 3 s). If Yahoo is still throttling after that, the export waits
+  20 s and asks again, then 45 s, then gives up on that season. After a
+  throttle the rest of the run goes 1 s apart. A wait that would pass the
+  4-minute budget isn't started.
 - **Failures:** a section that still fails is recorded in the report. An
   expired or rejected token ends the run with `409`.
 
@@ -81,7 +89,10 @@ server-side `fetch` used to turn that into a thrown `RangeError` (`init["status"
 must be in the range of 200 to 599`), so the client's retries never ran. Fixed:
 Yahoo requests now carry an `AbortSignal` (a 30-second timeout), which takes them
 out of Next's request de-duplication, so a 999 reaches the client and is retried
-with backoff. If Yahoo keeps refusing, the report says so under `notChecked`.
+with backoff. On 2026-10-15 Yahoo throttled the report after about 20
+requests in quick succession and kept refusing through the 1 s and 3 s
+retries, which is why the export now pauses for 20-45 s and slows down. If
+Yahoo keeps refusing, the report says so under `notChecked`.
 Running the export straight after a Sync Now makes throttling more likely,
 since the sync has just made a burst of requests. Waiting about 10 minutes
 (still inside the token's hour) should help, though that's a guess, not a
@@ -107,3 +118,6 @@ measured fact.
   `inaccessible` and `requiresOriginalFiles`.
 - `seasons[].antlerboard`: for seasons Antlerboard already synced, how many
   Yahoo transaction keys match the stored ones.
+- `seasons[].transactions.skipped`: why the log wasn't read this run (the
+  connected season). Its `recovered` line gives how many transactions
+  Antlerboard stores. It's neither missing nor unchecked.
