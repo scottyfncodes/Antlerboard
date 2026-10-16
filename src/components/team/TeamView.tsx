@@ -10,6 +10,7 @@ import { TeamHeader } from "./TeamHeader";
 import { groupHittersAndPitchers } from "@/lib/positions";
 import { loadTeamRosterCosts, shapeAuctionPick } from "@/lib/keeper-cost-views";
 import { auctionNumberHeader } from "@/lib/draft-history";
+import { loadTeamDraftPicks } from "@/lib/draft-history-data";
 import { costDisplay } from "@/lib/player-costs";
 import { visibleTradesWhere, type TradeViewer } from "@/lib/trade-access";
 import { tradeTitle } from "@/lib/trades";
@@ -211,12 +212,7 @@ async function TeamActivity({ teamId, viewer }: { teamId: string; viewer: TradeV
 }
 
 async function TeamDraft({ teamId }: { teamId: string }) {
-  const picks = await prisma.draftPick.findMany({
-    where: { teamId },
-    orderBy: [{ seasonYear: "desc" }, { overallPick: "asc" }],
-    include: { player: true },
-    take: 40,
-  });
+  const picks = await loadTeamDraftPicks(teamId);
   if (picks.length === 0) return <EmptyState title="No draft picks recorded" />;
 
   const bySeason = new Map<number, typeof picks>();
