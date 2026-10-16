@@ -3,7 +3,7 @@
  *
  * THE CORE RULE: this module may only write fields Yahoo actually owns
  * (team names/logos, standings, player identity/MLB team/positions,
- * roster-add/drop transactions). It must never touch keeper history, tags,
+ * the Yahoo transaction log). It must never touch keeper history, tags,
  * trades, DPUD, or league history - those are Antlerboard's own data and a
  * sync would silently destroy real work if it clobbered them. Every write
  * below is scoped to exactly the Yahoo-owned columns for that model.
@@ -19,6 +19,7 @@ import { toArray, mergeMeta, fantasyContent, readFields } from "./parse";
 import { YahooApiError } from "./errors";
 import { canonicalYahooPlayerId, yahooPlayerIdForms } from "./player-id";
 import type { Season } from "@prisma/client";
+import { syncLeagueTransactions } from "./transactions";
 
 export interface SyncSectionResult {
   section: string;
@@ -531,53 +532,25 @@ async function syncRosters(
   };
 }
 
-async function syncTransactions(leagueId: string, leagueKey: string): Promise<SyncSectionResult> {
-  let updated = 0;
-  const data = await yahooFantasyGet(leagueId, `/league/${leagueKey}/transactions`);
-
-  const leagueField = fantasyContent(data).league;
-  const txContainer = toArray(leagueField).find(
-    (n) => n && typeof n === "object" && "transactions" in (n as object)
-  ) as { transactions?: unknown } | undefined;
-
-  const { season, missing } = await seasonForLeague(leagueId, readFields(toArray(leagueField)[0]));
-  if (!season) {
-    return { section: "transactions", recordsUpdated: 0, error: `No transactions imported: ${missing}` };
-  }
-
-  for (const entry of toArray(txContainer?.transactions)) {
-    const txArray = (entry as { transaction?: unknown })?.transaction;
-    if (!txArray) continue;
-    const meta = mergeMeta(txArray);
-    const yahooTransactionId = meta.transaction_key ? String(meta.transaction_key) : undefined;
-    if (!yahooTransactionId) continue;
-
-    const existing = await prisma.transaction.findUnique({ where: { yahooTransactionId } });
-    if (existing) continue; // already synced - keeps this idempotent
-
-    const type =
-      meta.type === "drop"
-        ? "DROP"
-        : meta.type === "add"
-          ? "FREE_AGENT_ADD"
-          : meta.type === "trade"
-            ? "TRADE"
-            : "FREE_AGENT_ADD";
-
-    await prisma.transaction.create({
-      data: {
-        seasonId: season.id,
-        seasonYear: season.year,
-        type,
-        yahooTransactionId,
-        notes: `Synced from Yahoo (${meta.type ?? "unknown"})`,
-        date: meta.timestamp ? new Date(Number(meta.timestamp) * 1000) : new Date(),
-      },
-    });
-    updated++;
-  }
-
-  return { section: "transactions", recordsUpdated: updated };
+/**
+ * The transaction log: every page of Yahoo's log for the connected league,
+ * parsed, resolved to teams and players by Yahoo key, and upserted on
+ * Yahoo's transaction_key (see ./transactions). Any problem - a page that
+ * couldn't be read, a skipped or incomplete transaction, rows still waiting
+ * for recovery - becomes this section's error, so the run is PARTIAL, never
+ * a SUCCESS that silently dropped data.
+ */
+async function syncTransactions(leagueId: string, leagueKey: string, opts: SyncOptions): Promise<SyncSectionResult> {
+  const report = await syncLeagueTransactions(leagueId, leagueKey, (path) => yahooFantasyGet(leagueId, path), {
+    delayMs: opts.transactionPageDelayMs ?? TRANSACTION_PAGE_DELAY_MS,
+    sleep: opts.sleep,
+  });
+  return {
+    section: "transactions",
+    recordsUpdated: report.counts.created + report.counts.updated,
+    error: report.problems.length > 0 ? report.problems.join("; ") : undefined,
+    detail: { counts: report.counts, complete: report.complete, incompleteReason: report.incompleteReason, examples: report.examples },
+  };
 }
 
 function describeSyncError(err: unknown): string {
@@ -593,7 +566,19 @@ function describeSyncError(err: unknown): string {
  * every write above is either an upsert keyed on a stable Yahoo id, or
  * skips records it has already seen.
  */
-export async function runYahooSync(leagueId: string): Promise<SyncResult> {
+/**
+ * Pause between transaction pages - the history export's pace, which Yahoo
+ * tolerated where 150 ms bursts got throttled (docs/yahoo-history-export.md).
+ * About 40 pages for a full season: ~40 s of the cron's 120 s.
+ */
+const TRANSACTION_PAGE_DELAY_MS = 500;
+
+export interface SyncOptions {
+  transactionPageDelayMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+export async function runYahooSync(leagueId: string, opts: SyncOptions = {}): Promise<SyncResult> {
   const connection = await prisma.yahooConnection.findUnique({ where: { leagueId } });
   if (!connection?.yahooLeagueKey) {
     throw new Error("No Yahoo league selected yet - connect Yahoo and pick the C&A league first.");
@@ -622,7 +607,7 @@ export async function runYahooSync(leagueId: string): Promise<SyncResult> {
   const context: SyncContext = {};
   await runSection("teams+standings", () => syncTeamsAndStandings(leagueId, connection.yahooLeagueKey!, context));
   await runSection("players", () => syncRosters(leagueId, context.leagueMeta, syncLog.id));
-  await runSection("transactions", () => syncTransactions(leagueId, connection.yahooLeagueKey!));
+  await runSection("transactions", () => syncTransactions(leagueId, connection.yahooLeagueKey!, opts));
 
   const totalRecordsUpdated = sections.reduce((sum, s) => sum + s.recordsUpdated, 0);
   const failedSections = sections.filter((s) => s.error);

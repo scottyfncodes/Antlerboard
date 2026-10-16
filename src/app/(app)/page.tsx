@@ -7,6 +7,7 @@ import { Card, EmptyState } from "@/components/ui/Card";
 import { Badge, DraftColorBadge, PlayerTagBadge } from "@/components/ui/Badge";
 import { formatDate, formatDateTime, timeAgo, PLAYER_TAG_LABEL } from "@/lib/format";
 import Link from "next/link";
+import { describeTransaction } from "@/lib/transaction-display";
 
 export const dynamic = "force-dynamic";
 
@@ -65,6 +66,7 @@ export default async function BoardPage() {
 
   const myTeam = manager?.teams?.[0];
 
+  const teamNames = new Map((await prisma.team.findMany({ select: { id: true, name: true } })).map((t) => [t.id, t.name]));
   return (
     <div className="space-y-8">
       <div className="flex items-start justify-between flex-wrap gap-4">
@@ -244,10 +246,8 @@ export default async function BoardPage() {
             <ul className="space-y-2">
               {recentTransactions.map((t) => (
                 <li key={t.id} className="text-sm flex items-center justify-between">
-                  <span className="truncate">
-                    {t.notes ?? `${t.type} — ${t.players.map((p) => p.player.name).join(", ")}`}
-                  </span>
-                  <span className="text-xs text-muted whitespace-nowrap ml-2">{timeAgo(t.date)}</span>
+                  <span className="truncate">{describeTransaction(t, teamNames).summary}</span>
+                  <span className="text-xs text-muted whitespace-nowrap ml-2">{t.dateUnavailable ? "date unknown" : timeAgo(t.date)}</span>
                 </li>
               ))}
             </ul>

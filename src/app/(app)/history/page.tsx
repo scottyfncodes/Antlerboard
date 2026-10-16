@@ -3,7 +3,7 @@ import { LeagueHeader } from "@/components/league/LeagueHeader";
 import { Card, CardLink, EmptyState } from "@/components/ui/Card";
 import { DraftColorBadge } from "@/components/ui/Badge";
 import { getDraftColorRange } from "@/lib/draft-color-engine";
-import { getPlayerHistoryEvents } from "@/lib/keeper-sync";
+import { getPlayerHistoryEvents, KEEPER_HISTORY_DROP_WHERE } from "@/lib/keeper-sync";
 import { buildStints } from "@/lib/keeper-engine";
 import Link from "next/link";
 
@@ -35,7 +35,7 @@ export default async function HistoryPage() {
     const events = await getPlayerHistoryEvents(player.id);
     const stints = buildStints(events);
     const drops = await prisma.transaction.findMany({
-      where: { type: "DROP", players: { some: { playerId: player.id } } },
+      where: { ...KEEPER_HISTORY_DROP_WHERE, players: { some: { playerId: player.id } } },
     });
     const dropSeasons = new Set(drops.map((d) => d.seasonYear));
 

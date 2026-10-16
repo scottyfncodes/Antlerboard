@@ -622,6 +622,9 @@ enum TransactionType {
   DROP
   TRADE
   KEEPER_DECLARED
+  // Also Yahoo "commish" transactions (a commissioner's roster edit on
+  // Yahoo), told apart by Transaction.yahooType = "commish". Reusing this
+  // value instead of adding one keeps every row readable by older builds.
   COMMISSIONER_CORRECTION
 }
 
@@ -640,6 +643,19 @@ model Transaction {
   sourceRef String?
   createdAt DateTime        @default(now())
 
+  // Yahoo detail, written by the transaction sync (src/lib/yahoo/transactions.ts).
+  // A Yahoo row with yahooType null predates detailed ingestion: it has no
+  // player or team links and is left alone until the explicit recovery step.
+  yahooType   String? // Yahoo's own type, verbatim: "add", "drop", "add/drop", "trade", "commish"
+  yahooStatus String? // Yahoo's own status, e.g. "successful"
+  // FAAB bid, only when Yahoo reported one (absent on $0 claims and free-agent adds).
+  faabBid     Int?
+  // Yahoo sent no usable timestamp, so `date` is not the transaction's real date.
+  dateUnavailable Boolean @default(false)
+  // Why this Yahoo row is incomplete (an unresolved team or player, ...). Empty = fully described.
+  yahooDetailIssues String[] @default([])
+  yahooDetailSyncedAt DateTime?
+
   players TransactionPlayer[]
   teams   TransactionTeam[]
 
@@ -653,6 +669,15 @@ model TransactionPlayer {
   transactionId String
   player        Player      @relation(fields: [playerId], references: [id])
   playerId      String
+
+  // How this player moved, as Yahoo reported it (null on rows that didn't
+  // come from the detailed Yahoo sync). Team ids are Antlerboard Team ids.
+  action            String? // "add", "drop" or "trade"
+  sourceType        String? // "freeagents", "waivers" or "team"
+  destinationType   String? // "team", "waivers" or "freeagents"
+  sourceTeamId      String?
+  destinationTeamId String?
+  yahooPlayerKey    String?
 
   @@unique([transactionId, playerId])
 }

@@ -119,7 +119,20 @@ function rosterResponse(
   };
 }
 
+/**
+ * Yahoo's real /league/{key}/transactions shape: each transaction is
+ * [meta, {players}], meta one flat object (see src/lib/yahoo/transactions.ts).
+ * Adds and drops default to one free-agent player moving to or from team 1.
+ */
 function transactionsResponse(txns: { key: string; type: string; timestamp: string }[]) {
+  const player = (t: { key: string; type: string }) => {
+    const id = t.key.split(".").pop();
+    const data =
+      t.type === "drop"
+        ? { type: "drop", source_type: "team", source_team_key: "422.l.1.t.1", destination_type: "waivers" }
+        : { type: "add", source_type: "freeagents", destination_type: "team", destination_team_key: "422.l.1.t.1" };
+    return { player: [[{ player_key: `422.p.${id}` }, { player_id: id }, { name: { full: `Player ${id}` } }], { transaction_data: [data] }] };
+  };
   return {
     fantasy_content: {
       league: [
@@ -129,7 +142,12 @@ function transactionsResponse(txns: { key: string; type: string; timestamp: stri
             ...Object.fromEntries(
               txns.map((t, i) => [
                 String(i),
-                { transaction: [{ transaction_key: t.key }, { type: t.type }, { timestamp: t.timestamp }] },
+                {
+                  transaction: [
+                    { transaction_key: t.key, type: t.type, status: "successful", timestamp: t.timestamp },
+                    t.type === "add" || t.type === "drop" ? { players: { "0": player(t), count: 1 } } : {},
+                  ],
+                },
               ])
             ),
             count: txns.length,
@@ -385,7 +403,7 @@ describe("runYahooSync - season safety", () => {
     expect(await prisma.transaction.count()).toBe(0);
     expect(await prisma.teamStanding.count({ where: { seasonId: oldSeason.id } })).toBe(0);
     const tx = result.sections.find((s) => s.section === "transactions")!;
-    expect(tx.error).toBe("No transactions imported: No 2026 season exists in Antlerboard - create it before syncing");
+    expect(tx.error).toContain("No 2026 season exists in Antlerboard - create it before syncing. No transactions written.");
     const teams = result.sections.find((s) => s.section === "teams+standings")!;
     expect(teams.error).toContain("Standings not recorded: No 2026 season exists in Antlerboard");
     expect(result.status).not.toBe("SUCCESS");
@@ -657,5 +675,42 @@ describe("runYahooSync - partial failure and preservation of Antlerboard-owned d
     expect(keeperAfter).toEqual(keeperRecord);
     const tagAfter = await prisma.playerTag.findUniqueOrThrow({ where: { id: tag.id } });
     expect(tagAfter).toEqual(tag);
+  });
+});
+
+describe("runYahooSync - an incomplete transaction import is never a SUCCESS", () => {
+  it("is PARTIAL, with the reason in the SyncLog, when a transaction can't be typed", async () => {
+    const { league } = await setupConnectedLeague();
+    wireMock({ transactions: transactionsResponse([{ key: "422.l.1.tr.1", type: "keeper", timestamp: "1700000000" }]) });
+
+    const result = await runYahooSync(league.id);
+
+    expect(result.status).toBe("PARTIAL");
+    const section = result.sections.find((s) => s.section === "transactions")!;
+    expect(section.error).toContain("1 transaction(s) have a type that can't be determined");
+    expect(await prisma.transaction.count()).toBe(0);
+    const log = await prisma.syncLog.findFirstOrThrow({ where: { id: result.syncLogId } });
+    expect(log.status).toBe("PARTIAL");
+  });
+
+  it("is not SUCCESS when Yahoo's transactions response can't be read", async () => {
+    const { league } = await setupConnectedLeague();
+    wireMock({ transactions: { fantasy_content: { league: [{ league_key: LEAGUE_KEY, season: "2026" }] } } });
+
+    const result = await runYahooSync(league.id);
+
+    expect(result.status).not.toBe("SUCCESS");
+    expect(result.sections.find((s) => s.section === "transactions")!.error).toContain("has no transactions field");
+  });
+
+  it("is PARTIAL while rows synced before detailed ingestion wait for recovery", async () => {
+    const { league, season } = await setupConnectedLeague();
+    await prisma.transaction.create({ data: { seasonId: season.id, seasonYear: 2026, type: "FREE_AGENT_ADD", yahooTransactionId: "422.l.1.tr.1", notes: "Synced from Yahoo (add)" } });
+    wireMock({ transactions: transactionsResponse([{ key: "422.l.1.tr.1", type: "add", timestamp: "1700000000" }]) });
+
+    const result = await runYahooSync(league.id);
+
+    expect(result.status).toBe("PARTIAL");
+    expect(result.sections.find((s) => s.section === "transactions")!.error).toContain("still lack teams and players");
   });
 });
