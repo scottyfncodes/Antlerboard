@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { LeagueHistoryPreview, KeeperCheck, CheckStatus } from "@/lib/import/league-history-builder";
+import { readJsonResponse, uploadSizeError } from "@/lib/import/upload-request";
 
 interface IdentityReviewItem {
   importKey: string;
@@ -83,40 +84,56 @@ export function LeagueHistoryImportWizard() {
       setError("Pick all three files first.");
       return;
     }
+    const tooLarge = uploadSizeError([files.workbook, files.auction, files.yahoo]);
+    if (tooLarge) {
+      setError(tooLarge);
+      return;
+    }
     setBusy(true);
     setError(null);
     const fd = new FormData();
     fd.append("workbook", files.workbook);
     fd.append("auction", files.auction);
     fd.append("yahoo", files.yahoo);
-    const res = await fetch("/api/commissioner/import/league-history/check", { method: "POST", body: fd });
-    const data = await res.json();
-    setBusy(false);
-    if (!res.ok) {
-      setError(data.error ?? "Could not build the preview.");
-      return;
+    try {
+      const res = await fetch("/api/commissioner/import/league-history/check", { method: "POST", body: fd });
+      const out = await readJsonResponse<Preview>(res, "Could not build the preview.");
+      if (!out.ok) {
+        setError(out.error);
+        return;
+      }
+      setPreview(out.data);
+      setStep("review");
+    } catch {
+      setError("Could not reach the server to build the preview. Check your connection and try again.");
+    } finally {
+      setBusy(false);
     }
-    setPreview(data);
-    setStep("review");
   }
 
   async function commit() {
     if (!preview) return;
     setBusy(true);
     setError(null);
-    const res = await fetch("/api/commissioner/import/league-history/commit", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...preview, applyRecordedKeeperCosts: applyRecorded }),
-    });
-    const data = await res.json();
-    setBusy(false);
-    if (!res.ok) {
-      setError(data.conflicts?.length ? `Nothing was written. ${data.conflicts.join(" ")}` : data.error ?? "Import failed.");
-      return;
+    try {
+      const res = await fetch("/api/commissioner/import/league-history/commit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...preview, applyRecordedKeeperCosts: applyRecorded }),
+      });
+      const out = await readJsonResponse<CommitResult>(res, "Import failed.");
+      if (!out.ok) {
+        const conflicts = Array.isArray(out.data?.conflicts) ? (out.data.conflicts as string[]) : [];
+        setError(conflicts.length ? `Nothing was written. ${conflicts.join(" ")}` : out.error);
+        return;
+      }
+      setResult(out.data);
+      setStep("done");
+    } catch {
+      setError("Could not reach the server. Check whether the import finished before trying again.");
+    } finally {
+      setBusy(false);
     }
-    setResult(data);
-    setStep("done");
   }
 
   if (step === "upload") {
