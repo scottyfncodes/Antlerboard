@@ -66,7 +66,7 @@ describe("buildRecoveryPlan (dry run)", () => {
     expect(await snapshot()).toEqual(before);
     expect(report).toMatchObject({ mode: "dry-run", targets: 7, yahoo: { transactionsRead: 7, complete: true } });
     expect(report.summary).toEqual({ ready: 5, unresolved: 1, unsupported: 0, malformed: 0, missing_in_yahoo: 1, not_checked: 0 });
-    expect(report.proposedTypes).toEqual({ COMMISSIONER_MOVE: 1, WAIVER_ADD: 1, DROP: 1, TRADE: 1, FREE_AGENT_ADD: 2 });
+    expect(report.proposedTypes).toEqual({ COMMISSIONER_CORRECTION: 1, WAIVER_ADD: 1, DROP: 1, TRADE: 1, FREE_AGENT_ADD: 2 });
     expect(report.onlyInYahoo).toEqual([txKey(9)]);
     expect(report.playersToCreate).toEqual([{ yahooPlayerId: "555", name: "New Guy" }]);
     expect(report.fingerprint).toMatch(/^[0-9a-f]{64}$/);
@@ -79,7 +79,7 @@ describe("buildRecoveryPlan (dry run)", () => {
       { name: "New Guy", yahooPlayerKey: "469.p.555", yahooPlayerId: "555", playerId: null, createsPlayer: true, action: "drop", from: "Ranger Thingz", to: "waivers" },
     ]);
     expect(byKey.get(txKey(5))!.proposed!.teams.map((t) => t.teamId).sort()).toEqual([t1.id, t1.id, t2.id, t2.id].sort());
-    expect(byKey.get(txKey(2))!.proposed).toMatchObject({ type: "COMMISSIONER_MOVE", players: [], teams: [] });
+    expect(byKey.get(txKey(2))!.proposed).toMatchObject({ type: "COMMISSIONER_CORRECTION", yahooType: "commish", players: [], teams: [] });
     expect(byKey.get(txKey(6))).toMatchObject({ status: "unresolved", issues: [`Yahoo team ${teamKey(9)} (Aaron Judge's destination) isn't linked to an Antlerboard team.`] });
     expect(byKey.get(txKey(7))).toMatchObject({ status: "missing_in_yahoo", proposed: null });
   });

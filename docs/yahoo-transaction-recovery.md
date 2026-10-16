@@ -14,7 +14,7 @@ dry run, reviews it, and separately applies it.
 | Teams involved | `TransactionTeam` (`FROM` / `TO`), as before |
 | Both halves of an add/drop | One `Transaction` (typed by the add: `WAIVER_ADD` or `FREE_AGENT_ADD`) with two `TransactionPlayer` rows: `action: add` and `action: drop` |
 | Waiver claim vs free-agent add | `WAIVER_ADD` when Yahoo's add came from `waivers`, `FREE_AGENT_ADD` when from `freeagents`. Any other source is not typed (see below) |
-| Commissioner moves | `COMMISSIONER_MOVE` (**new enum value**). Previously a free-agent add. Yahoo usually sends no players for these |
+| Commissioner moves | The existing `COMMISSIONER_CORRECTION` type, with `yahooType = "commish"` (Yahoo's own type, verbatim). The UI labels these "Commissioner move", and Antlerboard's own corrections (`yahooType` null) still read "Correction". Previously a free-agent add. Yahoo usually sends no players for these |
 | Trades | `TRADE`, both teams as `FROM` + `TO`, each player with their own source and destination team |
 | FAAB | `Transaction.faabBid`, only when Yahoo sends `faab_bid` (absent on $0 claims and free-agent adds) |
 | Transaction ↔ Acquisition | Separate. `Acquisition` drives keeper costs. The league-history import writes adds/trades there and drops to `Transaction`. **The Yahoo sync writes `Transaction` only, never `Acquisition` or `KeeperRecord`** (unchanged; see open decisions) |
@@ -27,7 +27,7 @@ dry run, reviews it, and separately applies it.
 | Sync wrote no players or teams: all 907 2026 rows unlinked | Parses `players` and each player's `transaction_data`; links players by Yahoo id and teams by Yahoo team key |
 | `add/drop` stored as an add, losing the drop (347 rows) | Both players recorded with their `action` |
 | Waiver vs free agent never distinguished; FAAB never stored | From `source_type`; `faab_bid` stored |
-| `commish` and any unknown type silently became `FREE_AGENT_ADD` | `commish` → `COMMISSIONER_MOVE`; unknown types and adds with an unknown source are **not written**, counted, and make the run PARTIAL |
+| `commish` and any unknown type silently became `FREE_AGENT_ADD` | `commish` → `COMMISSIONER_CORRECTION` + `yahooType "commish"`; unknown types and adds with an unknown source are **not written**, counted, and make the run PARTIAL |
 | Missing timestamp silently became "now" | Stored with `dateUnavailable = true`; the UI shows "date unknown" |
 | One unpaged request; no proof the log was complete | Paged with `;start=N;count=25` until a page adds nothing (works whether Yahoo honors, caps or ignores paging). A failed later page or the 200-page cap marks the run incomplete |
 | A response without a `transactions` field read as "0 new", still SUCCESS | Unreadable first page is an error |
@@ -109,7 +109,7 @@ review the remainder, then apply its new fingerprint.
   "yahoo": { "pages": 43, "transactionsRead": 907, "entriesWithoutKey": 0, "complete": true, "incompleteReason": null },
   "targets": 907,                       // stored rows with no detail yet
   "summary": { "ready": 0, "unresolved": 0, "unsupported": 0, "malformed": 0, "missing_in_yahoo": 0, "not_checked": 0 },
-  "proposedTypes": { "WAIVER_ADD": 0, "FREE_AGENT_ADD": 0, "DROP": 0, "TRADE": 0, "COMMISSIONER_MOVE": 0 },
+  "proposedTypes": { "WAIVER_ADD": 0, "FREE_AGENT_ADD": 0, "DROP": 0, "TRADE": 0, "COMMISSIONER_CORRECTION": 0 },
   "playersToCreate": [{ "yahooPlayerId": "12345", "name": "…" }],
   "onlyInYahoo": ["469.l.8891.tr.…"],  // not stored at all - the daily sync adds these, recovery doesn't
   "fingerprint": "<sha256 of exactly what applying writes - see above>",
@@ -189,7 +189,8 @@ The migration is `20261016200000_yahoo_transaction_detail`, applied by
 `scripts/build.sh` (`prisma migrate deploy`) **only on production builds,
 before `next build`**:
 
-- `ALTER TYPE "TransactionType" ADD VALUE 'COMMISSIONER_MOVE'`;
+- **no enum change**: every type the new code writes (`WAIVER_ADD`,
+  `FREE_AGENT_ADD`, `DROP`, `TRADE`, `COMMISSIONER_CORRECTION`) already exists;
 - 6 nullable or defaulted columns on `Transaction` (`dateUnavailable` defaults
   to `false`, `yahooDetailIssues` to `{}`);
 - 6 nullable columns on `TransactionPlayer`.
@@ -212,21 +213,40 @@ is `20261014180000_add_roster_spots`.
 
 ### Rollback
 
-- **Before any `COMMISSIONER_MOVE` row exists,** an instant rollback of the
-  code to the previous deployment is safe; the extra columns are ignored.
-- **After one exists, the old code can't read it.** Verified against the old
-  generated client locally: `Value 'COMMISSIONER_MOVE' not found in enum
-  'TransactionType'` on `transaction.findMany`. Such rows appear after the
-  recovery (the 6 commish rows) or when the new sync stores a new commish move.
-  The home page and the Transactions page would then error. **Roll forward
-  instead**, or change those rows' `type` back before rolling back (a
-  production write, so it needs approval).
-- **Undoing the recovery's data:** restore from the Neon backup branch taken
-  just before the apply, which is the simplest and complete option. Every
-  recovered row is also identifiable: `yahooType IS NOT NULL` on a row whose
-  `yahooDetailSyncedAt` falls inside the apply's audit-entry window.
-- **Schema rollback isn't needed.** The added columns are harmless to old code,
-  and Postgres can't drop an enum value in place.
+**Code: an instant rollback is safe at any point.** That covers after the
+first new sync and after the recovery.
+
+- **Verified:** I migrated a local database with this PR, wrote every shape the
+  new code produces through the real sync and recovery paths, and read it back
+  with the Prisma client generated from production's current build (`b5f50bb`):
+  - the shapes: waiver add with FAAB, free-agent add, add/drop, drop, trade,
+    commissioner move, pending status, undated and incomplete rows, recovered
+    add/drop, recovered commish move, and created players;
+  - the queries: the ones its Transactions page, home page, team activity,
+    player history and keeper sync run, plus every column of every row.
+
+  All succeeded. The old build simply ignores the new columns. It labels a
+  Yahoo commissioner move "Correction" and shows a recovered add/drop by its
+  add type, which is less detail but no error.
+- **History:** an earlier draft added a `COMMISSIONER_MOVE` enum value, which
+  the old client can't read (`Value 'COMMISSIONER_MOVE' not found in enum
+  'TransactionType'`). That value was removed for this reason.
+
+**Data written by the recovery** is undone by restoring from the Neon backup
+branch taken just before the apply. That is the simplest and complete option.
+Every recovered row is also identifiable: `yahooType IS NOT NULL` on a row
+whose `yahooDetailSyncedAt` falls inside the apply's audit-entry window.
+
+**Schema: the migration is reversible, and reversing it isn't needed.**
+
+- **It's purely additive:** 12 new columns, no enum or constraint changes, no
+  data rewritten. Old code works with it in place, so a code rollback needs no
+  schema change.
+- **If the columns ever had to go,** a forward migration dropping them would
+  do it. It isn't lossless, though: it discards the recovered detail, so take
+  a backup first.
+- **Prisma has no automatic down-migration here.** Either way it is a new,
+  reviewed migration, not an undo.
 
 ### Order of operations (each production step waits for your approval)
 
@@ -352,7 +372,9 @@ commissioner move.
   - the cron fired at 12:56 and 12:00 UTC;
   - the Yahoo env vars are Production-only;
   - the migration isn't applied.
-- **Rollback:** the old client fails on `COMMISSIONER_MOVE` (tested locally).
+- **Rollback:** production's current client (`b5f50bb`) reads every type and
+  every column the new code writes (tested locally against a migrated
+  database).
 
 **Assumed, not verified against live Yahoo responses** (no valid token was
 available, and Yahoo's documentation site is unreachable from the build
@@ -374,13 +396,8 @@ anything is written.
 
 ## Open decisions
 
-1. **`COMMISSIONER_MOVE` and rollback.** The new enum value blocks a plain
-   code rollback once such a row exists (see Rollback). The alternative: store
-   Yahoo commissioner moves as the existing `COMMISSIONER_CORRECTION` type,
-   with `yahooType = "commish"` driving the "Commissioner move" label. That
-   removes the enum change from the migration and keeps rollback safe. It's a
-   small change in this PR, but it changes the data model, so it waits for
-   your call.
+1. **Commissioner moves (decided):** stored as `COMMISSIONER_CORRECTION`, with
+   `yahooType = "commish"`, so a code rollback stays safe.
 2. **2026 in-season acquisitions and keeper costs:** the options are listed
    above. Behavior stays as it is today until you choose.
 3. **Players to create.** Recovery creates Yahoo-linked players for Yahoo ids

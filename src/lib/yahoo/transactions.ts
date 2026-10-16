@@ -318,9 +318,11 @@ export function parseYahooTransaction(raw: unknown): ParseOutcome {
       if (trades.length === 0) issues.push("Yahoo's trade lists no traded players.");
       break;
     case "commish":
-      // Yahoo sends no player row for most commissioner moves; whatever it
-      // does send is kept as reported.
-      type = "COMMISSIONER_MOVE";
+      // Stored under the existing COMMISSIONER_CORRECTION type so builds that
+      // predate this code can still read the row; yahooType = "commish" keeps
+      // it distinguishable from Antlerboard's own corrections. Yahoo sends no
+      // player row for most commissioner moves; whatever it sends is kept.
+      type = "COMMISSIONER_CORRECTION";
       break;
   }
   return {

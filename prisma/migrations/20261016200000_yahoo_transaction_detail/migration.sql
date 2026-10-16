@@ -1,8 +1,6 @@
--- Detailed Yahoo transaction ingestion. Additive only: new nullable columns
--- and one new enum value. No existing row is changed.
-
--- AlterEnum
-ALTER TYPE "TransactionType" ADD VALUE 'COMMISSIONER_MOVE';
+-- Detailed Yahoo transaction ingestion. Additive only: new columns, each
+-- nullable or with a default. No enum changes (so every row stays readable by
+-- the previous build), and no existing row is changed.
 
 -- AlterTable
 ALTER TABLE "Transaction" ADD COLUMN     "yahooType" TEXT,

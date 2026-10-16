@@ -77,8 +77,15 @@ describe("describeTransaction", () => {
   });
 
   it("treats a commissioner move as complete even though Yahoo sends no players", () => {
-    const d = describeTransaction({ ...base, type: "COMMISSIONER_MOVE", yahooTransactionId: "k", yahooType: "commish" }, teams);
+    const d = describeTransaction({ ...base, type: "COMMISSIONER_CORRECTION", yahooTransactionId: "k", yahooType: "commish" }, teams);
     expect(d).toMatchObject({ complete: true, label: "Commissioner move" });
+  });
+
+  it("still labels Antlerboard's own corrections as corrections", () => {
+    const d = describeTransaction({ ...base, type: "COMMISSIONER_CORRECTION", notes: "Fixed keeper cost" }, teams);
+    expect(d).toMatchObject({ complete: true, label: "Correction" });
+    expect(describePlayerMove({ action: null }, { type: "COMMISSIONER_CORRECTION", notes: null, yahooTransactionId: null, yahooType: null, yahooStatus: null, faabBid: null, sourceRef: null })).toBe("Correction");
+    expect(describePlayerMove({ action: null }, { type: "COMMISSIONER_CORRECTION", notes: null, yahooTransactionId: "k", yahooType: "commish", yahooStatus: null, faabBid: null, sourceRef: null })).toBe("Commissioner move");
   });
 
   it("labels the import's inferred 'not kept' releases without changing their stored date", () => {
@@ -120,7 +127,7 @@ describe("INCOMPLETE_TRANSACTION_WHERE", () => {
     await mk({ yahooTransactionId: "no-players", yahooType: "drop" });
     await mk({ yahooTransactionId: "issues", yahooType: "drop", yahooDetailIssues: ["x"] }, true);
     await mk({ yahooTransactionId: "complete", yahooType: "drop" }, true);
-    await mk({ yahooTransactionId: "commish", yahooType: "commish", type: "COMMISSIONER_MOVE" });
+    await mk({ yahooTransactionId: "commish", yahooType: "commish", type: "COMMISSIONER_CORRECTION" });
     await mk({ sourceRef: "league-history:not kept into 2026" }, true);
     await mk({}, false);
 

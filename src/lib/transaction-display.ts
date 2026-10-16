@@ -53,8 +53,17 @@ const TYPE_LABELS: Record<string, string> = {
   TRADE: "Trade",
   KEEPER_DECLARED: "Kept",
   COMMISSIONER_CORRECTION: "Correction",
-  COMMISSIONER_MOVE: "Commissioner move",
 };
+
+/**
+ * The label for a row's type. A Yahoo commissioner move is stored as
+ * COMMISSIONER_CORRECTION (see src/lib/yahoo/transactions.ts) and told apart
+ * by Yahoo's own type.
+ */
+function typeLabel(t: Pick<Transaction, "type" | "yahooType">): string {
+  if (t.type === "COMMISSIONER_CORRECTION" && t.yahooType === "commish") return "Commissioner move";
+  return TYPE_LABELS[t.type] ?? "Correction";
+}
 
 const NOT_KEPT_PREFIX = "league-history:not kept into ";
 /** "Synced from Yahoo (add/drop)" - what the first sync wrote as a row's only detail. */
@@ -121,7 +130,7 @@ export function describeTransaction(t: DisplayTransaction, teamName: Map<string,
   if (t.dateUnavailable) notes.push("Date unavailable from Yahoo");
   if (!complete) notes.push(t.yahooDetailIssues.length > 0 ? "Incomplete - some teams or players couldn't be matched" : "Incomplete - Yahoo sent no players");
 
-  let label = TYPE_LABELS[t.type] ?? "Correction";
+  let label = typeLabel(t);
   let iconKey: string = t.type;
   if (isInferredRelease(t)) {
     label = "Not kept";
@@ -150,8 +159,8 @@ export function describePlayerMove(
 ): string {
   if (isInferredRelease(t)) return "Not kept - released at season's end";
   const verb = verbFor(link.action);
-  if (!verb) return t.notes ?? TYPE_LABELS[t.type] ?? t.type;
-  const extras = [TYPE_LABELS[t.type], verb === "Added" && t.faabBid !== null ? `$${t.faabBid} FAAB` : null, t.yahooStatus && t.yahooStatus !== YAHOO_SUCCESSFUL ? `Yahoo status: ${t.yahooStatus}` : null].filter(
+  if (!verb) return t.notes ?? typeLabel(t);
+  const extras = [typeLabel(t), verb === "Added" && t.faabBid !== null ? `$${t.faabBid} FAAB` : null, t.yahooStatus && t.yahooStatus !== YAHOO_SUCCESSFUL ? `Yahoo status: ${t.yahooStatus}` : null].filter(
     (x): x is string => !!x && x.toLowerCase() !== verb.toLowerCase()
   );
   return extras.length ? `${verb} (${extras.join(", ")})` : verb;

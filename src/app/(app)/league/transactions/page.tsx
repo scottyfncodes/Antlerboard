@@ -17,7 +17,6 @@ const ICONS: Record<string, { icon: LucideIcon; tone: string }> = {
   TRADE: { icon: ArrowLeftRight, tone: "text-blue bg-blue/15" },
   KEEPER_DECLARED: { icon: ShieldCheck, tone: "text-antler-strong bg-antler-dim/30" },
   COMMISSIONER_CORRECTION: { icon: Wrench, tone: "text-muted bg-surface-raised" },
-  COMMISSIONER_MOVE: { icon: Wrench, tone: "text-muted bg-surface-raised" },
   RELEASE: { icon: LogOut, tone: "text-muted bg-surface-raised" },
   INCOMPLETE: { icon: CircleHelp, tone: "text-muted bg-surface-raised" },
 };

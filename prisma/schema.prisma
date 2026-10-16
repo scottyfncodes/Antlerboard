@@ -622,10 +622,10 @@ enum TransactionType {
   DROP
   TRADE
   KEEPER_DECLARED
+  // Also Yahoo "commish" transactions (a commissioner's roster edit on
+  // Yahoo), told apart by Transaction.yahooType = "commish". Reusing this
+  // value instead of adding one keeps every row readable by older builds.
   COMMISSIONER_CORRECTION
-  // A Yahoo "commish" transaction: the league commissioner edited a roster
-  // directly on Yahoo. Not a correction to Antlerboard's own data.
-  COMMISSIONER_MOVE
 }
 
 model Transaction {
@@ -646,7 +646,7 @@ model Transaction {
   // Yahoo detail, written by the transaction sync (src/lib/yahoo/transactions.ts).
   // A Yahoo row with yahooType null predates detailed ingestion: it has no
   // player or team links and is left alone until the explicit recovery step.
-  yahooType   String? // Yahoo's own type: "add", "drop", "add/drop", "trade", "commish"
+  yahooType   String? // Yahoo's own type, verbatim: "add", "drop", "add/drop", "trade", "commish"
   yahooStatus String? // Yahoo's own status, e.g. "successful"
   // FAAB bid, only when Yahoo reported one (absent on $0 claims and free-agent adds).
   faabBid     Int?

@@ -44,9 +44,9 @@ describe("parseYahooTransaction", () => {
     expect(trade.ok && trade.tx).toMatchObject({ type: "TRADE", traderTeamKey: teamKey(1), tradeeTeamKey: teamKey(2), issues: [] });
   });
 
-  it("types a commissioner move without players as COMMISSIONER_MOVE, never a free-agent add", () => {
+  it("stores a commissioner move as COMMISSIONER_CORRECTION with Yahoo's type kept, never as a free-agent add", () => {
     const r = parseYahooTransaction(yTx(meta(6, "commish")).transaction);
-    expect(r.ok && r.tx).toMatchObject({ type: "COMMISSIONER_MOVE", players: [], issues: [] });
+    expect(r.ok && r.tx).toMatchObject({ type: "COMMISSIONER_CORRECTION", yahooType: "commish", players: [], issues: [] });
   });
 
   it("refuses unknown or missing types instead of calling them free-agent adds", () => {
@@ -197,12 +197,12 @@ describe("syncLeagueTransactions - writing", () => {
     expect(byPlayer.get(soto.id)).toEqual([t2.id, t1.id]);
   });
 
-  it("writes a commissioner move as COMMISSIONER_MOVE with no invented players", async () => {
+  it("writes a commissioner move as COMMISSIONER_CORRECTION with yahooType commish and no invented players", async () => {
     const { league } = await setup();
     const report = await sync(league.id, [yTx(meta(2, "commish"))]);
     expect(report.problems).toEqual([]);
     const tx = await prisma.transaction.findUniqueOrThrow({ where: { yahooTransactionId: txKey(2) }, include: { players: true } });
-    expect(tx).toMatchObject({ type: "COMMISSIONER_MOVE", yahooType: "commish" });
+    expect(tx).toMatchObject({ type: "COMMISSIONER_CORRECTION", yahooType: "commish", notes: null });
     expect(tx.players).toEqual([]);
   });
 
