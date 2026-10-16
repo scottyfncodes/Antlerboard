@@ -2,6 +2,9 @@
 
 import { useState } from "react";
 import { parseCsv, guessMapping, IMPORT_FIELDS, type ImportFieldKey } from "@/lib/csv/parse";
+import { readJsonResponse, uploadSizeError } from "@/lib/import/upload-request";
+
+const CSV_HINT = "Split the CSV into smaller files (by season, for example) and import them one at a time.";
 
 interface CheckedRow {
   playerName?: string;
@@ -31,6 +34,7 @@ export function ImportWizard() {
   const [mapping, setMapping] = useState<Partial<Record<ImportFieldKey, number>>>({});
   const [checkedRows, setCheckedRows] = useState<CheckedRow[]>([]);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<{ imported: number; skipped: number; error?: string } | null>(null);
 
   function onFile(file: File) {
@@ -59,44 +63,63 @@ export function ImportWizard() {
       return obj;
     });
 
-    const res = await fetch("/api/commissioner/import/check", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ rows }),
-    });
-    const data = await res.json();
-    setCheckedRows(data.rows.map((r: CheckedRow) => ({ ...r, force: false, exclude: r.errors.length > 0 })));
-    setBusy(false);
-    setStep("review");
+    const body = JSON.stringify({ rows });
+    const tooLarge = uploadSizeError([new Blob([body])], CSV_HINT);
+    if (tooLarge) {
+      setError(tooLarge);
+      setBusy(false);
+      return;
+    }
+    setError(null);
+    try {
+      const res = await fetch("/api/commissioner/import/check", { method: "POST", headers: { "Content-Type": "application/json" }, body });
+      const out = await readJsonResponse<{ rows: CheckedRow[] }>(res, "Could not validate these rows.", CSV_HINT);
+      if (!out.ok) {
+        setError(out.error);
+        return;
+      }
+      setCheckedRows(out.data.rows.map((r) => ({ ...r, force: false, exclude: r.errors.length > 0 })));
+      setStep("review");
+    } catch {
+      setError("Could not reach the server to validate these rows. Check your connection and try again.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function commit() {
     setBusy(true);
     const rows = checkedRows.filter((r) => !r.exclude);
-    const res = await fetch("/api/commissioner/import/commit", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        rows: rows.map((r) => ({
-          teamId: r.teamId,
-          season: r.parsed.season,
-          method: r.parsed.method,
-          cost: r.parsed.cost,
-          playerName: r.parsed.playerName,
-          mlbTeam: r.mlbTeam,
-          positions: r.positions,
-          draftRound: r.draftRound,
-          draftPick: r.draftPick,
-          existingPlayerId: r.existingPlayerId,
-          conflict: r.conflict,
-          force: r.force,
-        })),
-      }),
-    });
-    const data = await res.json();
-    setSummary(data);
-    setBusy(false);
-    setStep("done");
+    setError(null);
+    try {
+      const res = await fetch("/api/commissioner/import/commit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rows: rows.map((r) => ({
+            teamId: r.teamId,
+            season: r.parsed.season,
+            method: r.parsed.method,
+            cost: r.parsed.cost,
+            playerName: r.parsed.playerName,
+            mlbTeam: r.mlbTeam,
+            positions: r.positions,
+            draftRound: r.draftRound,
+            draftPick: r.draftPick,
+            existingPlayerId: r.existingPlayerId,
+            conflict: r.conflict,
+            force: r.force,
+          })),
+        }),
+      });
+      const out = await readJsonResponse<{ imported: number; skipped: number; error?: string }>(res, "Import failed.", CSV_HINT);
+      setSummary(out.ok ? out.data : { imported: 0, skipped: 0, error: out.error });
+      setStep("done");
+    } catch {
+      setError("Could not reach the server. Check whether the import finished before trying again.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   if (step === "upload") {
@@ -162,6 +185,7 @@ export function ImportWizard() {
         >
           {busy ? "Checking…" : "Preview & Validate"}
         </button>
+        {error && <p className="text-sm text-red mt-2">{error}</p>}
       </div>
     );
   }
@@ -242,6 +266,7 @@ export function ImportWizard() {
         >
           {busy ? "Importing…" : `Import ${includedCount} rows`}
         </button>
+        {error && <p className="text-sm text-red mt-2">{error}</p>}
       </div>
     );
   }

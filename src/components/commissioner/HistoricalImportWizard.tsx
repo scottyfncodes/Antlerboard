@@ -8,6 +8,9 @@ import type {
   ParsedDraftDayEvent,
   ParsedFypdSection,
 } from "@/lib/import/types";
+import { readJsonResponse, uploadSizeError } from "@/lib/import/upload-request";
+
+const WORKBOOK_HINT = "Save a copy of the workbook with only the sheets the import reads, or remove embedded images, and try again.";
 
 interface Preview {
   teamSeasons: ResolvedTeamSeasonRecord[];
@@ -65,36 +68,56 @@ export function HistoricalImportWizard() {
   const [error, setError] = useState<string | null>(null);
   const [commitSummary, setCommitSummary] = useState<CommitSummary | null>(null);
   const [managerFilter, setManagerFilter] = useState("all");
-  const [clearDemoData, setClearDemoData] = useState(true);
+  const [clearDemoData, setClearDemoData] = useState(false);
 
   async function onFile(file: File) {
+    const tooLarge = uploadSizeError([file], WORKBOOK_HINT);
+    if (tooLarge) {
+      setError(tooLarge);
+      return;
+    }
     setBusy(true);
     setError(null);
     const fd = new FormData();
     fd.append("file", file);
-    const res = await fetch("/api/commissioner/import/historical/check", { method: "POST", body: fd });
-    const data = await res.json();
-    setBusy(false);
-    if (!res.ok) {
-      setError(data.error ?? "Could not parse that file.");
-      return;
+    try {
+      const res = await fetch("/api/commissioner/import/historical/check", { method: "POST", body: fd });
+      const out = await readJsonResponse<Preview>(res, "Could not parse that file.", WORKBOOK_HINT);
+      if (!out.ok) {
+        setError(out.error);
+        return;
+      }
+      setPreview(out.data);
+      setStep("review");
+    } catch {
+      setError("Could not reach the server to read that file. Check your connection and try again.");
+    } finally {
+      setBusy(false);
     }
-    setPreview(data);
-    setStep("review");
   }
 
   async function commit() {
     if (!preview) return;
     setBusy(true);
-    const res = await fetch("/api/commissioner/import/historical/commit", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...preview, clearDemoData }),
-    });
-    const data = await res.json();
-    setBusy(false);
-    setCommitSummary(data);
-    setStep("done");
+    setError(null);
+    try {
+      const res = await fetch("/api/commissioner/import/historical/commit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...preview, clearDemoData }),
+      });
+      const out = await readJsonResponse<CommitSummary>(res, "Import failed - nothing was written.");
+      if (!out.ok) {
+        setError(out.error);
+        return;
+      }
+      setCommitSummary(out.data);
+      setStep("done");
+    } catch {
+      setError("Could not reach the server. Check whether the import finished before trying again.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   if (step === "upload") {
@@ -237,6 +260,7 @@ export function HistoricalImportWizard() {
             {busy ? "Committing…" : "Confirm & Commit"}
           </button>
         </div>
+        {error && <p className="text-sm text-red">{error}</p>}
       </div>
     );
   }

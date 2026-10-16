@@ -47,6 +47,10 @@ export async function POST(req: Request) {
   if (!league) return NextResponse.json({ error: "No league configured" }, { status: 500 });
 
   const body = (await req.json()) as CommitBody;
+  if (body.clearDemoData) {
+    const refusal = await realLeagueDataGuard(league.id);
+    if (refusal) return NextResponse.json({ error: refusal }, { status: 409 });
+  }
   const attributedSeasons = body.teamSeasons.filter((r) => r.seasonYear !== null && r.attribution !== "unattributed");
 
   const result = await prisma.$transaction(
@@ -55,6 +59,21 @@ export async function POST(req: Request) {
   );
 
   return NextResponse.json(result);
+}
+
+/**
+ * The demo wipe deletes every team, player, keeper record and transaction
+ * in the league. It was meant for replacing the fictional demo league once;
+ * once the league is linked to Yahoo or holds an imported league history,
+ * running it would erase the real league, so it's refused outright.
+ */
+async function realLeagueDataGuard(leagueId: string): Promise<string | null> {
+  const [yahoo, history] = await Promise.all([
+    prisma.yahooConnection.count({ where: { leagueId } }),
+    prisma.acquisition.count({ where: { team: { leagueId }, sourceRef: { startsWith: "league-history:" } } }),
+  ]);
+  if (yahoo === 0 && history === 0) return null;
+  return "Nothing was written. \"Remove the demo league\" would delete this league's real data (it is linked to Yahoo or holds the imported league history). Uncheck it and import again.";
 }
 
 async function runImport(
