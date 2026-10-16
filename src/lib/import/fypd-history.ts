@@ -72,3 +72,29 @@ export function parseFypdRawSection(
         : [],
   };
 }
+
+/**
+ * The FYPD sheet's real layout (0-based columns of the rows below its two
+ * title/header rows):
+ *
+ * - Table 1, A-D: the 2026 FYPD (2025 MLB class) - pick, team, player.
+ * - Table 2, R-T: the 2025 FYPD (2024 MLB class) - pick, team, player.
+ * - U-Y, right beside Table 2: a separate reference list of the 2024 MLB
+ *   draft (MLB pick #, name, POS, drafted by, school), one MLB pick per
+ *   row. Its POS on a given row belongs to that MLB pick, not to the FYPD
+ *   pick on the same row - e.g. FYPD #2 Travis Bazzana sits beside MLB
+ *   #2's "RHP / Cincinnati Reds / Wake Forest" (Chase Burns). So no
+ *   position is read for Table 2; Yahoo supplies real positions once a
+ *   prospect is on a roster. (Production's 2025 FYPD prospects carried
+ *   these until 2026-10-16 - see the fypd-2025-position-clear audit entry.)
+ */
+export const FYPD_TABLE_1_COLUMNS: FypdColumnMap = { pick: 0, team: 1, player: 2 };
+export const FYPD_TABLE_2_COLUMNS: FypdColumnMap = { pick: 17, team: 18, player: 19 };
+
+/** Both pick tables from the FYPD sheet's rows (title and header rows already removed). */
+export function parseFypdSheet(rows: Cell[][], table1Year: number, table2Year: number): ParsedFypdSection[] {
+  return [
+    parseFypdRawSection("FYPD", "Table 1 (cols A-D)", rows, FYPD_TABLE_1_COLUMNS, table1Year),
+    parseFypdRawSection("FYPD", "Table 2 (cols R-Y)", rows, FYPD_TABLE_2_COLUMNS, table2Year),
+  ];
+}
