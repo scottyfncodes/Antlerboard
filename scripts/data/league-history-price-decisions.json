@@ -1,0 +1,4 @@
+[
+  { "season": 2023, "franchise": "Tyler", "player": "Ronald Acuña Jr.", "kind": "auction-price", "value": 74, "source": "Yahoo (draft download and pasted auction history agree); workbook had $71", "approvedBy": "Commissioner (Scott), 2026-10-16" },
+  { "season": 2025, "franchise": "Kurt", "player": "MacKenzie Gore", "kind": "keeper-cost", "value": 7, "source": "Workbook recorded keeper cost; Yahoo and the workbook's 2024 projection show $6", "approvedBy": "Commissioner (Scott), 2026-10-16" }
+]
