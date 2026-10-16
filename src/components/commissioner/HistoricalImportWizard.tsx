@@ -33,7 +33,9 @@ interface Preview {
 interface CommitSummary {
   teamSeasonsWritten: number;
   tradesWritten: number;
+  tradesSkipped: number;
   propBetsWritten: number;
+  propBetsSkipped: number;
   draftDaysWritten: number;
   fypdBatchesWritten: number;
   demoCleanup: { managersDeleted: number; teamsDeleted: number; playersDeleted: number; seasonsDeleted: number } | null;
@@ -244,6 +246,11 @@ export function HistoricalImportWizard() {
       <p className="font-medium text-green">Import complete.</p>
       <p className="text-muted">{commitSummary?.teamSeasonsWritten} team-season records written.</p>
       <p className="text-muted">{commitSummary?.tradesWritten} historical trades, {commitSummary?.propBetsWritten} historical prop bets.</p>
+      {(commitSummary?.tradesSkipped || commitSummary?.propBetsSkipped) ? (
+        <p className="text-muted">
+          Already on record, so not added again: {commitSummary?.tradesSkipped ?? 0} trades, {commitSummary?.propBetsSkipped ?? 0} prop bets.
+        </p>
+      ) : null}
       <p className="text-muted">{commitSummary?.draftDaysWritten} draft-day record(s), {commitSummary?.fypdBatchesWritten} FYPD batch(es) staged for review.</p>
       {commitSummary?.demoCleanup && (
         <p className="text-muted">

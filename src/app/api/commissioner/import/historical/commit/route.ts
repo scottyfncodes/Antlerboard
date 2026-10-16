@@ -120,29 +120,46 @@ async function runImport(
     }
   }
 
+  // Trades and prop bets have no natural unique key, so a re-run used to
+  // write every row a second time (Sep 2026: 87 trade rows for 44 trades).
+  // A row identical in every content column is skipped instead. Team ids
+  // aren't compared - the League History import fills those in later.
   let tradesWritten = 0;
+  let tradesSkipped = 0;
   for (const t of body.trades) {
     if (!t.teamAName || !t.teamBName) continue;
-    await tx.historicalTrade.create({
-      data: {
-        leagueId,
-        seasonYear: t.seasonYear,
-        tradeDate: t.tradeDate ? new Date(t.tradeDate) : null,
-        teamAName: t.teamAName,
-        teamAPlayersRaw: t.teamAPlayersRaw,
-        teamADropsRaw: t.teamADropsRaw,
-        teamBName: t.teamBName,
-        teamBPlayersRaw: t.teamBPlayersRaw,
-        teamBDropsRaw: t.teamBDropsRaw,
-        sourceRef: t.sourceRef,
-      },
-    });
+    const data = {
+      leagueId,
+      seasonYear: t.seasonYear ?? null,
+      tradeDate: t.tradeDate ? new Date(t.tradeDate) : null,
+      teamAName: t.teamAName,
+      teamAPlayersRaw: t.teamAPlayersRaw ?? null,
+      teamADropsRaw: t.teamADropsRaw ?? null,
+      teamBName: t.teamBName,
+      teamBPlayersRaw: t.teamBPlayersRaw ?? null,
+      teamBDropsRaw: t.teamBDropsRaw ?? null,
+      sourceRef: t.sourceRef ?? null,
+    };
+    if (await tx.historicalTrade.findFirst({ where: data, select: { id: true } })) {
+      tradesSkipped++;
+      continue;
+    }
+    await tx.historicalTrade.create({ data });
     tradesWritten++;
   }
 
   let propBetsWritten = 0;
+  let propBetsSkipped = 0;
   for (const b of body.propBets) {
     if (!b.teamAName || !b.teamBName || !b.description) continue;
+    const existing = await tx.historicalPropBet.findFirst({
+      where: { leagueId, seasonYear: b.seasonYear ?? null, teamAName: b.teamAName, teamBName: b.teamBName, amount: b.amount ?? null, description: b.description, sourceRef: b.sourceRef ?? null },
+      select: { id: true },
+    });
+    if (existing) {
+      propBetsSkipped++;
+      continue;
+    }
     // The prop-bet sheet identifies each side by manager name, not team
     // name (unlike the trades sheet, which uses real team names) - see
     // resolveTeamIdByManagerAndYear.
@@ -231,7 +248,9 @@ async function runImport(
       after: {
         teamSeasonsWritten,
         tradesWritten,
+        tradesSkipped,
         propBetsWritten,
+        propBetsSkipped,
         draftDaysWritten,
         fypdBatchesWritten,
         demoCleanup,
@@ -243,7 +262,9 @@ async function runImport(
   return {
     teamSeasonsWritten,
     tradesWritten,
+    tradesSkipped,
     propBetsWritten,
+    propBetsSkipped,
     draftDaysWritten,
     fypdBatchesWritten,
     demoCleanup,

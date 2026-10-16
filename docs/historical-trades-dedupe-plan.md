@@ -22,16 +22,21 @@ approval.
 row on every run. It upserts team-season records, but it doesn't upsert
 trades, so the second run on Sep 22 added a second copy of each trade.
 
+**Prop bets have the same problem** (read-only, 2026-10-16): 36
+`HistoricalPropBet` rows for 20 distinct bets, from the same two runs.
+`scripts/dedupe-historical-trades.sql` doesn't touch them; they need a
+matching script, under the same backup-and-approve steps, before cleanup.
+
 **Also check:** `row 57` (Michael ↔ Ed) is dated 2026-11-28, which is in the
 future. Its neighbours run from 2025-11-25 to 2026-01-29, so 2025-11-28 looks
 likely. This plan doesn't change it. Confirm it against the workbook.
 
 ## Plan
 
-1. **Code fix, as its own PR.** Make the historical import idempotent for
-   trades. A trade whose `sourceRef` and content already exist is skipped,
-   not created again. A re-run should then leave the row count unchanged.
-   Add a test for exactly that.
+1. **Code fix, as its own PR.** *Done* (`historical/commit/route.ts`): a
+   trade or prop bet identical in every content column is skipped, not
+   created again, and the result reports `tradesSkipped` /
+   `propBetsSkipped`. Covered by `historical/commit/route.test.ts`.
 2. **Backup.** Create a Neon backup branch of `main` immediately before the
    cleanup, as in runbook §2. Record its id.
 3. **Verify read-only.** The counts above must still hold: 87 rows, 44
