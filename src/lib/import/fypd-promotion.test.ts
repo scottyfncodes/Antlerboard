@@ -57,6 +57,33 @@ describe("promoteFypdBatch", () => {
     expect(updatedBatch.confirmedAt).not.toBeNull();
   });
 
+  it("keeps an existing player's Yahoo positions and gives a new prospect none when the sheet has no position", async () => {
+    const { league } = await makeLeagueWithSeason(2025);
+    await makeRosteredManager(league.id, "Andrew", 2025);
+    await makeRosteredManager(league.id, "Ed", 2025);
+    await prisma.player.create({ data: { leagueId: league.id, name: "Travis Bazzana", yahooPlayerId: "469.p.64311", positions: ["2B", "Util"] } });
+    const batch = await prisma.fypdImportBatch.create({
+      data: {
+        leagueId: league.id,
+        label: "Table 2 (cols R-Y)",
+        sourceSheet: "FYPD",
+        seasonYear: 2025,
+        status: "PENDING_REVIEW",
+        rawPicks: [
+          { overallPickInSource: 1, teamNameRaw: "Andrew", playerName: "Travis Bazzana", positionRaw: null, extra: {} },
+          { overallPickInSource: 2, teamNameRaw: "Ed", playerName: "PJ Morlando", positionRaw: null, extra: {} },
+        ],
+      },
+    });
+
+    await promoteFypdBatch(prisma, batch.id);
+    const bazzana = await prisma.player.findFirstOrThrow({ where: { name: "Travis Bazzana" } });
+    const morlando = await prisma.player.findFirstOrThrow({ where: { name: "PJ Morlando" } });
+    expect(bazzana.positions).toEqual(["2B", "Util"]);
+    expect(bazzana.yahooPlayerId).toBe("469.p.64311");
+    expect(morlando.positions).toEqual([]);
+  });
+
   it("records the round-1 draft order from the source's own pick sequence", async () => {
     const { league } = await makeLeagueWithSeason(2024);
     const names = ["Aaron", "Andrew", "Ed", "Hugo", "Jorge", "Kurt", "MattyJ", "Michael", "Neel", "Scott", "Tyler", "Zach"];

@@ -6,7 +6,7 @@ import { parseManagerSheetSeasonBlocks, resolveTeamSeasonRecords } from "@/lib/i
 import { parsePropBetRows } from "@/lib/import/prop-bets";
 import { parseTradeRows } from "@/lib/import/trades";
 import { parseDraftDayHistorySheet } from "@/lib/import/draft-day-history";
-import { parseFypdRawSection } from "@/lib/import/fypd-history";
+import { parseFypdSheet } from "@/lib/import/fypd-history";
 import type { ParsedTeamSeasonBlock } from "@/lib/import/types";
 
 /**
@@ -69,25 +69,11 @@ export async function POST(req: Request) {
     .filter((ws) => /^Draft Weekend \d{4}$/.test(ws.name))
     .map((ws) => parseDraftDayHistorySheet(ws.name, worksheetToRows(ws)));
 
-  const fypdSections = [];
   const fypdWs = wb.getWorksheet("FYPD");
-  if (fypdWs) {
-    // Row 1 is blank/title, row 2 is the header ("Pick"/"Team"/"Player" etc)
-    // for both side-by-side tables - skip both before parsing pick rows.
-    const rows = worksheetToRows(fypdWs).slice(2);
-    fypdSections.push(
-      parseFypdRawSection("FYPD", "Table 1 (cols A-D)", rows, { pick: 0, team: 1, player: 2 }, FYPD_TABLE_1_YEAR)
-    );
-    fypdSections.push(
-      parseFypdRawSection(
-        "FYPD",
-        "Table 2 (cols R-Y)",
-        rows,
-        { pick: 17, team: 18, player: 19, position: 22 },
-        FYPD_TABLE_2_YEAR
-      )
-    );
-  }
+  // Row 1 is blank/title, row 2 is the header ("Pick"/"Team"/"Player" etc)
+  // for both side-by-side tables - skip both before parsing pick rows.
+  // Column layout (and why Table 2 has no position): see parseFypdSheet.
+  const fypdSections = fypdWs ? parseFypdSheet(worksheetToRows(fypdWs).slice(2), FYPD_TABLE_1_YEAR, FYPD_TABLE_2_YEAR) : [];
 
   const summary = {
     totalTeamSeasons: teamSeasons.length,
