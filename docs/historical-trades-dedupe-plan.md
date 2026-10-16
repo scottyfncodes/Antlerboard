@@ -23,9 +23,15 @@ row on every run. It upserts team-season records, but it doesn't upsert
 trades, so the second run on Sep 22 added a second copy of each trade.
 
 **Prop bets have the same problem** (read-only, 2026-10-16): 36
-`HistoricalPropBet` rows for 20 distinct bets, from the same two runs.
-`scripts/dedupe-historical-trades.sql` doesn't touch them; they need a
-matching script, under the same backup-and-approve steps, before cleanup.
+`HistoricalPropBet` rows for 20 distinct bets (20 from load 1, 16 from
+load 2). `scripts/dedupe-historical-prop-bets.sql` is the matching script,
+with the same guards (36 / 20 / 16, nothing tripled; after: 20 rows, 20
+distinct `sourceRef`s) and the same backup-and-approve steps. Tested on the
+local replica with 36 synthetic rows: it left 20, and a second run refused.
+
+**Re-checked 2026-10-16, after the league-history import:** trades still 87
+rows / 44 distinct / 43 pairs counting the newly filled team links, so the
+trade script's guards hold as written.
 
 **Also check:** `row 57` (Michael ↔ Ed) is dated 2026-11-28, which is in the
 future. Its neighbours run from 2025-11-25 to 2026-01-29, so 2025-11-28 looks
@@ -41,7 +47,8 @@ likely. This plan doesn't change it. Confirm it against the workbook.
    cleanup, as in runbook §2. Record its id.
 3. **Verify read-only.** The counts above must still hold: 87 rows, 44
    distinct, 43 pairs, nothing duplicated twice.
-4. **Correct.** Run `scripts/dedupe-historical-trades.sql`.
+4. **Correct.** Run `scripts/dedupe-historical-trades.sql`, then
+   `scripts/dedupe-historical-prop-bets.sql`.
    - It keeps the oldest row of each identical group and deletes the rest
      (43 rows).
    - It writes one `AuditLogEntry` for the correction.
