@@ -10,7 +10,8 @@
  * caller decides how much ambiguity it will accept (see matchPlayerName).
  */
 
-const SUFFIXES = new Set(["jr", "sr", "ii", "iii", "iv", "v"]);
+// "2"/"3": the workbook writes Michael Harris II as "M.Harris 2".
+const SUFFIXES = new Set(["jr", "sr", "ii", "iii", "iv", "v", "2", "3", "4"]);
 
 /**
  * League shorthand that no roster name will ever match, confirmed by the
