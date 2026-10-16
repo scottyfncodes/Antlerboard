@@ -31,7 +31,7 @@
 import type { Prisma, PrismaClient, TransactionType } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { fantasyContent, readFields, toArray } from "./parse";
-import { canonicalYahooPlayerId } from "./player-id";
+import { canonicalYahooPlayerId, yahooPlayerIdForms } from "./player-id";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 type Json = Record<string, unknown>;
@@ -118,6 +118,10 @@ export async function fetchLeagueTransactions(
     if (pages === 1) {
       leagueMeta = readFields(parts[0]);
       if (!container) throw new MalformedYahooResponseError(`Yahoo's transactions response for ${leagueKey} has no transactions field - it couldn't be read.`);
+      const answered = str(leagueMeta.league_key);
+      if (answered && answered !== leagueKey) {
+        throw new MalformedYahooResponseError(`Asked Yahoo for league ${leagueKey} but it answered for ${answered} - nothing read.`);
+      }
     } else if (parts.length > 0) {
       const season = str(readFields(parts[0]).season);
       if (season && str(leagueMeta.season) && season !== str(leagueMeta.season)) {
@@ -268,10 +272,11 @@ export function parseYahooTransaction(raw: unknown): ParseOutcome {
   const timestamp = Number.isFinite(ts) && ts > 0 ? new Date(ts * 1000) : null;
   if (!timestamp) issues.push("Yahoo sent no usable timestamp.");
 
+  // Absent (or blank) means Yahoo reported no bid - never read as $0.
   const faabRaw = meta.faab_bid;
   let faabBid: number | null = null;
-  if (faabRaw !== undefined && faabRaw !== null && faabRaw !== "") {
-    const n = Number(faabRaw);
+  if (faabRaw !== undefined && faabRaw !== null && !(typeof faabRaw === "string" && faabRaw.trim() === "")) {
+    const n = typeof faabRaw === "number" || typeof faabRaw === "string" ? Number(faabRaw) : NaN;
     if (Number.isInteger(n) && n >= 0) faabBid = n;
     else issues.push(`Yahoo's faab_bid "${String(faabRaw)}" isn't a whole number - not recorded.`);
   }
@@ -667,6 +672,14 @@ export async function applyTransactionPlan(db: Db, leagueId: string, plan: Trans
 
   for (const p of diff.links) {
     let playerId = p.playerId;
+    if (!playerId) {
+      // The plan was resolved from a snapshot; another writer (the roster
+      // sync, or the daily sync during a recovery) may have added this Yahoo
+      // identity since. Link that player rather than create a second one.
+      const sameIdentity = await db.player.findMany({ where: { leagueId, OR: yahooPlayerIdForms(p.canonicalId) }, select: { id: true }, take: 2 });
+      if (sameIdentity.length > 1) throw new Error(`${p.name} (Yahoo ${p.canonicalId}) now matches more than one Antlerboard player - not written.`);
+      playerId = sameIdentity[0]?.id ?? null;
+    }
     if (!playerId) {
       const created = await db.player.create({
         data: { leagueId, yahooPlayerId: p.yahooPlayerKey ?? p.canonicalId, name: p.name, mlbTeam: p.mlbTeam, positions: p.positions },

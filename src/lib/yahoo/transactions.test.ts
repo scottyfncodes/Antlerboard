@@ -376,3 +376,17 @@ describe("yPage fixture", () => {
     expect(yPage([]).fantasy_content.league[1]).toEqual({ transactions: { count: 0 } });
   });
 });
+
+describe("hardening", () => {
+  it("refuses a response for a different league than the one asked for", async () => {
+    const get = async () => ({ fantasy_content: { league: [{ league_key: "458.l.2049", season: "2026" }, { transactions: { count: 0 } }] } });
+    await expect(fetchLeagueTransactions(get, LK)).rejects.toThrow("answered for 458.l.2049");
+  });
+
+  it("reads a blank faab_bid as no bid, not $0", () => {
+    const r = parseYahooTransaction(yTx(meta(2, "add", { faab_bid: " " }), [yPlayer(100, "Aaron Judge", waiverAdd(1))]).transaction);
+    expect(r.ok && r.tx).toMatchObject({ faabBid: null, issues: [] });
+    const zero = parseYahooTransaction(yTx(meta(2, "add", { faab_bid: "0" }), [yPlayer(100, "Aaron Judge", waiverAdd(1))]).transaction);
+    expect(zero.ok && zero.tx.faabBid).toBe(0);
+  });
+});

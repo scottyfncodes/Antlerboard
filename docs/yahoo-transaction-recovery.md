@@ -47,28 +47,58 @@ exists; then nothing is linked and the row is flagged.
 
 ## The recovery (two separate steps)
 
-Both use the stored access token **without refreshing it**, so the dry run
-writes nothing anywhere. Run them within about an hour of the daily sync
-(12:00 UTC) or a commissioner's Sync Now. Signed in as the commissioner, on
-https://antlerboard.vercel.app (never a preview URL):
+Both steps use the stored access token **without refreshing it**, and both are
+refused on deployments without the Yahoo env vars (verified 2026-10-16:
+`YAHOO_CLIENT_ID`, `YAHOO_CLIENT_SECRET` and `YAHOO_REDIRECT_URI` are scoped to
+Production only, while the database URL is shared with Preview).
 
-1. **Dry run [READ]**: open
-   `/api/commissioner/yahoo-transaction-recovery?season=2026`
-   (`&leagueKey=…` for another Yahoo league; it defaults to the connected one).
-2. **Review** the report (format below). Before applying, decide on everything
-   that isn't `ready`, and on `playersToCreate`.
-3. **Back up** production (Neon branch, as in the historical-import runbook §2).
-4. **Apply [PROD WRITE]**: `POST` the same URL with
-   ```json
-   { "season": 2026, "fingerprint": "<from the reviewed dry run>", "confirm": "APPLY_YAHOO_TRANSACTION_RECOVERY" }
-   ```
-   It re-reads Yahoo and **refuses (409) unless the plan is identical** to the
-   one reviewed, or if Yahoo's log wasn't read to the end. Then it writes only
-   `ready` records, each in its own database transaction, and logs one
-   `YAHOO_TRANSACTION_RECOVERY` audit entry. It is refused on deployments
-   without the Yahoo env vars (previews).
-5. **Re-run the dry run.** Recovered rows are no longer targets. Applying again
-   writes nothing new.
+- **Dry run** - `GET /api/commissioner/yahoo-transaction-recovery?season=2026`
+  (`&leagueKey=…` for another Yahoo league; default is the connected one).
+  - **Database writes: none.** Only `find`/`count` queries: the commissioner
+    check, the season, the target rows, players, teams.
+  - **Token:** it reads the stored access token and refuses (409) if fewer than
+    30 s remain. A 401 from Yahoo is not retried with a refresh.
+  - **Side effects:** about 40 Yahoo GETs at a 500 ms pace. These count toward
+    Yahoo's rate limit, so don't run it back to back with a Sync Now or a
+    history export. Failed Yahoo responses are logged to the function log, with
+    the token redacted (`diagnostics.ts`).
+- **Apply** - `POST` the same URL with
+  `{ "season": 2026, "fingerprint": "<reviewed>", "confirm": "APPLY_YAHOO_TRANSACTION_RECOVERY" }`.
+  1. Re-reads Yahoo and rebuilds the plan. Refuses (409, nothing written) if
+     the fingerprint differs or Yahoo's log wasn't read to the end.
+  2. Writes a `YAHOO_TRANSACTION_RECOVERY_STARTED` audit entry.
+  3. For each `ready` record, in key order, in its own database transaction:
+     re-reads the stored row. It writes only if the row is still exactly the
+     reviewed one (same id, season, type, date, notes, still legacy, no links)
+     and the write is still clean (no issues, same season). Otherwise it skips
+     the record and names it.
+  4. Stops starting new records after 200 s (the route allows 300 s) and
+     reports `notAttempted`.
+  5. Writes a final `YAHOO_TRANSACTION_RECOVERY` audit entry with the counts
+     and every skipped or failed key.
+
+### What the fingerprint binds
+
+`sha256` over `{v: 2, leagueKey, seasonYear, ready: [...]}`. For every ready
+record, in key order, it covers:
+
+- **the stored row it was planned against:** id, seasonId, type, date, notes,
+  link counts;
+- **the full plan the apply step writes:** type, Yahoo type, status, date,
+  FAAB, every team link (team id + role), and every player link (player id or
+  "create", Yahoo key/id, name, MLB team, positions, action, source and
+  destination types and team ids).
+
+Any change to any of it changes the fingerprint: Yahoo's data, a team re-linked
+to another Yahoo key, a player created or linked in the meantime, or a hand
+edit to a target row. Records that aren't `ready` are never written, so they
+are not part of it. Order doesn't matter: the same data in a different Yahoo
+order gives the same fingerprint (tested).
+
+Partial runs: records written before a failure or the time limit stay written
+(each is atomic). A new dry run then shows only what's left. Re-running the
+**old** fingerprint is refused, because the plan changed. That's intended:
+review the remainder, then apply its new fingerprint.
 
 ### Dry-run report format
 
@@ -82,7 +112,7 @@ https://antlerboard.vercel.app (never a preview URL):
   "proposedTypes": { "WAIVER_ADD": 0, "FREE_AGENT_ADD": 0, "DROP": 0, "TRADE": 0, "COMMISSIONER_MOVE": 0 },
   "playersToCreate": [{ "yahooPlayerId": "12345", "name": "…" }],
   "onlyInYahoo": ["469.l.8891.tr.…"],  // not stored at all - the daily sync adds these, recovery doesn't
-  "fingerprint": "<sha256 of every ready record's proposal>",
+  "fingerprint": "<sha256 of exactly what applying writes - see above>",
   "records": [{
     "yahooTransactionId": "469.l.8891.tr.6",
     "status": "ready",                 // or unresolved / unsupported / malformed / missing_in_yahoo / not_checked
@@ -110,43 +140,257 @@ The counts above are placeholders; only a real dry run can fill them in.
 
 ## Authorization needed to read the Yahoo source
 
-- A commissioner session on production (`requireCommissioner`).
-- The league's stored Yahoo connection (`YahooConnection` for `469.l.8891`)
-  with an **unexpired access token**. These routes never refresh it, because
-  refreshing writes new tokens. On 2026-10-16 the token was valid 12:00–13:00
-  UTC, after the daily cron. Outside that window both steps answer 409 and
-  change nothing.
-- The Yahoo app's Fantasy Sports API approval (already in place: the daily sync
-  works).
-- For the apply step only: a deployment with the Yahoo env vars set (production).
+- A commissioner session on **production** (`requireCommissioner`, plus the Yahoo env vars present).
+- The league's stored Yahoo connection (`469.l.8891`) with an **unexpired access token**.
+- The Yahoo app's Fantasy Sports API approval (in place: the daily sync works).
 
-No new credentials, scopes or env vars are needed.
+No new credentials, scopes or env vars are needed. Nobody needs to see or copy
+a token.
 
-## Open decisions and known uncertainties
+### Getting a fresh token (facts, 2026-10-16)
 
-1. **Team keys in Yahoo's JSON.** Team links use `source_team_key` /
-   `destination_team_key` (and `trader_team_key` / `tradee_team_key`), the
-   field names in Yahoo's transaction schema. This repo's export notes only
-   confirm the team *names* in real responses. If the keys turn out to be
-   absent, every record will be `unresolved` with "Yahoo gave no team key";
-   the dry run will show it before anything is written. Matching by team name
-   would then be a product decision: names change mid-season.
-2. **Acquisitions for 2026 in-season moves.** The sync still writes no
-   `Acquisition` rows, so in-season 2026 adds and trades don't feed keeper
-   costs. Changing that changes keeper costs and needs a decision.
-3. **Players to create.** Recovery creates Yahoo-linked players for Yahoo
-   ids nobody has (listed in `playersToCreate`). A player entered by hand under
-   a different spelling would then exist twice.
+- **Yahoo tokens last one hour.** The 12:00:38 UTC sync stored a token that
+  expired at 13:00:38 UTC.
+- **There is no read-only way to get a new one.** Refreshing always writes the
+  new access token, and possibly a rotated refresh token, to `YahooConnection`
+  (`getValidAccessToken`). Skipping that write would break the next sync.
+- **Only two things refresh it:**
+  - **The scheduled daily sync** (cron `0 12 * * *`). It has fired at 12:56 UTC
+    on Oct 15 and 12:00 UTC on Oct 16; Vercel Hobby runs it at some point
+    within the hour. It refreshes the token because the old one has long
+    expired.
+  - **A commissioner's Sync Now.** That is a production sync, so it needs your
+    approval.
+- **Recommended:** let the scheduled sync refresh the token. Nothing extra
+  writes to production, and the token window opens when that sync finishes.
+
+### How to check the window, without exposing the token
+
+Read-only:
+
+```sql
+SELECT now(), "tokenExpiresAt", "lastSyncAttemptAt", "lastSyncStatus"
+FROM "YahooConnection";
+```
+
+- **Start the dry run with at least 5 minutes left.** It takes about 30–60 s.
+- **Start the apply with at least 10 minutes left.** It re-reads Yahoo
+  (~30–60 s), then makes up to ~907 small writes.
+- **If time runs out, nothing breaks.** Either step answers 409 and the work
+  waits for the next day's window. A fingerprint stays valid across days as
+  long as nothing it binds has changed. The 2026 season is over, so Yahoo's log
+  shouldn't change.
+
+## Production rollout
+
+### What the migration does
+
+The migration is `20261016200000_yahoo_transaction_detail`, applied by
+`scripts/build.sh` (`prisma migrate deploy`) **only on production builds,
+before `next build`**:
+
+- `ALTER TYPE "TransactionType" ADD VALUE 'COMMISSIONER_MOVE'`;
+- 6 nullable or defaulted columns on `Transaction` (`dateUnavailable` defaults
+  to `false`, `yahooDetailIssues` to `{}`);
+- 6 nullable columns on `TransactionPlayer`.
+
+No existing row's values change. As of 2026-10-16 production's last migration
+is `20261014180000_add_roster_spots`.
+
+### Can code reach the new columns before the migration?
+
+- **Production: no.** The migration runs during the build, before the new code
+  is promoted. While it builds, the old deployment keeps serving; its Prisma
+  client names only the columns it knows, so the new columns are invisible to
+  it. If the build fails after migrating, the old code keeps working against
+  the additive schema.
+- **Previews: yes.** They run this branch against the production database
+  without migrating it. Pages that read `Transaction` (home, Transactions,
+  team activity, player history) error on the PR's preview. Every write path
+  is closed there: no cron runs on previews, and Sync Now and both recovery
+  steps refuse without the Yahoo env vars.
+
+### Rollback
+
+- **Before any `COMMISSIONER_MOVE` row exists,** an instant rollback of the
+  code to the previous deployment is safe; the extra columns are ignored.
+- **After one exists, the old code can't read it.** Verified against the old
+  generated client locally: `Value 'COMMISSIONER_MOVE' not found in enum
+  'TransactionType'` on `transaction.findMany`. Such rows appear after the
+  recovery (the 6 commish rows) or when the new sync stores a new commish move.
+  The home page and the Transactions page would then error. **Roll forward
+  instead**, or change those rows' `type` back before rolling back (a
+  production write, so it needs approval).
+- **Undoing the recovery's data:** restore from the Neon backup branch taken
+  just before the apply, which is the simplest and complete option. Every
+  recovered row is also identifiable: `yahooType IS NOT NULL` on a row whose
+  `yahooDetailSyncedAt` falls inside the apply's audit-entry window.
+- **Schema rollback isn't needed.** The added columns are harmless to old code,
+  and Postgres can't drop an enum value in place.
+
+### Order of operations (each production step waits for your approval)
+
+| # | Step | Writes to production? |
+|---|---|---|
+| 1 | You approve and merge PR #35 | Merge only |
+| 2 | Take a Neon backup branch **before** the production build; record its id | New branch, `main` untouched |
+| 3 | Vercel builds production: migration, then build, then promote | **Schema (additive)** |
+| 4 | Verify the deploy (queries below) | No |
+| 5 | Wait for the next scheduled sync (12:00–12:59 UTC). It runs the new sync code: refreshes the token, adds any Yahoo transactions not stored yet, may create Yahoo-linked players for them, leaves the 907 alone, and ends **PARTIAL** ("awaiting recovery") | **Yes - the scheduled sync** |
+| 6 | Commissioner runs the dry run on production within that token window; saves the JSON | No |
+| 7 | Review the report together; you approve the fingerprint in writing | No |
+| 8 | Neon backup branch immediately before applying; record its id | New branch |
+| 9 | Commissioner POSTs the apply in a token window, at least 10 min before expiry, and not while a sync is running | **Yes - recovery** |
+| 10 | Verify (below) | No |
+
+### Verification (read-only)
+
+```sql
+-- Deploy (step 4)
+SELECT migration_name, finished_at FROM "_prisma_migrations" ORDER BY finished_at DESC LIMIT 1;
+SELECT count(*) total, count(*) FILTER (WHERE "yahooTransactionId" IS NOT NULL) yahoo,
+       count(*) FILTER (WHERE "yahooTransactionId" IS NOT NULL AND "yahooType" IS NULL) legacy
+FROM "Transaction";                                  -- expect 5023 / 907 / 907 before step 5
+
+-- First new sync (step 5)
+SELECT status, detail FROM "SyncLog" ORDER BY "startedAt" DESC LIMIT 1;
+-- transactions.counts: legacyAwaitingRecovery = 907, created = new Yahoo-only keys, writeErrors = 0
+
+-- After the apply (step 10)
+SELECT "yahooType", type, count(*) FROM "Transaction" WHERE "yahooTransactionId" IS NOT NULL GROUP BY 1,2;
+                                                     -- matches the report's proposedTypes for ready records
+SELECT count(*) FROM "Transaction" t WHERE "yahooType" IS NOT NULL AND "yahooType" <> 'commish'
+  AND NOT EXISTS (SELECT 1 FROM "TransactionPlayer" p WHERE p."transactionId" = t.id);   -- expect 0
+SELECT count(*) FROM "Transaction" t WHERE "yahooType" = 'trade'
+  AND (SELECT count(DISTINCT "teamId") FROM "TransactionTeam" x WHERE x."transactionId" = t.id) < 2;  -- expect 0
+SELECT count(*) FROM "Transaction" t WHERE "yahooType" = 'add/drop'
+  AND NOT EXISTS (SELECT 1 FROM "TransactionPlayer" p WHERE p."transactionId" = t.id AND p.action = 'drop');  -- 0 unless flagged
+SELECT count(*) FROM "Transaction" WHERE "yahooTransactionId" IS NOT NULL AND "yahooType" IS NULL;
+                                                     -- = the report's non-ready count
+SELECT (SELECT count(*) FROM "Acquisition"), (SELECT count(*) FROM "KeeperRecord"),
+       (SELECT md5(string_agg(id || type::text || date::text, ',' ORDER BY id)) FROM "Transaction" WHERE "sourceRef" IS NOT NULL);
+                                                     -- identical before and after (5436 / 5064 on 2026-10-16)
+SELECT action, after FROM "AuditLogEntry" WHERE action LIKE 'YAHOO_TRANSACTION_RECOVERY%' ORDER BY "createdAt";
+```
+
+**Against the source:** open 10 recovered transactions on Yahoo's own league
+transaction page and compare each one: teams, players, add or drop, FAAB, date.
+Pick them at random, including at least one trade, one add/drop and one
+commissioner move.
+
+**Pages, signed in on production:**
+
+- `/league/transactions`: the "Incomplete" banner shows only the non-ready
+  count; recovered rows show players, teams, FAAB and "dropped …".
+- The home page "Recent Transactions": same wording.
+- `/teams/<id>` → Activity: that team's recovered moves appear.
+- `/players/<id>` for a player in a recovered add/drop: the history says
+  "Added (Waiver add, $N FAAB)" or "Dropped". **Keeper information on the page
+  doesn't change** (see Keeper costs below).
+- Commissioner → Yahoo after the next scheduled sync: **SUCCESS** if nothing is
+  left to recover, otherwise PARTIAL naming what's left.
+
+## Keeper costs and 2026 in-season moves
+
+- **How keeper history is built.** The keeper engine reads `Acquisition` rows
+  (stint starts and trades) and `Transaction` rows of type `DROP` with linked
+  players (stint ends) (`keeper-sync.ts`).
+- **What the import stored for 2026.** For 2026, `Acquisition` holds only the
+  auction (204) and offseason trades (29). There are no 2026 waiver,
+  free-agent or in-season trade acquisitions, because the 2026 log was the
+  sync's and never reached the import.
+- **The gap in production (2026-10-16), across the 413 current roster spots:**
+
+  | Roster spots | Latest `Acquisition` for that player |
+  |---|---|
+  | 164 | The rostered team |
+  | 197 | Another team |
+  | 52 | None at all |
+
+  Keeper records stop at 2026 (324 rows); none exist for 2027.
+- **Defect found in this audit, and fixed in this PR.** Without a guard, every
+  recovered or newly synced Yahoo `DROP` (216 rows) would have started ending
+  stints in keeper history. The matching in-season adds and trades still
+  wouldn't exist, and the drop halves of add/drops (typed as adds) wouldn't
+  count. That would have been a silent change to keeper costs and eligibility.
+  Keeper history now reads only drops with `yahooTransactionId IS NULL`
+  (`KEEPER_HISTORY_DROP_WHERE`), in `keeper-sync.ts` and the History page.
+  Verified on production data: all 4,116 drops with player links have no Yahoo
+  id and the 216 Yahoo drops have no links, so **nothing changes today**. A
+  test shows the guard keeps a player's events and keeper records identical
+  after a recovered drop is linked, and fails without it.
+- **Smallest safe options for the gap (none implemented, all need your
+  decision):**
+  1. **Leave it** (current behavior): 2026 in-season moves don't affect keeper
+     costs until 2027 keeper work starts.
+  2. **Derive in-season acquisitions from the recovered transactions,** in one
+     reviewed, idempotent, dry-run-first step:
+     - waiver adds become `WAIVER` acquisitions at their FAAB cost;
+     - free-agent adds become `FREE_AGENT` acquisitions;
+     - trades become `TRADE` acquisitions;
+     - and all Yahoo drops are counted together.
+
+     This changes 2027 keeper costs, so it needs your rules first: how FAAB
+     maps to cost, how FYPD call-ups are handled, and which of the 197 and 52
+     mismatches are expected.
+  3. **Commissioner-entered corrections** for the players that matter at the
+     2027 keeper deadline only.
+
+## Verified facts vs assumptions
+
+**Verified** (production reads, 2026-10-16, or tests):
+
+- **The 907 legacy rows:** 907 Yahoo rows, all `469.l.8891`, one season, none
+  with links.
+- **Teams and players:**
+  - all 12 teams are linked with `469.l.8891.t.N` keys;
+  - no two players share a canonical Yahoo id;
+  - 98 players have no Yahoo id (their names would block player creation and
+    show as unresolved).
+- **Token and env vars:**
+  - the token expires an hour after each sync;
+  - the cron fired at 12:56 and 12:00 UTC;
+  - the Yahoo env vars are Production-only;
+  - the migration isn't applied.
+- **Rollback:** the old client fails on `COMMISSIONER_MOVE` (tested locally).
+
+**Assumed, not verified against live Yahoo responses** (no valid token was
+available, and Yahoo's documentation site is unreachable from the build
+environment):
+
+- **Team-key field names:** `source_team_key`, `destination_team_key`,
+  `trader_team_key` and `tradee_team_key` appear in real responses. They come
+  from Yahoo's schema as two client libraries model it (`yfpy`,
+  `yahoo-fantasy`). The repo's own real-export notes confirm team *names*,
+  `faab_bid`, `type`, `status` and `timestamp`.
+- **Paging:** Yahoo honors `;start;count` on this league. The code is correct
+  if it doesn't, but the request count assumes it does.
+- **Status values:** completed moves report `status: "successful"`.
+- **FAAB:** `faab_bid` is absent on $0 and free-agent claims.
+
+**The dry run is the test of each assumption.** If team keys are missing,
+every record comes back `unresolved` with "Yahoo gave no team key", before
+anything is written.
+
+## Open decisions
+
+1. **`COMMISSIONER_MOVE` and rollback.** The new enum value blocks a plain
+   code rollback once such a row exists (see Rollback). The alternative: store
+   Yahoo commissioner moves as the existing `COMMISSIONER_CORRECTION` type,
+   with `yahooType = "commish"` driving the "Commissioner move" label. That
+   removes the enum change from the migration and keeps rollback safe. It's a
+   small change in this PR, but it changes the data model, so it waits for
+   your call.
+2. **2026 in-season acquisitions and keeper costs:** the options are listed
+   above. Behavior stays as it is today until you choose.
+3. **Players to create.** Recovery creates Yahoo-linked players for Yahoo ids
+   nobody has; the dry run lists them. A player entered by hand under a
+   different spelling would then exist twice.
 4. **"Not kept" releases** keep their Dec 31 dates; only their label changed.
-   Re-dating or hiding them is a product decision.
-5. **Daily sync stays PARTIAL** until the 907 are recovered, because it
-   reports them as awaiting recovery.
-6. **Sync time.** Paging adds about 40 requests to every daily sync (~40 s at a
-   500 ms pace). A throttle mid-log makes that run PARTIAL. Whatever was read is
-   still written, and the next run continues from the start.
-7. **Older seasons.** `leagueKey` + `season` lets the same dry run read
-   another Yahoo season, but team keys there won't match today's linked teams.
-   Those records will be `unresolved` until a key mapping exists. 2021–2025
-   history came from the league-history import and has no legacy rows.
-8. **Statuses.** Stored exactly as Yahoo reports them. A status other than
-   `successful` is shown next to the move.
+5. **The daily sync stays PARTIAL** until the 907 are recovered (or
+   explicitly accepted as unrecoverable).
+6. **Sync length.** The daily sync makes about 40 more Yahoo requests (~40 s at
+   500 ms). A throttle mid-log makes that run PARTIAL; whatever was read is
+   still written.
+7. **Older seasons:** dry runs with `leagueKey` for older seasons come back
+   unresolved until a mapping from that season's team keys exists.

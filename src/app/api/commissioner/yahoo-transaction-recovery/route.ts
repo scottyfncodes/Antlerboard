@@ -50,6 +50,9 @@ function failure(err: unknown) {
 
 export async function GET(req: NextRequest) {
   if (!(await requireCommissioner())) return json({ error: "Commissioner access required" }, 403);
+  // Previews share the production database (and its stored token) but not
+  // the Yahoo env vars; the dry run belongs to production like the apply.
+  if (!isYahooConfigured()) return json({ error: "Yahoo isn't configured in this environment - run the recovery from the production site." }, 503);
   const t = await target(req.nextUrl.searchParams.get("season"), req.nextUrl.searchParams.get("leagueKey"));
   if ("error" in t) return json({ error: t.error }, 400);
   try {

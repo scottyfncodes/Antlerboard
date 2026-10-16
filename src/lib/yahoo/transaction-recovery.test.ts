@@ -169,3 +169,89 @@ describe("applyRecoveryPlan (the separate write step)", () => {
     expect(await prisma.player.count({ where: { name: "New Guy" } })).toBe(1);
   });
 });
+
+describe("the fingerprint binds the reviewed plan to exactly what gets written", () => {
+  it("changes when a stored target row changes, so the apply step refuses", async () => {
+    const { league, yahoo } = await legacyLeague();
+    const { fingerprint } = await buildRecoveryPlan(input(league.id, yahoo));
+    await prisma.transaction.update({ where: { yahooTransactionId: txKey(3) }, data: { notes: "edited by hand" } });
+    await expect(applyRecoveryPlan({ ...input(league.id, yahoo), expectedFingerprint: fingerprint, actorName: "Scott" })).rejects.toBeInstanceOf(RecoveryRefused);
+    expect((await prisma.transaction.findUniqueOrThrow({ where: { yahooTransactionId: txKey(3) } })).yahooType).toBeNull();
+  });
+
+  it("changes when a Yahoo team key now maps to a different Antlerboard team, even with the same names shown", async () => {
+    const { league, t1, t2, yahoo } = await legacyLeague();
+    const before = await buildRecoveryPlan(input(league.id, yahoo));
+    await prisma.team.update({ where: { id: t1.id }, data: { yahooTeamId: null } });
+    await prisma.team.update({ where: { id: t2.id }, data: { yahooTeamId: teamKey(1) } });
+    await prisma.team.update({ where: { id: t1.id }, data: { yahooTeamId: teamKey(2) } });
+    const after = await buildRecoveryPlan(input(league.id, yahoo));
+    expect(after.fingerprint).not.toBe(before.fingerprint);
+  });
+
+  it("is the same for the same data, whatever order Yahoo returns it in", async () => {
+    const { league, yahoo } = await legacyLeague();
+    const a = await buildRecoveryPlan(input(league.id, yahoo));
+    const b = await buildRecoveryPlan(input(league.id, [...yahoo].reverse()));
+    expect(b.fingerprint).toBe(a.fingerprint);
+  });
+});
+
+describe("applyRecoveryPlan re-checks every row inside its own write", () => {
+  it("skips a row that gained links between the check and the write, and never overwrites them", async () => {
+    const { league, t2, judge, yahoo } = await legacyLeague();
+    const { fingerprint } = await buildRecoveryPlan(input(league.id, yahoo));
+    // The apply step loads its target rows, then re-reads Yahoo. Change row 4
+    // during that read: the fingerprint (computed from the rows as loaded)
+    // still matches, so only the in-transaction re-check can catch it.
+    const yahooRead = pagedYahoo(yahoo);
+    let changed = false;
+    const get = async (path: string) => {
+      if (!changed) {
+        changed = true;
+        await prisma.transaction.update({
+          where: { yahooTransactionId: txKey(4) },
+          data: { players: { create: { playerId: judge.id } }, teams: { create: { teamId: t2.id, role: "FROM" } } },
+        });
+      }
+      return yahooRead.get(path);
+    };
+
+    const result = await applyRecoveryPlan({ ...input(league.id, yahoo), get, expectedFingerprint: fingerprint, actorName: "Scott" });
+
+    expect(result.skipped).toEqual([{ yahooTransactionId: txKey(4), reason: "The stored row changed since the dry run - not written." }]);
+    expect(result.written).toBe(4);
+    const row = await prisma.transaction.findUniqueOrThrow({ where: { yahooTransactionId: txKey(4) }, include: { players: true, teams: true } });
+    expect(row).toMatchObject({ yahooType: null, type: "DROP" });
+    expect(row.players.map((p) => [p.playerId, p.action])).toEqual([[judge.id, null]]);
+    expect(row.teams.map((x) => [x.teamId, x.role])).toEqual([[t2.id, "FROM"]]);
+  });
+
+  it("links a player someone else created after the dry run instead of creating a second copy", async () => {
+    const { league, yahoo } = await legacyLeague();
+    const { fingerprint } = await buildRecoveryPlan(input(league.id, yahoo));
+    await prisma.player.create({ data: { leagueId: league.id, name: "New Guy", yahooPlayerId: "555", positions: [] } });
+    // Creating that player changes the plan itself, so this exact apply is refused...
+    await expect(applyRecoveryPlan({ ...input(league.id, yahoo), expectedFingerprint: fingerprint, actorName: "Scott" })).rejects.toBeInstanceOf(RecoveryRefused);
+    // ...and a fresh, reviewed plan links the existing player.
+    const fresh = await buildRecoveryPlan(input(league.id, yahoo));
+    expect(fresh.playersToCreate).toEqual([]);
+    const result = await applyRecoveryPlan({ ...input(league.id, yahoo), expectedFingerprint: fresh.fingerprint, actorName: "Scott" });
+    expect(result.playersCreated).toBe(0);
+    expect(await prisma.player.count({ where: { name: "New Guy" } })).toBe(1);
+  });
+
+  it("stops starting writes when its time budget runs out, records why, and a fresh dry run shows what's left", async () => {
+    const { league, yahoo } = await legacyLeague();
+    const { fingerprint } = await buildRecoveryPlan(input(league.id, yahoo));
+    let t = 0;
+    const result = await applyRecoveryPlan({ ...input(league.id, yahoo), expectedFingerprint: fingerprint, actorName: "Scott", timeBudgetMs: 2, now: () => t++ });
+    expect(result.written + result.notAttempted).toBe(5);
+    expect(result.notAttempted).toBeGreaterThan(0);
+    expect(await prisma.auditLogEntry.count({ where: { action: "YAHOO_TRANSACTION_RECOVERY_STARTED" } })).toBe(1);
+    const final = await prisma.auditLogEntry.findFirstOrThrow({ where: { action: "YAHOO_TRANSACTION_RECOVERY" } });
+    expect((final.after as { notAttempted: number }).notAttempted).toBe(result.notAttempted);
+    const again = await buildRecoveryPlan(input(league.id, yahoo));
+    expect(again.summary.ready).toBe(result.notAttempted);
+  });
+});

@@ -95,7 +95,7 @@ export interface RecoveryReport {
   playersToCreate: { yahooPlayerId: string; name: string }[];
   /** Keys in Yahoo's log that Antlerboard doesn't store at all - the daily sync adds them, not recovery. */
   onlyInYahoo: string[];
-  /** Hash of the ready records' proposals; the apply step must be given this exact value. */
+  /** Hash of exactly what applying would write (every ready record's stored row and full plan); the apply step must be given this value. */
   fingerprint: string;
   records: RecoveryRecord[];
 }
@@ -109,18 +109,42 @@ export interface RecoveryInput {
   sleep?: (ms: number) => Promise<void>;
 }
 
+/** The stored row a ready record was planned against - the apply step writes only if it's still exactly this. */
+interface ReviewedRow {
+  id: string;
+  seasonId: string;
+  type: string;
+  date: string;
+  notes: string | null;
+  yahooType: null;
+  playerLinks: number;
+  teamLinks: number;
+}
+
 interface BuiltPlan {
   report: RecoveryReport;
-  plans: Map<string, TransactionPlan>;
+  plans: Map<string, { plan: TransactionPlan; row: ReviewedRow }>;
 }
 
 function emptySummary(): Record<RecoveryStatus, number> {
   return { ready: 0, unresolved: 0, unsupported: 0, malformed: 0, missing_in_yahoo: 0, not_checked: 0 };
 }
 
-function fingerprintOf(records: RecoveryRecord[]): string {
-  const ready = records.filter((r) => r.status === "ready").map((r) => ({ id: r.yahooTransactionId, proposed: r.proposed }));
-  return createHash("sha256").update(JSON.stringify(ready)).digest("hex");
+/**
+ * Binds a reviewed dry run to exactly what the apply step would write: the
+ * league and season, and for every ready record (in key order) the stored
+ * row it was planned against and the full plan applyTransactionPlan writes -
+ * every column, every player link with its team ids, every team link, and
+ * the details of any player it would create. Any difference in any of it
+ * gives a different fingerprint, so the apply step refuses.
+ */
+function fingerprintOf(leagueKey: string, seasonYear: number, plans: BuiltPlan["plans"]): string {
+  const ready = [...plans.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([key, { plan, row }]) => ({ key, row, plan }));
+  return createHash("sha256").update(JSON.stringify({ v: 2, leagueKey, seasonYear, ready })).digest("hex");
+}
+
+function reviewedRowOf(row: { id: string; seasonId: string; type: string; date: Date; notes: string | null; players: unknown[]; teams: unknown[] }): ReviewedRow {
+  return { id: row.id, seasonId: row.seasonId, type: row.type, date: row.date.toISOString(), notes: row.notes, yahooType: null, playerLinks: row.players.length, teamLinks: row.teams.length };
 }
 
 async function build(input: RecoveryInput): Promise<BuiltPlan> {
@@ -146,7 +170,7 @@ async function build(input: RecoveryInput): Promise<BuiltPlan> {
   for (const e of fetched.entries) rawByKey.set(transactionKeyOf(e)!, e);
 
   const records: RecoveryRecord[] = [];
-  const plans = new Map<string, TransactionPlan>();
+  const plans: BuiltPlan["plans"] = new Map();
   const proposedTypes: Record<string, number> = {};
   const toCreate = new Map<string, string>();
 
@@ -173,7 +197,7 @@ async function build(input: RecoveryInput): Promise<BuiltPlan> {
     const diff = diffTransaction(row, plan, { allowLegacy: true });
     const issues = diff.issues;
     const status: RecoveryStatus = diff.outcome === "season_conflict" || issues.length > 0 ? "unresolved" : "ready";
-    if (status === "ready") plans.set(key, plan);
+    if (status === "ready") plans.set(key, { plan, row: reviewedRowOf(row) });
     proposedTypes[plan.type] = (proposedTypes[plan.type] ?? 0) + 1;
     for (const p of plan.players) if (p.createPlayer) toCreate.set(p.canonicalId, p.name);
 
@@ -223,7 +247,7 @@ async function build(input: RecoveryInput): Promise<BuiltPlan> {
       proposedTypes,
       playersToCreate: [...toCreate].map(([yahooPlayerId, name]) => ({ yahooPlayerId, name })),
       onlyInYahoo,
-      fingerprint: fingerprintOf(records),
+      fingerprint: fingerprintOf(leagueKey, seasonYear, plans),
       records,
     },
   };
@@ -249,20 +273,32 @@ export interface RecoveryApplyResult {
   fingerprint: string;
   written: number;
   playersCreated: number;
-  /** Records skipped because they were no longer legacy or changed under us. */
+  /** Ready records not written because the stored row changed since the dry run (each one is named). */
   skipped: { yahooTransactionId: string; reason: string }[];
   failed: { yahooTransactionId: string; error: string }[];
+  /** Ready records not attempted because the time budget ran out. Re-run the dry run to continue. */
+  notAttempted: number;
   /** Records the dry run didn't mark ready - untouched. */
   notReady: Record<Exclude<RecoveryStatus, "ready">, number>;
 }
 
+/** Stop starting new writes after this long, well inside the route's 300 s limit (the Yahoo re-read comes first). */
+export const APPLY_TIME_BUDGET_MS = 200_000;
+
 /**
- * The write. Rebuilds the plan from a fresh Yahoo read; if anything a
- * `ready` record would write differs from what the commissioner reviewed
- * (`expectedFingerprint`), it refuses and writes nothing. Otherwise each
- * ready record is written in its own database transaction.
+ * The write. Rebuilds the plan from a fresh Yahoo read; if anything it would
+ * write differs from what the commissioner reviewed (`expectedFingerprint`),
+ * it refuses and writes nothing. Otherwise each ready record is written in
+ * its own database transaction, and only if - inside that transaction - its
+ * stored row is still exactly the one reviewed and the write is still clean
+ * (no issues, same season). Records already written stay written if a later
+ * one fails or time runs out; a fresh dry run then shows only what's left.
  */
-export async function applyRecoveryPlan(input: RecoveryInput & { expectedFingerprint: string; actorName: string }): Promise<RecoveryApplyResult> {
+export async function applyRecoveryPlan(
+  input: RecoveryInput & { expectedFingerprint: string; actorName: string; timeBudgetMs?: number; now?: () => number }
+): Promise<RecoveryApplyResult> {
+  const now = input.now ?? Date.now;
+  const started = now();
   const { report, plans } = await build(input);
   if (report.fingerprint !== input.expectedFingerprint) {
     throw new RecoveryRefused(
@@ -284,17 +320,36 @@ export async function applyRecoveryPlan(input: RecoveryInput & { expectedFingerp
     playersCreated: 0,
     skipped: [],
     failed: [],
+    notAttempted: 0,
     notReady: { unresolved: 0, unsupported: 0, malformed: 0, missing_in_yahoo: 0, not_checked: 0 },
   };
   for (const r of report.records) if (r.status !== "ready") result.notReady[r.status]++;
 
-  for (const [key, reviewed] of plans) {
+  // Evidence before the first write, so a run cut short still leaves a trace.
+  await prisma.auditLogEntry.create({
+    data: {
+      actorName: input.actorName,
+      action: "YAHOO_TRANSACTION_RECOVERY_STARTED",
+      entityType: "Transaction",
+      isHistoricalCorrection: true,
+      before: { leagueKey: input.leagueKey, seasonYear: input.seasonYear, targets: report.targets, summary: report.summary },
+      after: { fingerprint: report.fingerprint, ready: plans.size },
+    },
+  });
+
+  const budget = input.timeBudgetMs ?? APPLY_TIME_BUDGET_MS;
+  for (const [key, { plan: reviewed, row: reviewedRow }] of [...plans.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    if (now() - started > budget) {
+      result.notAttempted++;
+      continue;
+    }
     try {
       const outcome = await prisma.$transaction(async (tx) => {
-        const row = await tx.transaction.findUnique({ where: { yahooTransactionId: key }, select: { yahooType: true } });
-        if (!row || row.yahooType !== null) return { skip: "No longer a legacy row - already recovered or synced." };
-        // Re-resolve against players created earlier in this run so one
-        // Yahoo player never becomes two Antlerboard players.
+        const row = await tx.transaction.findUnique({ where: { yahooTransactionId: key }, include: { players: true, teams: true } });
+        if (!row) return { skip: "The stored row no longer exists." };
+        if (row.yahooType !== null) return { skip: "No longer a legacy row - already recovered or synced." };
+        if (JSON.stringify(reviewedRowOf(row)) !== JSON.stringify(reviewedRow)) return { skip: "The stored row changed since the dry run - not written." };
+        // Players created earlier in this run: link them, never create twice.
         const plan: TransactionPlan = {
           ...reviewed,
           players: reviewed.players.map((p) => {
@@ -302,7 +357,14 @@ export async function applyRecoveryPlan(input: RecoveryInput & { expectedFingerp
             return known?.length === 1 ? { ...p, playerId: known[0], createPlayer: false } : p;
           }),
         };
-        return { applied: await applyTransactionPlan(tx, input.leagueId, plan, { allowLegacy: true }) };
+        const check = diffTransaction(row, plan, { allowLegacy: true });
+        if (check.outcome !== "updated" || check.issues.length > 0) {
+          return { skip: `No longer a clean write (${check.outcome}${check.issues.length ? `: ${check.issues.join(" ")}` : ""}) - not written.` };
+        }
+        const applied = await applyTransactionPlan(tx, input.leagueId, plan, { allowLegacy: true });
+        // Anything but a clean update rolls this record back.
+        if (applied.outcome !== "updated" || applied.issues.length > 0) throw new Error(`Unexpected write outcome ${applied.outcome} - rolled back.`);
+        return { applied };
       });
       if ("skip" in outcome) {
         result.skipped.push({ yahooTransactionId: key, reason: outcome.skip! });
@@ -327,8 +389,9 @@ export async function applyRecoveryPlan(input: RecoveryInput & { expectedFingerp
         fingerprint: report.fingerprint,
         written: result.written,
         playersCreated: result.playersCreated,
-        skipped: result.skipped.length,
-        failed: result.failed.length,
+        skipped: result.skipped,
+        failed: result.failed,
+        notAttempted: result.notAttempted,
         notReady: result.notReady,
       },
     },

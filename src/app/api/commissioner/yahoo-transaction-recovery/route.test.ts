@@ -110,3 +110,12 @@ describe("POST /api/commissioner/yahoo-transaction-recovery (apply)", () => {
     expect(await prisma.auditLogEntry.count({ where: { action: "YAHOO_TRANSACTION_RECOVERY", actorName: "Scott" } })).toBe(1);
   });
 });
+
+describe("the dry run is production-only too", () => {
+  it("refuses on a deployment without the Yahoo env vars, before reading anything", async () => {
+    await legacy();
+    mockedConfigured.mockReturnValue(false);
+    expect((await get("?season=2026")).status).toBe(503);
+    expect(mockedGet).not.toHaveBeenCalled();
+  });
+});

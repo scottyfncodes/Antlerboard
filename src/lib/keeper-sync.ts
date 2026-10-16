@@ -26,6 +26,18 @@ import type { KeeperStatus as PrismaKeeperStatus, Prisma, PrismaClient } from "@
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
+/**
+ * The drops that count in keeper history: imported history and moves made
+ * in Antlerboard. Yahoo-synced rows are left out on purpose. The keeper
+ * chain is built from Acquisition rows, and the Yahoo sync writes none, so a
+ * Yahoo drop counted here without the matching in-season adds and trades
+ * would end stints the chain never sees restart (and only drops typed DROP,
+ * not the drop half of an add/drop, would count). Until in-season Yahoo
+ * moves feed Acquisition as a whole - a separate decision - they don't feed
+ * keeper costs at all, exactly as before Yahoo rows carried player links.
+ */
+export const KEEPER_HISTORY_DROP_WHERE = { type: "DROP", yahooTransactionId: null } as const satisfies Prisma.TransactionWhereInput;
+
 type AcquisitionRow = { playerId: string; method: string; seasonYear: number; teamId: string; cost: number; date: Date; preseason: boolean };
 type DropRow = { seasonYear: number; date: Date };
 
@@ -45,7 +57,7 @@ function toEvents(acquisitions: AcquisitionRow[], drops: DropRow[]): PlayerHisto
 export async function getPlayerHistoryEvents(playerId: string, db: Db = prisma): Promise<PlayerHistoryEvent[]> {
   const [acquisitions, drops] = await Promise.all([
     db.acquisition.findMany({ where: { playerId }, orderBy: [{ seasonYear: "asc" }, { date: "asc" }] }),
-    db.transaction.findMany({ where: { type: "DROP", players: { some: { playerId } } }, orderBy: [{ seasonYear: "asc" }, { date: "asc" }] }),
+    db.transaction.findMany({ where: { ...KEEPER_HISTORY_DROP_WHERE, players: { some: { playerId } } }, orderBy: [{ seasonYear: "asc" }, { date: "asc" }] }),
   ]);
   return toEvents(acquisitions, drops);
 }
@@ -113,7 +125,7 @@ export async function rebuildKeeperRecordsBulk(playerIds: string[], throughSeaso
   const [acquisitions, drops, seasons, overrides] = await Promise.all([
     db.acquisition.findMany({ where: { playerId: { in: playerIds } }, orderBy: [{ seasonYear: "asc" }, { date: "asc" }] }),
     db.transaction.findMany({
-      where: { type: "DROP", players: { some: { playerId: { in: playerIds } } } },
+      where: { ...KEEPER_HISTORY_DROP_WHERE, players: { some: { playerId: { in: playerIds } } } },
       include: { players: { select: { playerId: true } } },
       orderBy: [{ seasonYear: "asc" }, { date: "asc" }],
     }),
