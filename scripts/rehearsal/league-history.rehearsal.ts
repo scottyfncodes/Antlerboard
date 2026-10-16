@@ -34,6 +34,33 @@ const AUCTION_SEASONS = [...SEASONS, 2026];
 const LIMIT = 4.0 * 1024 * 1024; // the runbook's margin under Vercel's ~4.5 MB
 
 const sha = (v: unknown) => createHash("sha256").update(JSON.stringify(v)).digest("hex").slice(0, 16);
+
+/**
+ * Row ids are generated afresh on every seed and every import, so a hash
+ * that includes them can't be compared across rehearsals. This one replaces
+ * every id with its natural key (player: Yahoo id or name; team: name;
+ * season / FYPD draft: year; manager: name) and sorts the rows, so two
+ * rehearsals with the same inputs and code give the same hash.
+ */
+async function naturalHasher() {
+  const [players, teams, seasons, drafts, managers] = await Promise.all([
+    prisma.player.findMany({ select: { id: true, yahooPlayerId: true, name: true } }),
+    prisma.team.findMany({ select: { id: true, name: true } }),
+    prisma.season.findMany({ select: { id: true, year: true } }),
+    prisma.fypdDraft.findMany({ select: { id: true, year: true } }),
+    prisma.manager.findMany({ select: { id: true, name: true } }),
+  ]);
+  const key = new Map<string, string>([
+    ...players.map((p) => [p.id, `player:${p.yahooPlayerId ?? p.name}`] as [string, string]),
+    ...teams.map((t) => [t.id, `team:${t.name}`] as [string, string]),
+    ...seasons.map((x) => [x.id, `season:${x.year}`] as [string, string]),
+    ...drafts.map((x) => [x.id, `fypd:${x.year}`] as [string, string]),
+    ...managers.map((x) => [x.id, `manager:${x.name}`] as [string, string]),
+  ]);
+  const swap = (v: unknown): unknown =>
+    Array.isArray(v) ? v.map(swap) : v && typeof v === "object" && !(v instanceof Date) ? Object.fromEntries(Object.entries(v).filter(([k]) => k !== "id").map(([k, x]) => [k, swap(x)])) : typeof v === "string" && key.has(v) ? key.get(v) : v;
+  return (rows: unknown[]) => sha(rows.map((r) => JSON.stringify(swap(r))).sort());
+}
 const mb = (n: number) => Math.round((n / 1048576) * 100) / 100;
 
 /** Everything the import must leave exactly as it found it. */
@@ -54,7 +81,8 @@ async function untouched(preexistingPlayerIds: string[]) {
     prisma.league.findMany({ select: { name: true, currentSeasonYear: true, settings: { select: { keeperSlotCount: true, maxConsecutiveKeeperYears: true, teamCount: true } } } }),
   ]);
   const t = { synced, roster, fypdDrafts, fypdSel, fypdSlots, tsr, trades, players, teams, managers, seasons, league };
-  return Object.fromEntries(Object.entries(t).map(([k, v]) => [k, { rows: v.length, hash: sha(v) }]));
+  const natural = await naturalHasher();
+  return Object.fromEntries(Object.entries(t).map(([k, v]) => [k, { rows: v.length, hash: sha(v), naturalHash: natural(v as unknown[]) }]));
 }
 
 /** What the import wrote, for the repeat-run comparison and the reconciliation. */
@@ -76,6 +104,10 @@ async function imported() {
     keepers,
     counts: { acquisitions: acq.length, drops: drops.length, draftPicks: picks.length, keeperRecords: keepers.length, overrides: keepers.filter((k) => k.commissionerOverride).length, players, seasons: seasons.map((s) => s.year), tradesWithBothTeamIds: tradesWithIds },
     // Content hashes that ignore row ids and write order.
+    naturalHashes: await (async () => {
+      const natural = await naturalHasher();
+      return { acq: natural(acq), drops: natural(drops), picks: natural(picks), keepers: natural(keepers) };
+    })(),
     hashes: { acq: sha(sorted(acq)), drops: sha(sorted(drops.map((d) => ({ ...d, players: d.players.length })))), picks: sha(sorted(picks)), keepers: sha(sorted(keepers)) },
   };
 }
@@ -174,7 +206,7 @@ describe("league-history import rehearsal (local replica)", () => {
     const keySet = (rows: unknown[]) => new Set(rows.map((r) => JSON.stringify(r)));
     const k1 = keySet(afterFirst.keepers), k2 = keySet(afterSecond.keepers);
     report.keeperRecordDiff = { onlyFirst: [...k1].filter((x) => !k2.has(x)).slice(0, 10), onlySecond: [...k2].filter((x) => !k1.has(x)).slice(0, 10) };
-    report.repeat = { first: afterFirst.counts, second: afterSecond.counts, hashes: { first: afterFirst.hashes, second: afterSecond.hashes }, identical: JSON.stringify(afterFirst.hashes) === JSON.stringify(afterSecond.hashes) && JSON.stringify(afterFirst.counts) === JSON.stringify(afterSecond.counts) };
+    report.repeat = { first: afterFirst.counts, second: afterSecond.counts, hashes: { first: afterFirst.hashes, second: afterSecond.hashes }, naturalHashes: { first: afterFirst.naturalHashes, second: afterSecond.naturalHashes }, identical: JSON.stringify(afterFirst.naturalHashes) === JSON.stringify(afterSecond.naturalHashes) && JSON.stringify(afterFirst.hashes) === JSON.stringify(afterSecond.hashes) && JSON.stringify(afterFirst.counts) === JSON.stringify(afterSecond.counts) };
 
     if (process.env.REHEARSAL_OUT) writeFileSync(process.env.REHEARSAL_OUT, JSON.stringify(report, null, 2));
     console.log(JSON.stringify({ sizes: report.sizes, transactions: totals, reconciliation: recon, repeat: report.repeat, untouched: Object.fromEntries(Object.entries(report.untouched as Record<string, { unchanged: boolean }>).map(([k, v]) => [k, v.unchanged])) }, null, 1));
