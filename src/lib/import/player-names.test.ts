@@ -22,6 +22,11 @@ describe("normalizePlayerName", () => {
     expect(normalizePlayerName("Bobby Witt Jr.").fullKey).toBe("bobby witt");
   });
 
+  it("reads a written-out generation number as the suffix it stands for ('M.Harris 2' = Michael Harris II)", () => {
+    expect(normalizePlayerName("M.Harris 2").initialKey).toBe(normalizePlayerName("Michael Harris II").initialKey);
+    expect(matchPlayerName("M.Harris 2", [{ name: "Michael Harris II", value: 1 }, { name: "Mitch Haniger", value: 2 }])?.value).toBe(1);
+  });
+
   it("never reads a 'V.' initial as a roman-numeral suffix", () => {
     for (const [raw, full] of [["V.Guerrero", "Vladimir Guerrero Jr."], ["V. Robles", "Victor Robles"], ["V.Grissom", "Vaughn Grissom"]] as const) {
       const a = normalizePlayerName(raw);
