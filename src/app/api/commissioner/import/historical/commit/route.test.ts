@@ -102,3 +102,47 @@ describe("POST /api/commissioner/import/historical/commit - trades and prop bets
     expect(await prisma.historicalTrade.count()).toBe(2);
   });
 });
+
+describe("POST /api/commissioner/import/historical/commit - demo wipe guard", () => {
+  it("refuses the demo wipe once the league is linked to Yahoo, deleting and writing nothing", async () => {
+    const { league } = await setup();
+    await prisma.yahooConnection.create({ data: { leagueId: league.id } });
+    const r = await post({ ...body([trade(1)], [bet(1)]), clearDemoData: true });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toContain("Nothing was written");
+    expect(await prisma.team.count()).toBe(1);
+    expect(await prisma.manager.count()).toBe(1);
+    expect(await prisma.yahooConnection.count()).toBe(1);
+    expect(await prisma.historicalTrade.count()).toBe(0);
+  });
+
+  it("refuses the demo wipe once the league history has been imported", async () => {
+    const { league } = await setup();
+    const team = await prisma.team.findFirstOrThrow({ where: { leagueId: league.id } });
+    const season = await prisma.season.findFirstOrThrow({ where: { leagueId: league.id } });
+    const player = await prisma.player.create({ data: { leagueId: league.id, name: "Some Guy" } });
+    await prisma.acquisition.create({
+      data: { seasonId: season.id, seasonYear: season.year, teamId: team.id, playerId: player.id, method: "WAIVER", cost: 1, date: new Date(), sourceRef: "league-history:yahoo:1" },
+    });
+    const r = await post({ ...body([], []), clearDemoData: true });
+    expect(r.status).toBe(409);
+    expect(await prisma.player.count()).toBe(1);
+    expect(await prisma.acquisition.count()).toBe(1);
+  });
+
+  it("still allows the one-time demo wipe on a league with no real data", async () => {
+    await setup();
+    const r = await post({ ...body([trade(1)], []), clearDemoData: true });
+    expect(r.status).toBe(200);
+    expect(r.body.demoCleanup).toMatchObject({ teamsDeleted: 1, managersDeleted: 1 });
+    expect(await prisma.historicalTrade.count()).toBe(1);
+  });
+
+  it("imports normally without the wipe even when real data exists", async () => {
+    const { league } = await setup();
+    await prisma.yahooConnection.create({ data: { leagueId: league.id } });
+    const r = await post(body([trade(1)], []));
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ tradesWritten: 1, demoCleanup: null });
+  });
+});

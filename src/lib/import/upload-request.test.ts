@@ -16,6 +16,10 @@ describe("uploadSizeError", () => {
     expect(msg).toContain("4.4 MB");
     expect(msg).toContain(".csv.gz");
   });
+
+  it("uses the caller's hint and single-file wording", () => {
+    expect(uploadSizeError([{ size: 6_000_000 }], "Split the CSV.")).toBe("This upload is 6.0 MB, over the 4.4 MB upload limit. Split the CSV.");
+  });
 });
 
 describe("readJsonResponse", () => {

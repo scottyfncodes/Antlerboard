@@ -1,5 +1,5 @@
 /**
- * Upload guards for the League History import wizard.
+ * Upload guards for the commissioner import wizards.
  *
  * Vercel rejects a request body over 4.5 MB before it reaches the route, and
  * answers with a plain-text 413 rather than JSON. The wizard used to call
@@ -17,10 +17,10 @@ export const TOO_LARGE_HINT =
   "Use the compressed .csv.gz Yahoo transaction file (about 0.3 MB) instead of the uncompressed .csv.";
 
 /** An error message when the files together are too big to upload, else null. */
-export function uploadSizeError(files: { size: number }[]): string | null {
+export function uploadSizeError(files: { size: number }[], hint = TOO_LARGE_HINT): string | null {
   const total = files.reduce((sum, f) => sum + f.size, 0);
   if (total <= MAX_UPLOAD_BYTES) return null;
-  return `These files add up to ${mb(total)}, over the ${mb(MAX_UPLOAD_BYTES)} upload limit. ${TOO_LARGE_HINT}`;
+  return `${files.length === 1 ? "This upload is" : "These files add up to"} ${mb(total)}, over the ${mb(MAX_UPLOAD_BYTES)} upload limit. ${hint}`;
 }
 
 export type JsonResult<T> = { ok: true; data: T } | { ok: false; error: string; data?: Record<string, unknown> };
@@ -29,9 +29,9 @@ export type JsonResult<T> = { ok: true; data: T } | { ok: false; error: string; 
  * Reads a route's response without ever throwing. Errors carry the route's
  * own `error` message when it sent JSON, and a readable fallback otherwise.
  */
-export async function readJsonResponse<T>(res: Response, fallback: string): Promise<JsonResult<T>> {
+export async function readJsonResponse<T>(res: Response, fallback: string, tooLargeHint = TOO_LARGE_HINT): Promise<JsonResult<T>> {
   if (res.status === 413) {
-    return { ok: false, error: `The upload is too large for the server. ${TOO_LARGE_HINT}` };
+    return { ok: false, error: `The upload is too large for the server. ${tooLargeHint}` };
   }
   let data: unknown;
   try {
