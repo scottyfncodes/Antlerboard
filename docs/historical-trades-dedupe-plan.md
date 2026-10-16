@@ -1,8 +1,23 @@
 # Duplicated historical trades: cleanup plan (not run)
 
-**Status:** proposed. The commissioner said to leave the duplicates alone for
-the league-history import. Nothing here runs without separate, explicit
-approval.
+**Status:** done, 2026-10-16 14:58 UTC, with the commissioner's written
+approval. Backup branch `pre-history-dedupe-20261016-1450`
+(`br-bitter-bonus-avao48r9`), full-database fingerprint identical to `main`
+before any change.
+
+| | Before | After |
+|---|---|---|
+| `HistoricalTrade` | 87 rows, 44 distinct | 44 rows, one per `sourceRef` |
+| `HistoricalPropBet` | 36 rows, 20 distinct | 20 rows, one per `sourceRef` |
+
+- Kept: the Sep 21 17:54 load's row of every group (all 44 trades and 20
+  bets). Deleted: the Sep 22 03:16 copies (43 trades, 16 bets), each
+  identical to its kept row in every column but `id` / `createdAt`.
+- Row 57's date corrected from 2026-11-29 to 2025-11-29 (see below).
+- Every other table, the kept rows themselves, and all earlier audit entries
+  match the backup byte for byte. Audit entries: `historical-trade-dedupe`,
+  `historical-prop-bet-dedupe`, `historical-trade-row57-date`.
+- No page displays these two tables today; only the importers read them.
 
 ## What production holds (read-only, 2026-10-15)
 
@@ -33,9 +48,13 @@ local replica with 36 synthetic rows: it left 20, and a second run refused.
 rows / 44 distinct / 43 pairs counting the newly filled team links, so the
 trade script's guards hold as written.
 
-**Also check:** `row 57` (Michael ↔ Ed) is dated 2026-11-28, which is in the
-future. Its neighbours run from 2025-11-25 to 2026-01-29, so 2025-11-28 looks
-likely. This plan doesn't change it. Confirm it against the workbook.
+**Row 57** (Michael ↔ Ed: Cameron, Flaherty, Ohtani for Gilbert,
+J.Rodríguez) was dated 2026-11-29, as the workbook has it (Off Season Trades,
+cell A58). The keeper records place it before the 2026 season: Michael kept
+Ohtani in 2025 and Ed in 2026; Ed kept J.Rodríguez in 2025 and Michael in
+2026. Corrected to 2025-11-29. **The workbook cell still says 2026**: fix it
+there too, or a later workbook import adds the trade again with the old date
+(content differs, so it isn't skipped as a duplicate).
 
 ## Plan
 
