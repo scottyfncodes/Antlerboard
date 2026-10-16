@@ -14,6 +14,7 @@ import { loadTeamDraftPicks } from "@/lib/draft-history-data";
 import { costDisplay } from "@/lib/player-costs";
 import { visibleTradesWhere, type TradeViewer } from "@/lib/trade-access";
 import { tradeTitle } from "@/lib/trades";
+import { describeTransaction } from "@/lib/transaction-display";
 import { formatCost, formatDateTime, timeAgo, PLAYER_TAG_LABEL } from "@/lib/format";
 
 export const TEAM_TABS = ["roster", "activity", "draft"] as const;
@@ -155,12 +156,12 @@ export async function TeamView({
 }
 
 async function TeamActivity({ teamId, viewer }: { teamId: string; viewer: TradeViewer | null }) {
-  const [transactions, trades] = await Promise.all([
+  const [transactions, trades, teams] = await Promise.all([
     prisma.transaction.findMany({
       where: { teams: { some: { teamId } } },
       orderBy: { date: "desc" },
       take: 20,
-      include: { players: { include: { player: true } } },
+      include: { players: { include: { player: true } }, teams: true },
     }),
     prisma.trade.findMany({
       // Another team's open negotiations are private to them - only show
@@ -169,7 +170,9 @@ async function TeamActivity({ teamId, viewer }: { teamId: string; viewer: TradeV
       orderBy: { updatedAt: "desc" },
       include: { participants: { include: { team: true } } },
     }),
+    prisma.team.findMany({ select: { id: true, name: true } }),
   ]);
+  const teamNames = new Map(teams.map((t) => [t.id, t.name]));
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -181,8 +184,8 @@ async function TeamActivity({ teamId, viewer }: { teamId: string; viewer: TradeV
           <ul className="divide-y divide-border text-sm">
             {transactions.map((t) => (
               <li key={t.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
-                <span className="min-w-0 truncate">{t.notes ?? `${t.type} — ${t.players.map((p) => p.player.name).join(", ")}`}</span>
-                <span className="shrink-0 text-xs text-muted">{timeAgo(t.date)}</span>
+                <span className="min-w-0 truncate">{describeTransaction(t, teamNames).summary}</span>
+                <span className="shrink-0 text-xs text-muted">{t.dateUnavailable ? "date unknown" : timeAgo(t.date)}</span>
               </li>
             ))}
           </ul>

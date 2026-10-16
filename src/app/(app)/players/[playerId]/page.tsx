@@ -20,6 +20,7 @@ import { getCurrentManager } from "@/lib/current-manager";
 import { visibleTradesWhere } from "@/lib/trade-access";
 import { tradeTitle } from "@/lib/trades";
 import { notFound } from "next/navigation";
+import { describePlayerMove } from "@/lib/transaction-display";
 
 export const dynamic = "force-dynamic";
 
@@ -234,8 +235,8 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
           <ul className="divide-y divide-border rounded-xl border border-border overflow-hidden">
             {transactions.map((tp) => (
               <li key={tp.id} className="px-4 py-2.5 text-sm flex items-center justify-between">
-                <span>{tp.transaction.notes ?? tp.transaction.type}</span>
-                <span className="text-xs text-muted">{formatDate(tp.transaction.date)}</span>
+                <span>{describePlayerMove(tp, tp.transaction)}</span>
+                <span className="text-xs text-muted">{tp.transaction.dateUnavailable ? "date unknown" : formatDate(tp.transaction.date)}</span>
               </li>
             ))}
           </ul>

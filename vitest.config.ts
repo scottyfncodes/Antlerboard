@@ -7,6 +7,9 @@ export default defineConfig({
       plugins: [],
     },
   },
+  // Next compiles JSX itself (tsconfig "jsx": "preserve"); tests that render
+  // a server component need the automatic runtime instead.
+  esbuild: { jsx: "automatic" },
   test: {
     environment: "node",
     include: ["src/**/*.test.ts"],
