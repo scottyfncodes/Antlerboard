@@ -114,3 +114,17 @@ export async function loadDraftHistory(leagueId: string, year: number, kind: Dra
   }
   return buildFypdHistory({ ...draft, confirmedFinalPicks: FYPD_CONFIRMED_FINAL_PICKS[year] });
 }
+
+/**
+ * Every auction pick a team has made, newest season first - the team
+ * screen's Draft tab. No row cap: a 2021-2026 history is ~115 picks per
+ * team. (It was capped at 40 rows until 2026-10-16, which showed 2026 and
+ * 2025 in full, then only part of 2024 and nothing from 2023-2021.)
+ */
+export function loadTeamDraftPicks(teamId: string) {
+  return prisma.draftPick.findMany({
+    where: { teamId },
+    orderBy: [{ seasonYear: "desc" }, { overallPick: "asc" }],
+    include: { player: true },
+  });
+}
