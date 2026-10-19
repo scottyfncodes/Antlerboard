@@ -21,7 +21,9 @@ reviewed fingerprint and the confirmation phrase, exactly as before (see
 ## How it works
 
 `.github/workflows/recovery-preflight.yml` starts at 11:41 UTC, with a backup
-trigger at 12:11. It runs `python3 -I scripts/recovery/preflight.py`, which
+trigger at 12:11. It runs only from the repository's default branch (the
+production branch Vercel deploys, currently
+`claude/antlerboard-fantasy-baseball-7b3vai`; `main` is a stale branch). It runs `python3 -I scripts/recovery/preflight.py`, which
 does the following and stops at the first failure.
 
 1. **Checks the three audited scripts.** Their SHA-256 hashes must be

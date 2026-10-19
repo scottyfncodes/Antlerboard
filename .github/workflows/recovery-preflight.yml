@@ -26,7 +26,11 @@ concurrency:
 
 jobs:
   preflight:
-    if: vars.RECOVERY_PREFLIGHT_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    # Schedules always run on the default (production) branch; a manual run
+    # must be started from it too.
+    if: >-
+      vars.RECOVERY_PREFLIGHT_ENABLED == 'true' &&
+      (github.event_name == 'schedule' || github.ref_name == github.event.repository.default_branch)
     runs-on: ubuntu-24.04
     # Covers 11:41 to the 12:45 deadline, a 5-minute dry run and the validators.
     timeout-minutes: 80
