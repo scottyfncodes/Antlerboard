@@ -83,4 +83,30 @@ describe("middleware (login gate)", () => {
     expect(isRedirect(res)).toBe(true);
     expect(res.headers.get("location")).toContain("/login");
   });
+
+  describe("the scheduled preflight's dry-run token", () => {
+    const PATH = "/api/commissioner/yahoo-transaction-recovery";
+    const withBearer = (path: string, method = "GET") =>
+      new NextRequest(`https://antlerboard.example${path}`, { method, headers: { authorization: "Bearer anything" } });
+
+    it("lets a bearer GET of the dry run reach the route, which checks the token itself", async () => {
+      const res = await middleware(withBearer(`${PATH}?season=2026`));
+      expect(res.status).not.toBe(401);
+      expect(isRedirect(res)).toBe(false);
+    });
+
+    it("never lets a bearer token past the gate for the apply (POST)", async () => {
+      expect((await middleware(withBearer(PATH, "POST"))).status).toBe(401);
+    });
+
+    it("never lets a bearer token past the gate anywhere else", async () => {
+      expect((await middleware(withBearer("/api/commissioner/yahoo-sync"))).status).toBe(401);
+      expect((await middleware(withBearer(`${PATH}/x`))).status).toBe(401);
+      expect((await middleware(withBearer("/api/trades"))).status).toBe(401);
+    });
+
+    it("still requires a session for the dry run without a bearer token", async () => {
+      expect((await middleware(requestFor(`${PATH}?season=2026`))).status).toBe(401);
+    });
+  });
 });

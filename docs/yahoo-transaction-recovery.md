@@ -141,11 +141,15 @@ The counts above are placeholders; only a real dry run can fill them in.
 ## Authorization needed to read the Yahoo source
 
 - A commissioner session on **production** (`requireCommissioner`, plus the Yahoo env vars present).
+  The dry run (GET only) also accepts the dedicated `RECOVERY_DRYRUN_TOKEN`
+  bearer token used by the scheduled read-only preflight; see
+  [recovery-preflight-automation.md](recovery-preflight-automation.md). The
+  apply (POST) accepts only the commissioner's session.
 - The league's stored Yahoo connection (`469.l.8891`) with an **unexpired access token**.
 - The Yahoo app's Fantasy Sports API approval (in place: the daily sync works).
 
-No new credentials, scopes or env vars are needed. Nobody needs to see or copy
-a token.
+No new Yahoo credentials or scopes are needed. Nobody needs to see or copy a
+Yahoo token.
 
 ### Getting a fresh token (facts, 2026-10-16)
 
