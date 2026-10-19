@@ -45,6 +45,17 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
+  // The scheduled recovery preflight runs the read-only dry run with its own
+  // RECOVERY_DRYRUN_TOKEN bearer token, which the route itself checks. Only
+  // that one GET passes without a session; the apply (POST) never does.
+  if (
+    pathname === "/api/commissioner/yahoo-transaction-recovery" &&
+    req.method === "GET" &&
+    req.headers.get("authorization")?.startsWith("Bearer ")
+  ) {
+    return NextResponse.next();
+  }
+
   if (pathname === "/login") {
     if (session) return NextResponse.redirect(new URL("/", req.url));
     return NextResponse.next();

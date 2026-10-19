@@ -1,0 +1,60 @@
+# Tests for the recovery preflight and the dry-run endpoint's token. Uses a
+# throwaway Postgres service and a local stand-in for the endpoint; no secrets
+# and no production access.
+name: Recovery preflight tests
+
+on:
+  pull_request:
+    paths:
+      - "scripts/recovery/**"
+      - ".github/workflows/recovery-preflight*.yml"
+      - "src/app/api/commissioner/yahoo-transaction-recovery/**"
+      - "src/lib/yahoo/**"
+      - "src/middleware*.ts"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ci-only-password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      ADMIN: postgresql://postgres:ci-only-password@127.0.0.1:5432
+    steps:
+      - name: Check out
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Verify the audited scripts
+        working-directory: scripts/recovery
+        run: sha256sum --check --strict SHA256SUMS
+
+      - name: Install
+        run: npm ci
+
+      - name: Create and migrate the test databases
+        run: |
+          psql "$ADMIN/postgres" -c "CREATE DATABASE antlerboard_test" -c "CREATE DATABASE antlerboard_preflight_it"
+          for db in antlerboard_test antlerboard_preflight_it; do
+            DATABASE_URL="$ADMIN/$db" DIRECT_URL="$ADMIN/$db" npx prisma migrate deploy
+          done
+          printf 'DATABASE_URL="%s"\nDIRECT_URL="%s"\nAUTH_SECRET="ci-test-secret-ci-test-secret-ci-test-secret"\nCRON_SECRET="ci-cron"\n' \
+            "$ADMIN/antlerboard_test" "$ADMIN/antlerboard_test" > .env.test
+
+      - name: Preflight tests (unit + integration against Postgres)
+        env:
+          PREFLIGHT_IT_ADMIN_DSN: ${{ env.ADMIN }}/antlerboard_preflight_it
+        run: python3 -I -m unittest discover -s scripts/recovery -p 'test_*.py' -v
+
+      - name: Endpoint and middleware tests
+        run: npx vitest run src/app/api/commissioner/yahoo-transaction-recovery src/middleware.test.ts

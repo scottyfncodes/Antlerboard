@@ -119,3 +119,94 @@ describe("the dry run is production-only too", () => {
     expect(mockedGet).not.toHaveBeenCalled();
   });
 });
+
+describe("the dedicated dry-run token (scheduled preflight)", () => {
+  const TOKEN = "t".repeat(48);
+  const withAuth = (method: "GET" | "POST", qs: string, authorization: string, body?: unknown) =>
+    (method === "GET" ? GET : POST)(
+      new NextRequest(`http://localhost/api/commissioner/yahoo-transaction-recovery${qs}`, {
+        method,
+        headers: { authorization, "content-type": "application/json" },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      })
+    );
+  const apply = (fingerprint: string) => ({ season: 2026, confirm: "APPLY_YAHOO_TRANSACTION_RECOVERY", fingerprint });
+
+  beforeEach(() => {
+    vi.stubEnv("RECOVERY_DRYRUN_TOKEN", TOKEN);
+    // No commissioner session: only the token could authorize anything here.
+    mockedRequire.mockResolvedValue(null);
+  });
+  afterAll(() => vi.unstubAllEnvs());
+
+  it("authorizes the read-only dry run without a session, never refreshing the token or writing", async () => {
+    await legacy();
+    const res = await withAuth("GET", "?season=2026", `Bearer ${TOKEN}`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
+    expect(await res.json()).toMatchObject({ mode: "dry-run", targets: 1, summary: { ready: 1 } });
+    expect(mockedRequire).not.toHaveBeenCalled();
+    expect((await prisma.transaction.findUniqueOrThrow({ where: { yahooTransactionId: txKey(4) } })).yahooType).toBeNull();
+    expect(await prisma.auditLogEntry.count()).toBe(0);
+  });
+
+  it("cannot authorize the apply, even with a valid fingerprint and confirmation", async () => {
+    await legacy();
+    const { fingerprint } = await (await withAuth("GET", "?season=2026", `Bearer ${TOKEN}`)).json();
+    mockedGet.mockClear();
+    const res = await withAuth("POST", "", `Bearer ${TOKEN}`, apply(fingerprint));
+    expect(res.status).toBe(403);
+    expect(mockedGet).not.toHaveBeenCalled();
+    const row = await prisma.transaction.findUniqueOrThrow({ where: { yahooTransactionId: txKey(4) }, include: { players: true } });
+    expect(row.yahooType).toBeNull();
+    expect(row.players).toEqual([]);
+    expect(await prisma.auditLogEntry.count()).toBe(0);
+  });
+
+  it("leaves the apply exactly as it was for the commissioner", async () => {
+    await legacy();
+    const { fingerprint } = await (await withAuth("GET", "?season=2026", `Bearer ${TOKEN}`)).json();
+    mockedRequire.mockResolvedValue({ id: "c", name: "Scott" } as Awaited<ReturnType<typeof requireCommissioner>>);
+    // The commissioner's apply still needs the confirmation phrase...
+    expect((await post({ season: 2026, fingerprint })).status).toBe(400);
+    // ...and with it, works as before, attributed to the commissioner.
+    expect((await post(apply(fingerprint))).status).toBe(200);
+    expect(await prisma.auditLogEntry.count({ where: { action: "YAHOO_TRANSACTION_RECOVERY", actorName: "Scott" } })).toBe(1);
+  });
+
+  it.each([
+    ["a wrong token", `Bearer ${"x".repeat(48)}`],
+    ["a token with a suffix", `Bearer ${TOKEN}x`],
+    ["a different scheme", `Basic ${TOKEN}`],
+    ["an empty bearer", "Bearer "],
+  ])("rejects %s with 401 before reading anything", async (_label, authorization) => {
+    await legacy();
+    expect((await withAuth("GET", "?season=2026", authorization)).status).toBe(401);
+    expect(mockedGet).not.toHaveBeenCalled();
+  });
+
+  it("rejects every token when the variable is unset or too short", async () => {
+    await legacy();
+    vi.stubEnv("RECOVERY_DRYRUN_TOKEN", "");
+    expect((await withAuth("GET", "?season=2026", "Bearer ")).status).toBe(401);
+    vi.stubEnv("RECOVERY_DRYRUN_TOKEN", "short");
+    expect((await withAuth("GET", "?season=2026", "Bearer short")).status).toBe(401);
+    expect(mockedGet).not.toHaveBeenCalled();
+  });
+
+  it("doesn't let a bad Authorization header fall back to the commissioner's session", async () => {
+    await legacy();
+    mockedRequire.mockResolvedValue({ id: "c", name: "Scott" } as Awaited<ReturnType<typeof requireCommissioner>>);
+    expect((await withAuth("GET", "?season=2026", "Bearer wrong")).status).toBe(401);
+  });
+
+  it("still enforces production-only, the season and the connected league", async () => {
+    await legacy();
+    mockedConfigured.mockReturnValue(false);
+    expect((await withAuth("GET", "?season=2026", `Bearer ${TOKEN}`)).status).toBe(503);
+    mockedConfigured.mockReturnValue(true);
+    expect((await withAuth("GET", "", `Bearer ${TOKEN}`)).status).toBe(400);
+    expect((await withAuth("GET", "?season=2026&leagueKey=469.l.1", `Bearer ${TOKEN}`)).status).toBe(400);
+    expect(mockedGet).not.toHaveBeenCalled();
+  });
+});
