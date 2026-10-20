@@ -18,9 +18,19 @@ export function formatCost(cost: number | null | undefined): string {
   return `$${cost.toFixed(cost % 1 === 0 ? 0 : 2)}`;
 }
 
-export function formatDate(dateInput: string | Date): string {
+/**
+ * Every date and time is shown in this one zone, so the server's render and
+ * the browser's always match (no hydration mismatch) and every manager sees
+ * the same day whatever their phone's zone. Deadlines and draft dates are
+ * entered as wall-clock values and stored as UTC (date-only ones at midnight
+ * UTC - see formatDateTime), so reading them back in UTC shows exactly what
+ * was entered; in a US zone a midnight-UTC date would show as the day before.
+ */
+export const DISPLAY_TIME_ZONE = "UTC";
+
+export function formatDate(dateInput: string | Date, month: "short" | "long" = "short"): string {
   const date = typeof dateInput === "string" ? new Date(dateInput) : dateInput;
-  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  return date.toLocaleDateString("en-US", { month, day: "numeric", year: "numeric", timeZone: DISPLAY_TIME_ZONE });
 }
 
 /**
@@ -32,7 +42,31 @@ export function formatDateTime(dateInput: string | Date): string {
   const date = typeof dateInput === "string" ? new Date(dateInput) : dateInput;
   const isMidnight = date.getUTCHours() === 0 && date.getUTCMinutes() === 0;
   if (isMidnight) return formatDate(date);
-  return `${formatDate(date)}, ${date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "UTC" })}`;
+  return `${formatDate(date)}, ${date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: DISPLAY_TIME_ZONE })}`;
+}
+
+const STATUS_LABEL: Record<string, string> = {
+  PROPOSED: "Proposed",
+  COUNTERED: "Countered",
+  ACCEPTED: "Accepted",
+  REJECTED: "Rejected",
+  WITHDRAWN: "Withdrawn",
+  PENDING: "Pending",
+  OPEN: "Open",
+  ACTIVE: "Active",
+  COMPLETE: "Complete",
+  CANCELLED: "Cancelled",
+};
+
+/**
+ * A human label for a stored status enum (trades, offers, prop bets):
+ * "COUNTERED" -> "Countered". Anything unlisted falls back to sentence case
+ * ("NEEDS_DECISION" -> "Needs decision") rather than the raw enum.
+ */
+export function statusLabel(status: string): string {
+  if (STATUS_LABEL[status]) return STATUS_LABEL[status];
+  const words = status.toLowerCase().replace(/_/g, " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 export const DRAFT_COLOR_HEX: Record<string, string> = {

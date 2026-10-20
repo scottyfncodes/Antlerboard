@@ -3,7 +3,7 @@ import type { NotificationType } from "@prisma/client";
 export interface NotificationTypeMeta {
   type: NotificationType;
   label: string;
-  category: "League Activity" | "Keeper" | "Draft" | "DPUD" | "Yahoo Sync";
+  category: "League Activity" | "Keeper" | "Draft" | "Prop Bets" | "Yahoo Sync";
 }
 
 export const NOTIFICATION_TYPE_META: NotificationTypeMeta[] = [
@@ -27,11 +27,11 @@ export const NOTIFICATION_TYPE_META: NotificationTypeMeta[] = [
   { type: "DRAFT_RESULTS_AVAILABLE", label: "Draft results available", category: "Draft" },
   { type: "KEEPER_LIST_INCOMPLETE", label: "Keeper list incomplete", category: "Draft" },
 
-  { type: "DPUD_NEW_BET", label: "New bet posted", category: "DPUD" },
-  { type: "DPUD_OPT_IN", label: "Someone opts into my bet", category: "DPUD" },
-  { type: "DPUD_RELEVANT_BET", label: "Someone creates a relevant bet", category: "DPUD" },
-  { type: "DPUD_ENDING_SOON", label: "Bet ending soon", category: "DPUD" },
-  { type: "DPUD_RESOLVED", label: "Bet resolved", category: "DPUD" },
+  { type: "DPUD_NEW_BET", label: "New bet posted", category: "Prop Bets" },
+  { type: "DPUD_OPT_IN", label: "Someone opts into my bet", category: "Prop Bets" },
+  { type: "DPUD_RELEVANT_BET", label: "Someone creates a relevant bet", category: "Prop Bets" },
+  { type: "DPUD_ENDING_SOON", label: "Bet ending soon", category: "Prop Bets" },
+  { type: "DPUD_RESOLVED", label: "Bet resolved", category: "Prop Bets" },
 
   { type: "SYNC_SUCCESSFUL", label: "Sync successful", category: "Yahoo Sync" },
   { type: "SYNC_FAILED", label: "Sync failed", category: "Yahoo Sync" },
@@ -42,6 +42,6 @@ export const NOTIFICATION_CATEGORIES = [
   "League Activity",
   "Keeper",
   "Draft",
-  "DPUD",
+  "Prop Bets",
   "Yahoo Sync",
 ] as const;

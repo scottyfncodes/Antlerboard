@@ -46,8 +46,10 @@ export function PinLoginForm() {
             ? `Too many attempts. Try again in about ${formatRetryAfter(retryAfter)}.`
             : "Too many attempts. Please wait before trying again."
         );
-      } else {
+      } else if (res.status === 401) {
         setError("Incorrect PIN.");
+      } else {
+        setError("Something went wrong, try again.");
       }
       setDigits(Array(PIN_LENGTH).fill(""));
       inputRefs.current[0]?.focus();

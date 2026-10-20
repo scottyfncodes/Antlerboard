@@ -78,8 +78,9 @@ describe("team page roster costs", () => {
   it("won't state a budget left while a declared keeper's cost is unconfirmed", async () => {
     const { a } = await setup();
     const { budget, declaredCount } = await loadTeamRosterCosts(a.id, 2026);
-    // Declared slots are keeper year 1+: Recorded, Guessed, Forced, Untraced.
-    expect(declaredCount).toBe(4);
+    // Declared slots are keeper year 1+: Recorded, Guessed, Untraced. Forced
+    // went back into the draft, so it never used a slot.
+    expect(declaredCount).toBe(3);
     expect(budget).toEqual({ confirmedTotal: 14, unconfirmed: 2, budgetLeft: null });
   });
 

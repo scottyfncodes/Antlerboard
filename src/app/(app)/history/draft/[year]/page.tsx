@@ -1,19 +1,23 @@
 import { prisma } from "@/lib/db";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/Card";
+import { TapReason } from "@/components/ui/TapReason";
 import { DraftColorBadge } from "@/components/ui/Badge";
 import { DraftDayDetailsCard } from "@/components/draft/DraftDayDetailsCard";
 import { getDraftColor } from "@/lib/draft-color-engine";
 import { getCurrentManager } from "@/lib/current-manager";
 import { loadDraftBoard } from "@/lib/keeper-cost-views";
 import { costDisplay } from "@/lib/player-costs";
+import { parseIntParam } from "@/lib/search-params";
 import Link from "next/link";
+import { notFound } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
 export default async function DraftBoardPage({ params }: { params: Promise<{ year: string }> }) {
   const { year: yearParam } = await params;
-  const year = Number(yearParam);
+  const year = parseIntParam(yearParam);
+  if (year === null) notFound();
   const colorResult = getDraftColor(year);
 
   const [board, season, manager] = await Promise.all([
@@ -97,9 +101,15 @@ export default async function DraftBoardPage({ params }: { params: Promise<{ yea
                         "—"
                       )}
                     </td>
-                    <td className={cost.confirmed ? "px-2 py-2 tabular" : "px-2 py-2 text-xs text-muted"} title={cost.title}>
-                      {cost.text}
-                    </td>
+                    {cost.confirmed ? (
+                      <td className="px-2 py-2 tabular" title={cost.title}>
+                        {cost.text}
+                      </td>
+                    ) : (
+                      <td className="px-2 py-2 text-xs text-muted">
+                        <TapReason reason={cost.title}>{cost.text}</TapReason>
+                      </td>
+                    )}
                   </tr>
                 );
               })}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
+import { hrefKeepingParams } from "@/lib/search-params";
 
 interface TeamOption {
   id: string;
@@ -70,7 +71,7 @@ export function KeeperFilters({ teams }: { teams: TeamOption[] }) {
 
       {(params.get("team") || params.get("minYear") || params.get("status")) && (
         <button
-          onClick={() => router.push(pathname)}
+          onClick={() => router.push(hrefKeepingParams(pathname, params, ["season", "sort"]))}
           className="text-xs text-muted hover:text-foreground underline"
         >
           Clear filters

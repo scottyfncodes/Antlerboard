@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/Badge";
 import { CreateDpudForm } from "@/components/dpud/CreateDpudForm";
 import { DpudOptInButton } from "@/components/dpud/DpudOptInButton";
 import { DpudResolveForm } from "@/components/dpud/DpudResolveForm";
-import { formatDate } from "@/lib/format";
+import { formatDate, statusLabel } from "@/lib/format";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
@@ -76,7 +76,7 @@ function BetSection({
                 <div className="flex items-start justify-between gap-2">
                   <p className="font-medium">{bet.title}</p>
                   <Badge variant={bet.status === "COMPLETE" ? "green" : bet.status === "CANCELLED" ? "default" : bet.status === "ACTIVE" ? "blue" : "default"}>
-                    {bet.status}
+                    {statusLabel(bet.status)}
                   </Badge>
                 </div>
                 <p className="text-sm text-muted mt-1">{bet.description}</p>

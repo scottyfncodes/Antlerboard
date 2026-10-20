@@ -65,4 +65,18 @@ describe("GET /api/search player keeper costs", () => {
     expect(byName["Zed Unrostered"]).toMatchObject({ team: null, cost: null });
     expect(players.every((p) => !("keeperCost" in p))).toBe(true);
   });
+
+  it("shows a player whose latest keeper record is DROPPED as unrostered", async () => {
+    const { league, season } = await makeLeagueWithSeason(2026);
+    const s2025 = await prisma.season.create({ data: { leagueId: league.id, year: 2025, status: "COMPLETE" } });
+    const team = (await makeManagerAndTeam(league.id, "Alpha")).team;
+    const dropped = await makePlayer(league.id, "Zed Dropped");
+    const base = { playerId: dropped.id, teamId: team.id, startTeamId: team.id, keeperCost: 9, yearsRemaining: 3 };
+    await prisma.keeperRecord.create({ data: { ...base, seasonId: s2025.id, seasonYear: 2025, keeperYear: 1, status: "KEPT" } });
+    await prisma.keeperRecord.create({ data: { ...base, seasonId: season.id, seasonYear: 2026, keeperYear: 2, status: "DROPPED" } });
+
+    const { players } = await search("Zed Dropped");
+    expect(players).toHaveLength(1);
+    expect(players[0]).toMatchObject({ team: null, cost: null, keeperSeason: null });
+  });
 });

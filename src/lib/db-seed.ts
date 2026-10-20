@@ -724,7 +724,7 @@ export async function runSeed(): Promise<void> {
       {
         managerId: scott.id,
         type: "DPUD_NEW_BET",
-        title: "New DPUD bet: Witt Jr. hits 35+ homers",
+        title: "New prop bet: Witt Jr. hits 35+ homers",
         body: "Shed Hunters started a new prop bet you can opt into.",
         link: "/prop-bets",
         relatedEntityType: "DpudBet",

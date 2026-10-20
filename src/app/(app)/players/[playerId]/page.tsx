@@ -7,7 +7,7 @@ import { Badge, PlayerTagBadge } from "@/components/ui/Badge";
 import { KeeperYearBadge } from "@/components/keepers/KeeperYearBadge";
 import { loadKeeperCostValues } from "@/lib/player-costs-data";
 import { costLabel } from "@/lib/player-costs";
-import { formatCost, formatDate, PLAYER_TAG_LABEL } from "@/lib/format";
+import { formatCost, formatDate, statusLabel, PLAYER_TAG_LABEL } from "@/lib/format";
 import { getPlayerHistoryEvents } from "@/lib/keeper-sync";
 import {
   getContinuousKeeperHistory,
@@ -219,7 +219,7 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
                   <span>
                     {tradeTitle(a.trade.participants)}
                   </span>
-                  <Badge variant={a.trade.status === "ACCEPTED" ? "green" : "default"}>{a.trade.status}</Badge>
+                  <Badge variant={a.trade.status === "ACCEPTED" ? "green" : "default"}>{statusLabel(a.trade.status)}</Badge>
                 </li>
               ))}
             </ul>

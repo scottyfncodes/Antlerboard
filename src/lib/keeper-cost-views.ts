@@ -13,6 +13,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "./db";
 import { AUCTION_BUDGET } from "./config";
 import { getTeamRoster } from "./rosters";
+import { declaredKeeperWhere } from "./keeper-slots";
 import { loadKeeperCostValues } from "./player-costs-data";
 import { classifyAuctionCost, compareCostDesc, summarizeKeeperBudget, type CostValue } from "./player-costs";
 import { auctionNumberHeader, auctionNumberLabel, nominationOrderOf, type NominationOrder } from "./draft-history";
@@ -36,8 +37,8 @@ export async function loadTeamRosterCosts(teamId: string, seasonYear: number) {
   const [roster, declared] = await Promise.all([
     getTeamRoster(teamId, seasonYear),
     // Keeper slots are what this team declared at the deadline, whether or
-    // not the player has since been traded away.
-    prisma.keeperRecord.findMany({ where: { seasonYear, startTeamId: teamId, keeperYear: { gte: 1 } }, select: keeperCostFields }),
+    // not the player has since been traded away or dropped (see keeper-slots).
+    prisma.keeperRecord.findMany({ where: declaredKeeperWhere(seasonYear, teamId), select: keeperCostFields }),
   ]);
   const records = new Map<string, (typeof declared)[number]>();
   for (const r of declared) records.set(r.id, r);

@@ -240,7 +240,7 @@ export function HistoricalImportWizard() {
               <span className="font-medium text-foreground">Also remove Antlerboard&apos;s existing demo league</span>{" "}
               <span className="text-muted">
                 - the 10 fictional teams/managers/players it ships with, plus anything else currently in this league
-                (transactions, DPUD bets, notifications, etc). League config itself is kept. This only needs to
+                (transactions, prop bets, notifications, etc). League config itself is kept. This only needs to
                 happen once, on the import that replaces the demo data with your real history - leave it unchecked
                 if you&apos;re re-running an import after the real data is already in place.
               </span>

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { sendJson } from "@/lib/call-api";
 
 interface TeamRow {
   id: string;
@@ -12,15 +13,17 @@ interface TeamRow {
 export function TeamEditor({ teams, managers }: { teams: TeamRow[]; managers: { id: string; name: string }[] }) {
   const router = useRouter();
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   async function save(teamId: string, name: string, managerId: string) {
     setBusyId(teamId);
-    await fetch("/api/commissioner/teams", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ teamId, name, managerId }),
-    });
+    setErrors((e) => ({ ...e, [teamId]: "" }));
+    const res = await sendJson("/api/commissioner/teams", { teamId, name, managerId }, "PATCH");
     setBusyId(null);
+    if (!res.ok) {
+      setErrors((e) => ({ ...e, [teamId]: res.error }));
+      return;
+    }
     router.refresh();
   }
 
@@ -36,7 +39,7 @@ export function TeamEditor({ teams, managers }: { teams: TeamRow[]; managers: { 
         </thead>
         <tbody>
           {teams.map((t) => (
-            <TeamRowEditor key={t.id} team={t} managers={managers} busy={busyId === t.id} onSave={save} />
+            <TeamRowEditor key={t.id} team={t} managers={managers} busy={busyId === t.id} error={errors[t.id]} onSave={save} />
           ))}
         </tbody>
       </table>
@@ -48,11 +51,13 @@ function TeamRowEditor({
   team,
   managers,
   busy,
+  error,
   onSave,
 }: {
   team: TeamRow;
   managers: { id: string; name: string }[];
   busy: boolean;
+  error?: string;
   onSave: (id: string, name: string, managerId: string) => void;
 }) {
   const [name, setName] = useState(team.name);
@@ -84,10 +89,11 @@ function TeamRowEditor({
         <button
           disabled={busy}
           onClick={() => onSave(team.id, name, managerId)}
-          className="rounded-md border border-border px-2 py-1 text-xs hover:border-antler-dim"
+          className="rounded-md border border-border px-2 py-1 text-xs hover:border-antler-dim disabled:opacity-50"
         >
           Save
         </button>
+        {error && <p className="text-xs text-red mt-1">{error}</p>}
       </td>
     </tr>
   );

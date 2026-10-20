@@ -21,16 +21,22 @@ const ICONS: Record<string, { icon: LucideIcon; tone: string }> = {
   INCOMPLETE: { icon: CircleHelp, tone: "text-muted bg-surface-raised" },
 };
 
+/** How many rows the log shows at first, and how many more "Show more" adds. */
+const PAGE_SIZE = 75;
+
 /** Yahoo-style league transaction log: newest first, icon per move type. */
-export default async function TransactionsPage() {
-  const [transactions, teams, incompleteTotal] = await Promise.all([
+export default async function TransactionsPage({ searchParams }: { searchParams?: Promise<{ limit?: string }> }) {
+  const requested = Number((await searchParams)?.limit);
+  const limit = Number.isInteger(requested) && requested > PAGE_SIZE ? requested : PAGE_SIZE;
+  const [transactions, teams, incompleteTotal, total] = await Promise.all([
     prisma.transaction.findMany({
       orderBy: { date: "desc" },
-      take: 75,
+      take: limit,
       include: { players: { include: { player: true } }, teams: true },
     }),
     prisma.team.findMany({ select: { id: true, name: true } }),
     prisma.transaction.count({ where: INCOMPLETE_TRANSACTION_WHERE }),
+    prisma.transaction.count(),
   ]);
   const teamName = new Map(teams.map((t) => [t.id, t.name]));
   const described = transactions.map((t) => ({ t, d: describeTransaction(t, teamName) }));
@@ -84,6 +90,18 @@ export default async function TransactionsPage() {
             );
           })}
         </ul>
+      )}
+      {transactions.length > 0 && (
+        <div className="flex items-center justify-between gap-3 text-xs text-muted">
+          <p>
+            Showing {transactions.length} of {total}
+          </p>
+          {transactions.length < total && (
+            <Link href={`/league/transactions?limit=${limit + PAGE_SIZE}`} scroll={false} className="font-semibold text-antler hover:text-antler-strong">
+              Show more
+            </Link>
+          )}
+        </div>
       )}
     </div>
   );

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { searchKeeperLine, type SearchKeeperFacts } from "@/lib/search-display";
+import { statusLabel } from "@/lib/format";
 
 interface SearchResults {
   players: ({ id: string; name: string; mlbTeam: string | null } & SearchKeeperFacts)[];
@@ -141,7 +142,7 @@ export function SearchBox({ autoFocus }: { autoFocus?: boolean }) {
                   }}
                 >
                   <span>{t.label}</span>
-                  <span className="text-muted text-xs">{t.status}</span>
+                  <span className="text-muted text-xs">{statusLabel(t.status)}</span>
                 </button>
               ))}
             </SearchGroup>
@@ -159,7 +160,7 @@ export function SearchBox({ autoFocus }: { autoFocus?: boolean }) {
                   }}
                 >
                   <span>{b.title}</span>
-                  <span className="text-muted text-xs">{b.status}</span>
+                  <span className="text-muted text-xs">{statusLabel(b.status)}</span>
                 </button>
               ))}
             </SearchGroup>

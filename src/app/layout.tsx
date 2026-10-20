@@ -24,6 +24,10 @@ export const metadata: Metadata = {
   description:
     "The Claw & Antler League's front office: keepers, trades, DPUD, and league history in one place.",
   applicationName: "Antlerboard",
+  // iOS Safari otherwise rewrites number- and date-like text (transaction
+  // notes, dates, FAAB bids) into links before React hydrates, and the
+  // changed DOM fails hydration (React #418).
+  formatDetection: { telephone: false, date: false, address: false, email: false },
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,

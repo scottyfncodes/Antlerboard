@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { ordinal } from "@/lib/positions";
 
 export function CreateFypdDraftForm({
   bottomFourTeams,
@@ -71,7 +72,7 @@ export function CreateFypdDraftForm({
           >
             {bottomFourTeams.map((t) => (
               <option key={t.id} value={t.id}>
-                {t.name} ({t.rank} place)
+                {t.name} ({ordinal(t.rank)})
               </option>
             ))}
           </select>

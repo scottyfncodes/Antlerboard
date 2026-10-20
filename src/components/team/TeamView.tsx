@@ -4,6 +4,7 @@ import { AUCTION_BUDGET, CURRENT_SEASON_YEAR, KEEPER_SLOT_COUNT } from "@/lib/co
 import { Card, EmptyState } from "@/components/ui/Card";
 import { Badge, PlayerTagBadge } from "@/components/ui/Badge";
 import { SubTabs } from "@/components/ui/SubTabs";
+import { TapReason } from "@/components/ui/TapReason";
 import { PlayerRow, PlayerSection } from "@/components/players/PlayerRow";
 import { MyPlayerTagControl } from "@/components/my-team/MyPlayerTagControl";
 import { TeamHeader } from "./TeamHeader";
@@ -15,7 +16,7 @@ import { costDisplay } from "@/lib/player-costs";
 import { visibleTradesWhere, type TradeViewer } from "@/lib/trade-access";
 import { tradeTitle } from "@/lib/trades";
 import { describeTransaction } from "@/lib/transaction-display";
-import { formatCost, formatDateTime, timeAgo, PLAYER_TAG_LABEL } from "@/lib/format";
+import { formatCost, formatDateTime, statusLabel, timeAgo, PLAYER_TAG_LABEL } from "@/lib/format";
 
 export const TEAM_TABS = ["roster", "activity", "draft"] as const;
 export type TeamTab = (typeof TEAM_TABS)[number];
@@ -203,7 +204,7 @@ async function TeamActivity({ teamId, viewer }: { teamId: string; viewer: TradeV
                   <span className="min-w-0 truncate">
                     {tradeTitle(t.participants)}
                   </span>
-                  <Badge variant={t.status === "ACCEPTED" ? "green" : "default"}>{t.status}</Badge>
+                  <Badge variant={t.status === "ACCEPTED" ? "green" : "default"}>{statusLabel(t.status)}</Badge>
                 </Link>
               </li>
             ))}
@@ -242,9 +243,15 @@ async function TeamDraft({ teamId }: { teamId: string }) {
                   )}
                   <span className="shrink-0 tabular text-muted">
                     <span title={pick.number.title}>{pick.isKeeperSlot ? "Keeper slot" : pick.number.text}</span> ·{" "}
-                    <span title={cost.title} className={cost.confirmed ? "font-semibold text-foreground" : "text-xs"}>
-                      {cost.text}
-                    </span>
+                    {cost.confirmed ? (
+                      <span title={cost.title} className="font-semibold text-foreground">
+                        {cost.text}
+                      </span>
+                    ) : (
+                      <TapReason reason={cost.title} className="text-xs">
+                        {cost.text}
+                      </TapReason>
+                    )}
                   </span>
                 </div>
               );

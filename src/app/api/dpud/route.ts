@@ -49,7 +49,7 @@ export async function POST(req: Request) {
   const otherManagers = await prisma.manager.findMany({ where: { id: { not: manager.id } } });
   await notifyManagers(otherManagers.map((m) => m.id), {
     type: "DPUD_NEW_BET",
-    title: `New DPUD bet: ${title}`,
+    title: `New prop bet: ${title}`,
     body: description,
     link: "/prop-bets",
     relatedEntityType: "DpudBet",

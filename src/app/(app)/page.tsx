@@ -5,7 +5,7 @@ import { tradeTitle } from "@/lib/trades";
 import { CURRENT_SEASON_YEAR } from "@/lib/config";
 import { Card, EmptyState } from "@/components/ui/Card";
 import { Badge, DraftColorBadge, PlayerTagBadge } from "@/components/ui/Badge";
-import { formatDate, formatDateTime, timeAgo, PLAYER_TAG_LABEL } from "@/lib/format";
+import { formatDate, formatDateTime, statusLabel, timeAgo, PLAYER_TAG_LABEL } from "@/lib/format";
 import Link from "next/link";
 import { describeTransaction } from "@/lib/transaction-display";
 
@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
 export default async function BoardPage() {
   const manager = await getCurrentManager();
 
-  const [season, standings, keeperDeadlineSeason, recentTrades, recentTransactions, expiringKeepers, availablePlayers, recentPropBets, dpudCount, yahoo, unreadCount] =
+  const [season, standings, keeperDeadlineSeason, nextSeason, recentTrades, recentTransactions, expiringKeepers, availablePlayers, recentPropBets, dpudCount, yahoo, unreadCount] =
     await Promise.all([
       prisma.season.findFirst({ where: { year: CURRENT_SEASON_YEAR }, include: { draftDayDetails: true } }),
       prisma.teamStanding.findMany({
@@ -24,6 +24,10 @@ export default async function BoardPage() {
         take: 5,
       }),
       prisma.season.findFirst({ where: { year: CURRENT_SEASON_YEAR } }),
+      // A season's keeper deadline comes before the NEXT season's draft, and
+      // a season's draftDate is its own draft - so the deadline card's draft
+      // date is next season's.
+      prisma.season.findFirst({ where: { year: CURRENT_SEASON_YEAR + 1 }, select: { draftDate: true } }),
       prisma.trade.findMany({
         where: { AND: [{ status: { in: ["PROPOSED", "COUNTERED", "ACCEPTED"] } }, visibleTradesWhere(manager)] },
         orderBy: { updatedAt: "desc" },
@@ -130,16 +134,18 @@ export default async function BoardPage() {
               <p>
                 Status:{" "}
                 <Badge variant={yahoo.lastSyncStatus === "SUCCESS" ? "green" : yahoo.lastSyncStatus === "FAILED" ? "red" : "default"}>
-                  {yahoo.lastSyncStatus.replace("_", " ")}
+                  {statusLabel(yahoo.lastSyncStatus)}
                 </Badge>
               </p>
               <p className="text-muted">
                 Last success:{" "}
                 {yahoo.lastSyncSuccessAt ? timeAgo(yahoo.lastSyncSuccessAt) : "never"}
               </p>
-              <Link href="/commissioner/yahoo" className="inline-block mt-2 text-xs text-antler hover:text-antler-strong">
-                Connect / manage Yahoo &rarr;
-              </Link>
+              {manager?.isCommissioner && (
+                <Link href="/commissioner/yahoo" className="inline-block mt-2 text-xs text-antler hover:text-antler-strong">
+                  Connect / manage Yahoo &rarr;
+                </Link>
+              )}
             </div>
           ) : (
             <p className="text-sm text-muted">Not configured.</p>
@@ -154,7 +160,7 @@ export default async function BoardPage() {
             <>
               <p className="text-2xl font-display tabular">{formatDateTime(keeperDeadlineSeason.keeperDeadline)}</p>
               <p className="text-xs text-muted mt-1">
-                Before the {keeperDeadlineSeason.year + 1} draft{keeperDeadlineSeason.draftDate && ` (${formatDate(keeperDeadlineSeason.draftDate)})`}.
+                Before the {keeperDeadlineSeason.year + 1} draft{nextSeason?.draftDate && ` (${formatDate(nextSeason.draftDate)})`}.
               </p>
             </>
           ) : (
@@ -229,7 +235,7 @@ export default async function BoardPage() {
                   <span>
                     {tradeTitle(t.participants)}
                   </span>
-                  <Badge variant={t.status === "ACCEPTED" ? "green" : "default"}>{t.status}</Badge>
+                  <Badge variant={t.status === "ACCEPTED" ? "green" : "default"}>{statusLabel(t.status)}</Badge>
                 </li>
               ))}
             </ul>
@@ -269,7 +275,7 @@ export default async function BoardPage() {
                 <li key={b.id} className="text-sm flex items-center justify-between">
                   <span className="truncate">{b.title}</span>
                   <Badge variant={b.status === "COMPLETE" ? "green" : b.status === "ACTIVE" ? "blue" : "default"}>
-                    {b.status} {b.status !== "COMPLETE" && `· ${b.participants.length}`}
+                    {statusLabel(b.status)} {b.status !== "COMPLETE" && `· ${b.participants.length}`}
                   </Badge>
                 </li>
               ))}

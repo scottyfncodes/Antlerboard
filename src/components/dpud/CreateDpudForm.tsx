@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { sendJson } from "@/lib/call-api";
 
 export function CreateDpudForm() {
   const [open, setOpen] = useState(false);
@@ -12,16 +13,19 @@ export function CreateDpudForm() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const router = useRouter();
 
   async function submit() {
     setBusy(true);
-    await fetch("/api/dpud", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title, description, statCondition, stakes, startDate, endDate }),
-    });
+    setError(null);
+    const res = await sendJson("/api/dpud", { title, description, statCondition, stakes, startDate, endDate });
     setBusy(false);
+    if (!res.ok) {
+      // Leave the form open and filled in so nothing has to be retyped.
+      setError(res.error);
+      return;
+    }
     setOpen(false);
     setTitle("");
     setDescription("");
@@ -33,7 +37,7 @@ export function CreateDpudForm() {
   if (!open) {
     return (
       <button onClick={() => setOpen(true)} className="rounded-md bg-antler px-3 py-2 text-sm font-medium text-[#1a1305] hover:bg-antler-strong">
-        New DPUD Bet
+        New Prop Bet
       </button>
     );
   }
@@ -81,6 +85,7 @@ export function CreateDpudForm() {
           Cancel
         </button>
       </div>
+      {error && <p className="text-sm text-red">{error}</p>}
     </div>
   );
 }

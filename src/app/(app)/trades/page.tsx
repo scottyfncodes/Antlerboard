@@ -7,7 +7,7 @@ import { Card, EmptyState } from "@/components/ui/Card";
 import { Badge, PlayerTagBadge } from "@/components/ui/Badge";
 import { TradeCard } from "@/components/trades/TradeCard";
 import { OfferActions } from "@/components/trades/OfferActions";
-import { PLAYER_TAG_LABEL } from "@/lib/format";
+import { PLAYER_TAG_LABEL, statusLabel } from "@/lib/format";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
@@ -90,10 +90,11 @@ export default async function TradesPage() {
           </div>
         )}
 
-        <h3 className="font-display text-base mb-2">Offers</h3>
-        {offers.length === 0 ? (
-          <EmptyState title="No offers yet" />
-        ) : (
+        {/* Offers come only from older data - new deals go through "Propose a
+            Trade" - so the section appears only when there are some. */}
+        {offers.length > 0 && (
+          <>
+          <h3 className="font-display text-base mb-2">Offers</h3>
           <div className="space-y-3">
             {offers.map((o) => {
               const canRespond = !!manager && !offerActionDenial(o, manager, "accept");
@@ -112,7 +113,7 @@ export default async function TradesPage() {
                       <Badge
                         variant={o.status === "ACCEPTED" ? "green" : o.status === "REJECTED" ? "red" : "default"}
                       >
-                        {o.status}
+                        {statusLabel(o.status)}
                       </Badge>
                       <OfferActions offerId={o.id} canRespond={canRespond} canWithdraw={canWithdraw} />
                     </div>
@@ -121,6 +122,7 @@ export default async function TradesPage() {
               );
             })}
           </div>
+          </>
         )}
       </section>
 

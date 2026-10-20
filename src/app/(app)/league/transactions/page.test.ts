@@ -33,7 +33,7 @@ describe("League > Transactions page", () => {
       },
     });
 
-    const html = renderToStaticMarkup(await TransactionsPage());
+    const html = renderToStaticMarkup(await TransactionsPage({}));
 
     expect(html.match(/data-complete="false"/g)).toHaveLength(3);
     expect(html.match(/data-complete="true"/g)).toHaveLength(1);
@@ -46,5 +46,27 @@ describe("League > Transactions page", () => {
     expect(html.match(/>Free-agent add</g)).toBeNull();
     // Nothing was hidden or changed in the database.
     expect(await prisma.transaction.count()).toBe(4);
+  });
+
+  it("says how many rows it's showing and offers more past the first 75", async () => {
+    const { season } = await makeLeagueWithSeason(2026);
+    await prisma.transaction.createMany({
+      data: Array.from({ length: 80 }, (_, i) => ({
+        seasonId: season.id,
+        seasonYear: 2026,
+        type: "DROP" as const,
+        date: new Date(Date.UTC(2026, 4, 1, 0, i)),
+      })),
+    });
+
+    const first = renderToStaticMarkup(await TransactionsPage({}));
+    expect(first.match(/data-complete=/g)).toHaveLength(75);
+    expect(first).toContain("Showing 75 of 80");
+    expect(first).toContain('href="/league/transactions?limit=150"');
+
+    const more = renderToStaticMarkup(await TransactionsPage({ searchParams: Promise.resolve({ limit: "150" }) }));
+    expect(more.match(/data-complete=/g)).toHaveLength(80);
+    expect(more).toContain("Showing 80 of 80");
+    expect(more).not.toContain("Show more");
   });
 });

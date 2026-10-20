@@ -3,6 +3,7 @@ import { ChevronRight } from "lucide-react";
 import { prisma } from "@/lib/db";
 import { CURRENT_SEASON_YEAR, KEEPER_SLOT_COUNT } from "@/lib/config";
 import { getCurrentManager } from "@/lib/current-manager";
+import { countDeclaredKeepers } from "@/lib/keeper-slots";
 import { LeagueHeader } from "@/components/league/LeagueHeader";
 import { Avatar } from "@/components/ui/Avatar";
 import { ordinal } from "@/lib/positions";
@@ -11,13 +12,13 @@ import clsx from "clsx";
 export const dynamic = "force-dynamic";
 
 export default async function TeamsPage() {
-  const [manager, teams] = await Promise.all([
+  const [manager, keeperCounts, teams] = await Promise.all([
     getCurrentManager(),
+    countDeclaredKeepers(CURRENT_SEASON_YEAR),
     prisma.team.findMany({
       include: {
         manager: true,
         standings: { where: { season: { year: CURRENT_SEASON_YEAR } } },
-        keeperRecords: { where: { seasonYear: CURRENT_SEASON_YEAR, status: { not: "DROPPED" } }, select: { keeperYear: true } },
       },
       orderBy: { name: "asc" },
     }),
@@ -32,7 +33,7 @@ export default async function TeamsPage() {
       <ul className="rounded-xl border border-border bg-surface divide-y divide-border overflow-hidden">
         {byRank.map((team) => {
           const standing = team.standings[0];
-          const keepers = team.keeperRecords.filter((r) => r.keeperYear >= 1).length;
+          const keepers = keeperCounts.get(team.id) ?? 0;
           const mine = myTeamIds.has(team.id);
           return (
             <li key={team.id}>

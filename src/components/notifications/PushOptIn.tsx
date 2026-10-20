@@ -64,7 +64,7 @@ export function PushOptIn({ vapidPublicKey }: { vapidPublicKey: string | null })
   return (
     <div className="rounded-lg border border-border bg-surface p-4 space-y-2">
       <p className="text-sm">
-        Turn on push notifications to get keeper deadline alerts, trade activity, and DPUD updates even
+        Turn on push notifications to get keeper deadline alerts, trade activity, and prop bet updates even
         when Antlerboard isn&apos;t open. You can turn this off again any time.
       </p>
       <button

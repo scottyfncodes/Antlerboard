@@ -2,11 +2,14 @@ import { prisma } from "@/lib/db";
 import { AUCTION_BUDGET, CURRENT_SEASON_YEAR, KEEPER_SLOT_COUNT } from "@/lib/config";
 import { LeagueHeader } from "@/components/league/LeagueHeader";
 import { EmptyState } from "@/components/ui/Card";
+import { TapReason } from "@/components/ui/TapReason";
 import { KeeperYearBadge } from "@/components/keepers/KeeperYearBadge";
 import { KeeperFilters } from "@/components/keepers/KeeperFilters";
 import { formatCost } from "@/lib/format";
 import { loadKeeperCostValues } from "@/lib/player-costs-data";
 import { costLabel, type CostValue } from "@/lib/player-costs";
+import { declaredKeeperWhere, keeperSlotTeamId } from "@/lib/keeper-slots";
+import { hrefWithParam, parseIntParam } from "@/lib/search-params";
 import Link from "next/link";
 import clsx from "clsx";
 import type { Prisma } from "@prisma/client";
@@ -25,7 +28,9 @@ export default async function KeeperBoardPage({
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
   const sp = await searchParams;
-  const season = sp.season ? Number(sp.season) : CURRENT_SEASON_YEAR;
+  // A hand-typed or stale param falls back to the default rather than crashing.
+  const season = parseIntParam(sp.season) ?? CURRENT_SEASON_YEAR;
+  const minYear = parseIntParam(sp.minYear) ?? 1;
   const [teams, seasonYears] = await Promise.all([
     prisma.team.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } }),
     prisma.keeperRecord.findMany({ distinct: ["seasonYear"], select: { seasonYear: true }, orderBy: { seasonYear: "desc" } }),
@@ -33,10 +38,10 @@ export default async function KeeperBoardPage({
 
   const where: Prisma.KeeperRecordWhereInput = {
     seasonYear: season,
-    keeperYear: { gte: sp.minYear ? Number(sp.minYear) : 1 },
+    keeperYear: { gte: minYear },
   };
   if (sp.team) where.OR = [{ startTeamId: sp.team }, { startTeamId: null, teamId: sp.team }];
-  if (sp.status) where.status = sp.status as never;
+  if (sp.status === "KEPT" || sp.status === "FORCED_BACK" || sp.status === "DROPPED") where.status = sp.status;
 
   const orderBy: Prisma.KeeperRecordOrderByWithRelationInput[] =
     sp.sort === "cost"
@@ -47,14 +52,26 @@ export default async function KeeperBoardPage({
           ? [{ player: { name: "asc" } }]
           : [{ startTeam: { name: "asc" } }, { keeperYear: "desc" }, { keeperCost: "desc" }];
 
-  const records = await prisma.keeperRecord.findMany({
-    where,
-    orderBy,
-    include: { player: true, team: true, startTeam: true },
-  });
+  const [records, declared] = await Promise.all([
+    prisma.keeperRecord.findMany({
+      where,
+      orderBy,
+      include: { player: true, team: true, startTeam: true },
+    }),
+    // Each team's "x/N · $ in keepers" summary is over every keeper it
+    // declared this season (see keeper-slots) - filters only narrow the rows listed.
+    prisma.keeperRecord.findMany({ where: declaredKeeperWhere(season) }),
+  ]);
 
   // Costs calculated from a missing or guessed price read Unavailable.
-  const costValues = await loadKeeperCostValues(records);
+  const listedIds = new Set(records.map((r) => r.id));
+  const costValues = await loadKeeperCostValues([...records, ...declared.filter((d) => !listedIds.has(d.id))]);
+  const declaredByTeam = new Map<string, typeof declared>();
+  for (const r of declared) {
+    const key = keeperSlotTeamId(r);
+    if (!declaredByTeam.has(key)) declaredByTeam.set(key, []);
+    declaredByTeam.get(key)!.push(r);
+  }
 
   const grouped = new Map<string, typeof records>();
   for (const r of records) {
@@ -76,7 +93,7 @@ export default async function KeeperBoardPage({
           {seasonYears.map((s) => (
             <Link
               key={s.seasonYear}
-              href={`/keepers?season=${s.seasonYear}`}
+              href={hrefWithParam("/keepers", sp, "season", s.seasonYear)}
               className={clsx(
                 "rounded-full px-2.5 py-1 text-xs border",
                 s.seasonYear === season ? "bg-antler border-antler text-[#1a1305] font-medium" : "border-border text-muted hover:text-foreground"
@@ -97,9 +114,10 @@ export default async function KeeperBoardPage({
         <div className="space-y-6">
           {[...grouped.entries()].map(([teamId, teamRecords]) => {
             const team = teamRecords[0].startTeam ?? teamRecords[0].team;
-            const confirmed = teamRecords.map((r) => costValues.get(r.id)).filter((v): v is Extract<CostValue, { status: "recorded" }> => v?.status === "recorded");
+            const teamDeclared = declaredByTeam.get(teamId) ?? [];
+            const confirmed = teamDeclared.map((r) => costValues.get(r.id)).filter((v): v is Extract<CostValue, { status: "recorded" }> => v?.status === "recorded");
             const total = confirmed.reduce((sum, v) => sum + v.amount, 0);
-            const unconfirmed = teamRecords.filter((r) => costValues.get(r.id)?.status === "unavailable").length;
+            const unconfirmed = teamDeclared.filter((r) => costValues.get(r.id)?.status === "unavailable").length;
             return (
               <section key={teamId}>
                 <h2 className="font-display text-lg mb-2 flex items-baseline gap-2 flex-wrap">
@@ -107,7 +125,7 @@ export default async function KeeperBoardPage({
                     {team.name}
                   </Link>
                   <span className="text-sm text-muted font-sans">
-                    {teamRecords.length}/{KEEPER_SLOT_COUNT} · {formatCost(total)} in keepers
+                    {teamDeclared.length}/{KEEPER_SLOT_COUNT} · {formatCost(total)} in keepers
                     {unconfirmed > 0
                       ? ` · ${unconfirmed} cost${unconfirmed === 1 ? "" : "s"} unconfirmed`
                       : ` · ${formatCost(AUCTION_BUDGET - total)} left for the auction`}
@@ -209,15 +227,24 @@ function KeeperCostCell({ value, override }: { value: CostValue | undefined; ove
   if (!value || value.status !== "recorded") {
     const reason = value?.status === "unavailable" || value?.status === "not-applicable" ? value.reason : "No keeper cost is recorded.";
     return (
-      <td className="px-2 py-2 text-xs text-muted" title={reason}>
-        {costLabel(value ?? { status: "unavailable", reason })}
+      <td className="px-2 py-2 text-xs text-muted">
+        <TapReason reason={reason}>{costLabel(value ?? { status: "unavailable", reason })}</TapReason>
+      </td>
+    );
+  }
+  if (override) {
+    return (
+      <td className="px-2 py-2 tabular">
+        <TapReason reason="Recorded by the commissioner; differs from the ladder">
+          {formatCost(value.amount)}
+          <span className="text-muted text-xs ml-0.5">*</span>
+        </TapReason>
       </td>
     );
   }
   return (
-    <td className="px-2 py-2 tabular" title={override ? "Recorded by the commissioner; differs from the ladder" : value.note}>
+    <td className="px-2 py-2 tabular" title={value.note}>
       {formatCost(value.amount)}
-      {override && <span className="text-muted text-xs ml-0.5">*</span>}
     </td>
   );
 }

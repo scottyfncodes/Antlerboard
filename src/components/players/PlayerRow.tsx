@@ -1,6 +1,7 @@
 import Link from "next/link";
 import clsx from "clsx";
 import { Avatar } from "@/components/ui/Avatar";
+import { TapReason } from "@/components/ui/TapReason";
 import { MAX_CONSECUTIVE_KEEPER_YEARS } from "@/lib/config";
 import { costDisplay, type CostValue } from "@/lib/player-costs";
 
@@ -72,11 +73,18 @@ export function PlayerRow({
   );
 }
 
-/** "$12" in bold when confirmed; "Unavailable" / "None" / "Carried" muted, with the reason on hover. */
+/** "$12" in bold when confirmed; "Unavailable" / "None" / "Carried" muted, with the reason a tap away. */
 function CostText({ value }: { value: CostValue }) {
   const d = costDisplay(value);
+  if (!d.confirmed) {
+    return (
+      <TapReason reason={d.title} className="tabular text-xs text-muted">
+        {d.text}
+      </TapReason>
+    );
+  }
   return (
-    <span title={d.title} className={clsx("tabular", d.confirmed ? "text-sm font-semibold" : "text-xs text-muted")}>
+    <span title={d.title} className="tabular text-sm font-semibold">
       {d.text}
     </span>
   );
