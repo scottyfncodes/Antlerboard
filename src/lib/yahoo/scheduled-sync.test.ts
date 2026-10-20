@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterAll, vi } from "vitest";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../db";
 import { makeLeagueWithSeason, resetDatabase } from "../test-helpers";
 
@@ -6,7 +7,7 @@ import { makeLeagueWithSeason, resetDatabase } from "../test-helpers";
 // real one does, so these tests cover what the schedule decides and records.
 vi.mock("./sync", () => ({ runYahooSync: vi.fn() }));
 import { runYahooSync } from "./sync";
-import { runScheduledYahooSync, SCHEDULED_SYNC_ACTION } from "./scheduled-sync";
+import { runScheduledYahooSync, SCHEDULED_SYNC_ACTION, waitForDatabase } from "./scheduled-sync";
 const mockedSync = vi.mocked(runYahooSync);
 
 beforeEach(async () => {
@@ -80,5 +81,30 @@ describe("scheduled Yahoo sync evidence", () => {
     const [result] = await runScheduledYahooSync();
     expect(result).toEqual({ leagueId: expect.any(String), outcome: "failed", error: "Yahoo token refresh failed" });
     expect((await auditEntries())[0].after.results[0]).toMatchObject({ outcome: "failed" });
+  });
+});
+
+describe("waitForDatabase", () => {
+  const coldStart = () => new Prisma.PrismaClientInitializationError("Timed out fetching a new connection", "5.22.0");
+
+  it("waits out a slow database start instead of failing the day's sync", async () => {
+    const spy = vi.spyOn(prisma, "$queryRaw").mockRejectedValueOnce(coldStart()).mockRejectedValueOnce(coldStart());
+    await expect(waitForDatabase(4, 0)).resolves.toBeUndefined();
+    expect(spy).toHaveBeenCalledTimes(3);
+    spy.mockRestore();
+  });
+
+  it("gives up after the last attempt", async () => {
+    const spy = vi.spyOn(prisma, "$queryRaw").mockRejectedValue(coldStart());
+    await expect(waitForDatabase(3, 0)).rejects.toBeInstanceOf(Prisma.PrismaClientInitializationError);
+    expect(spy).toHaveBeenCalledTimes(3);
+    spy.mockRestore();
+  });
+
+  it("doesn't retry other errors", async () => {
+    const spy = vi.spyOn(prisma, "$queryRaw").mockRejectedValue(new Error("syntax"));
+    await expect(waitForDatabase(4, 0)).rejects.toThrow("syntax");
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
   });
 });

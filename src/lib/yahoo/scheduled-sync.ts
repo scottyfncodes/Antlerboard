@@ -11,6 +11,7 @@
  * rather than to a commissioner's "Sync Now".
  */
 
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { runYahooSync } from "./sync";
 
@@ -22,7 +23,28 @@ export type ScheduledSyncOutcome =
   /** runYahooSync threw before finishing (e.g. no league selected); per-section Yahoo errors come back as a FAILED/PARTIAL "synced" outcome with its SyncLog. */
   | { leagueId: string; outcome: "failed"; error: string };
 
+/**
+ * Neon suspends an idle compute, and the cron is usually its first request of
+ * the day. A start normally takes under a second, but on 2026-10-20 it took
+ * 8.4 s, the first query timed out after 10 s and the day's sync never ran
+ * (nor left an audit entry). So the run waits for the database first,
+ * retrying only connection failures.
+ */
+export async function waitForDatabase(attempts = 4, pauseMs = 3_000) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      return;
+    } catch (err) {
+      if (!(err instanceof Prisma.PrismaClientInitializationError) || attempt >= attempts) throw err;
+      console.warn(`Database not reachable yet (attempt ${attempt} of ${attempts}); retrying`);
+      await new Promise((resolve) => setTimeout(resolve, pauseMs));
+    }
+  }
+}
+
 export async function runScheduledYahooSync(now: Date = new Date()) {
+  await waitForDatabase();
   const connections = await prisma.yahooConnection.findMany({
     where: { yahooLeagueKey: { not: null }, accessToken: { not: null } },
   });
