@@ -33,25 +33,27 @@ export default async function FypdPage() {
     },
   });
 
-  if (!draft) {
-    const lastSeason = await prisma.season.findFirst({
-      where: { leagueId: league.id, standings: { some: {} } },
-      orderBy: { year: "desc" },
-      include: {
-        standings: { orderBy: { rank: "asc" }, include: { team: true } },
-      },
-    });
-    const allStandings = lastSeason?.standings ?? [];
-    const bottomFourTeams = allStandings
-      .filter((s) => s.rank !== null && s.rank >= 9)
-      .map((s) => ({ id: s.teamId, name: s.team.name, rank: s.rank! }));
-    // C&A's documented FYPD order rule (see src/lib/fypd-order-engine.ts) is
-    // specifically for a 12-team league (8 playoff + 4 non-playoff). Only
-    // offer draft creation when that's actually what the standings show -
-    // showing a partial/wrong-sized dropdown would silently misrepresent
-    // the rule rather than surfacing the mismatch.
-    const teamCountMismatch = allStandings.length > 0 && allStandings.length !== 12;
+  // The next FYPD is drafted from the standings of the last finished season.
+  const lastSeason = await prisma.season.findFirst({
+    where: { leagueId: league.id, standings: { some: {} } },
+    orderBy: { year: "desc" },
+    include: {
+      standings: { orderBy: { rank: "asc" }, include: { team: true } },
+    },
+  });
+  const allStandings = lastSeason?.standings ?? [];
+  const bottomFourTeams = allStandings
+    .filter((s) => s.rank !== null && s.rank >= 9)
+    .map((s) => ({ id: s.teamId, name: s.team.name, rank: s.rank! }));
+  // C&A's documented FYPD order rule (see src/lib/fypd-order-engine.ts) is
+  // specifically for a 12-team league (8 playoff + 4 non-playoff). Only
+  // offer draft creation when that's actually what the standings show -
+  // showing a partial/wrong-sized dropdown would silently misrepresent
+  // the rule rather than surfacing the mismatch.
+  const teamCountMismatch = allStandings.length > 0 && allStandings.length !== 12;
+  const nextYear = (lastSeason?.year ?? new Date().getFullYear()) + 1;
 
+  if (!draft) {
     return (
       <div className="space-y-6">
         <PageHeader
@@ -67,7 +69,7 @@ export default async function FypdPage() {
               before an FYPD draft can be created.
             </p>
           ) : isCommissioner ? (
-            <CreateFypdDraftForm bottomFourTeams={bottomFourTeams} nextYear={(lastSeason?.year ?? new Date().getFullYear()) + 1} />
+            <CreateFypdDraftForm bottomFourTeams={bottomFourTeams} nextYear={nextYear} />
           ) : (
             <p className="text-sm text-muted">The commissioner hasn&apos;t created this year&apos;s FYPD draft yet.</p>
           )}
@@ -105,6 +107,13 @@ export default async function FypdPage() {
         subtitle={`Held in March, the night before the auction, from the ${draft.year - 1} MLB draft class (U.S. draftees only). Drafting a player grants call-up rights, not a roster spot; a call-up is free but starts the keeper clock at an assumed $4, so the first kept year costs $5.`}
         actions={<Badge variant={draft.status === "COMPLETE" ? "green" : draft.status === "PAUSED" ? "yellow" : "default"}>{draft.status.replace("_", " ")}</Badge>}
       />
+
+      {isCommissioner && draft.status === "COMPLETE" && draft.year < nextYear && !teamCountMismatch && (
+        <Card>
+          <h2 className="font-display text-lg mb-3">Set up the {nextYear} FYPD</h2>
+          <CreateFypdDraftForm bottomFourTeams={bottomFourTeams} nextYear={nextYear} />
+        </Card>
+      )}
 
       {isCommissioner && (
         <Card>
