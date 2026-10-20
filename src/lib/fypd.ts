@@ -166,8 +166,9 @@ export async function exerciseFypdCallUp(selectionId: string): Promise<void> {
     include: { draft: true },
   });
 
-  const league = await prisma.league.findUnique({ where: { id: selection.draft.leagueId } });
-  const year = league?.currentSeasonYear ?? CURRENT_SEASON_YEAR;
+  // The same season every other keeper rebuild (trades, offers, the CSV
+  // import) runs through, so a call-up never trims or extends their rows.
+  const year = CURRENT_SEASON_YEAR;
   const season = await prisma.season.upsert({
     where: { leagueId_year: { leagueId: selection.draft.leagueId, year } },
     create: { leagueId: selection.draft.leagueId, year, status: "IN_PROGRESS" },

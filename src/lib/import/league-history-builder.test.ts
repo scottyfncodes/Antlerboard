@@ -280,3 +280,22 @@ describe("auction rows that carry Yahoo's player id", () => {
     expect(p.flags.join(" ")).not.toMatch(/Jarren Duran|Jhoan Duran/);
   });
 });
+
+describe("buildLeagueHistory: a prospect someone paid FAAB for", () => {
+  it("is a waiver claim at his bid, not a $4 FYPD call-up", () => {
+    const claimed = buildLeagueHistory({
+      blocks,
+      auctionRows,
+      yahoo: [...yahoo.filter((t) => t.transactionKey !== "t4"),
+        tx(2022, "t4", "add", "2022-04-02T12:00:00Z", [yPlayer("y-prospect", "Hot Prospect", "add", null, "Bravo", "waivers")], 30)],
+      offseasonTrades,
+      resolver,
+      firstSeason: 2021,
+      currentSeason: 2023,
+    });
+    const key = claimed.players.find((p) => p.name === "Hot Prospect")!.key;
+    const add = claimed.events.find((e) => e.playerKey === key && e.kind === "ACQUIRED")!;
+    expect(add).toMatchObject({ method: "WAIVER", cost: 30 });
+    expect(add.flags.join(" ")).toMatch(/claimed for \$30 FAAB/);
+  });
+});

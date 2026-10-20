@@ -10,6 +10,7 @@ import {
   getContinuousKeeperHistory,
   buildStints,
   computeKeeperCost,
+  describeStintRestarts,
   type PlayerHistoryEvent,
 } from "./keeper-engine";
 
@@ -282,5 +283,26 @@ describe("keeper-engine: eligibility", () => {
   it("is eligible through year 5 but not year 6", () => {
     expect(isKeeperEligible(drafted2021, 2026)).toBe(true);
     expect(isKeeperEligible(drafted2021, 2027)).toBe(false);
+  });
+});
+
+describe("describeStintRestarts", () => {
+  const acq = (season: number) => ({ type: "ACQUIRED" as const, season, method: "DRAFT" as const, cost: 10, teamId: "A" });
+
+  it("a drop recorded in the season before the re-acquisition reads as a drop, not a forced redraft", () => {
+    const stints = buildStints([
+      { ...acq(2022), date: new Date("2022-03-20") },
+      { type: "DROPPED", season: 2022, date: new Date("2022-12-31") },
+      acq(2023),
+    ]);
+    expect(describeStintRestarts(stints)).toEqual([{ fromSeason: 2022, toSeason: 2023, reason: "DROPPED" }]);
+  });
+
+  it("five kept years then back to the auction reads as forced back", () => {
+    expect(describeStintRestarts(buildStints([acq(2019), acq(2025)]))).toEqual([{ fromSeason: 2019, toSeason: 2025, reason: "FORCED_BACK" }]);
+  });
+
+  it("an earlier re-acquisition with no drop on record is just a re-acquisition", () => {
+    expect(describeStintRestarts(buildStints([acq(2022), acq(2024)]))[0].reason).toBe("REACQUIRED");
   });
 });

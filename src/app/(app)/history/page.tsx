@@ -3,11 +3,17 @@ import { LeagueHeader } from "@/components/league/LeagueHeader";
 import { Card, CardLink, EmptyState } from "@/components/ui/Card";
 import { DraftColorBadge } from "@/components/ui/Badge";
 import { getDraftColorRange } from "@/lib/draft-color-engine";
-import { getPlayerHistoryEvents, KEEPER_HISTORY_DROP_WHERE } from "@/lib/keeper-sync";
-import { buildStints } from "@/lib/keeper-engine";
+import { getPlayerHistoryEvents } from "@/lib/keeper-sync";
+import { buildStints, describeStintRestarts, type StintRestart } from "@/lib/keeper-engine";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
+
+const RESTART_LABELS: Record<StintRestart["reason"], string> = {
+  DROPPED: "Dropped and later re-added",
+  FORCED_BACK: "Forced back after 5 consecutive keeper years",
+  REACQUIRED: "Re-acquired",
+};
 
 export default async function HistoryPage() {
   const [seasons, multiAcqPlayers] = await Promise.all([
@@ -34,24 +40,11 @@ export default async function HistoryPage() {
 
     const events = await getPlayerHistoryEvents(player.id);
     const stints = buildStints(events);
-    const drops = await prisma.transaction.findMany({
-      where: { ...KEEPER_HISTORY_DROP_WHERE, players: { some: { playerId: player.id } } },
-    });
-    const dropSeasons = new Set(drops.map((d) => d.seasonYear));
-
-    const transitions = [];
-    for (let i = 1; i < stints.length; i++) {
-      const prev = stints[i - 1];
-      const curr = stints[i];
-      const reason = dropSeasons.has(curr.startSeason)
-        ? "Dropped and later re-added"
-        : "Forced back after 5 consecutive keeper years";
-      transitions.push({
-        fromSeason: prev.startSeason,
-        toSeason: curr.startSeason,
-        reason,
-      });
-    }
+    const transitions = describeStintRestarts(stints).map((r) => ({
+      fromSeason: r.fromSeason,
+      toSeason: r.toSeason,
+      reason: RESTART_LABELS[r.reason],
+    }));
     if (transitions.length > 0) {
       milestonePlayers.push({ playerId: player.id, name: player.name, transitions });
     }

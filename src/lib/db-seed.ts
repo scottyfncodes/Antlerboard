@@ -705,7 +705,7 @@ export async function runSeed(): Promise<void> {
         managerId: scott.id,
         type: "KEEPER_YEAR_FIVE",
         title: "Keeper Alert: Ronald Acuna Jr. is in his final keeper year",
-        body: "Ronald Acuna Jr. (Velvet Horns) is entering Keeper Year 5/5 and will be forced back into the 2027 draft unless traded before then.",
+        body: "Ronald Acuna Jr. (Velvet Horns) is entering Keeper Year 5/5 and goes back into the 2027 draft after this season (a trade carries the clock with him).",
         link: "/players",
         relatedEntityType: "Player",
         relatedEntityId: playerIdByName.get("Ronald Acuna Jr.")!,

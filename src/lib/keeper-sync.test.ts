@@ -101,3 +101,49 @@ describe("keeper history ignores Yahoo-synced transactions (until in-season move
     expect(await getPlayerHistoryEvents(player.id)).toEqual(expect.arrayContaining([expect.objectContaining({ type: "DROPPED", season: 2026 })]));
   });
 });
+
+describe("commissioner overrides pin the cost, not the owner", () => {
+  it("a traded player's overridden row moves to the new team and keeps its cost", async () => {
+    const { league } = await makeLeagueWithSeason(2025);
+    const season2026 = await prisma.season.create({ data: { leagueId: league.id, year: 2026 } });
+    const season2025 = await prisma.season.findFirstOrThrow({ where: { leagueId: league.id, year: 2025 } });
+    const { team: a } = await makeManagerAndTeam(league.id, "A");
+    const { team: b } = await makeManagerAndTeam(league.id, "B");
+    const player = await makePlayer(league.id, "Overridden Player");
+    await prisma.acquisition.create({
+      data: { seasonId: season2025.id, seasonYear: 2025, playerId: player.id, teamId: a.id, method: "DRAFT", cost: 10, date: new Date("2025-03-15") },
+    });
+    await recomputeKeeperRecordsForPlayer(player.id, 2026);
+    await prisma.keeperRecord.updateMany({ where: { playerId: player.id, seasonYear: 2026 }, data: { keeperCost: 99, commissionerOverride: true } });
+
+    await prisma.acquisition.create({
+      data: { seasonId: season2026.id, seasonYear: 2026, playerId: player.id, teamId: b.id, method: "TRADE", cost: 0, date: new Date("2026-06-01") },
+    });
+    await recomputeKeeperRecordsForPlayer(player.id, 2026);
+
+    const row = await prisma.keeperRecord.findFirstOrThrow({ where: { playerId: player.id, seasonYear: 2026 } });
+    expect(row).toMatchObject({ teamId: b.id, keeperCost: 99, commissionerOverride: true, keeperYear: 1 });
+    expect(await prisma.keeperRecord.count({ where: { playerId: player.id, seasonYear: 2026 } })).toBe(1);
+  });
+});
+
+describe("after five kept years", () => {
+  it("writes one FORCED_BACK row, not a new one every later season", async () => {
+    const { league } = await makeLeagueWithSeason(2019);
+    for (let y = 2020; y <= 2027; y++) await prisma.season.create({ data: { leagueId: league.id, year: y } });
+    const s2019 = await prisma.season.findFirstOrThrow({ where: { leagueId: league.id, year: 2019 } });
+    const { team } = await makeManagerAndTeam(league.id, "Alex");
+    const player = await makePlayer(league.id, "Long Keeper");
+    await prisma.acquisition.create({
+      data: { seasonId: s2019.id, seasonYear: 2019, playerId: player.id, teamId: team.id, method: "DRAFT", cost: 5 },
+    });
+
+    await recomputeKeeperRecordsForPlayer(player.id, 2027);
+
+    const rows = await prisma.keeperRecord.findMany({ where: { playerId: player.id }, orderBy: { seasonYear: "asc" } });
+    expect(rows.map((r) => [r.seasonYear, r.status])).toEqual([
+      [2019, "KEPT"], [2020, "KEPT"], [2021, "KEPT"], [2022, "KEPT"], [2023, "KEPT"], [2024, "KEPT"],
+      [2025, "FORCED_BACK"],
+    ]);
+  });
+});

@@ -256,3 +256,24 @@ describe("POST /api/commissioner/import/commit - existing player id must match t
     expect(body).toEqual({ imported: 1, skipped: 1 });
   });
 });
+
+describe("POST /api/commissioner/import/commit - replays and dates", () => {
+  it("a replayed batch adds nothing the second time", async () => {
+    const { myTeam, myPlayer } = await setup();
+    const rows = [row({ teamId: myTeam.id, existingPlayerId: myPlayer.id, playerName: "Nick Kurtz" })];
+    expect((await commit(rows)).body).toMatchObject({ imported: 1 });
+    const before = await writeCounts();
+    expect((await commit(rows)).body).toMatchObject({ imported: 0, skipped: 1 });
+    expect(await writeCounts()).toEqual(before);
+  });
+
+  it("dates each acquisition inside its own season, not today", async () => {
+    const { myTeam, myPlayer } = await setup();
+    await commit([
+      row({ teamId: myTeam.id, existingPlayerId: myPlayer.id, playerName: "Nick Kurtz" }),
+      row({ teamId: myTeam.id, method: "WAIVER", season: 2024, playerName: "Waiver Guy" }),
+    ]);
+    const dates = (await prisma.acquisition.findMany({ orderBy: { seasonYear: "asc" } })).map((a) => a.date.toISOString().slice(0, 10));
+    expect(dates).toEqual(["2024-07-01", "2025-03-15"]);
+  });
+});

@@ -105,21 +105,48 @@ export async function promoteFypdBatch(db: Db, batchId: string): Promise<FypdPro
     update: {},
   });
 
-  const playerCache = new Map<string, string>(); // player name -> id
-  async function getOrCreatePlayer(name: string, positionRaw: string | null): Promise<string> {
+  const playerCache = new Map<string, string | null>(); // player name -> id (null: ambiguous, skipped)
+  let playersCreated = 0;
+  /**
+   * The prospect a pick names. An existing player with that name only counts
+   * when he has no league history from before this draft - a same-named
+   * veteran (the Dodgers' Max Muncy vs the A's prospect) must never be handed
+   * the pick. Null when that can't be told apart: the pick is skipped for
+   * the commissioner to link by hand.
+   */
+  async function getOrCreatePlayer(name: string, positionRaw: string | null): Promise<string | null> {
     if (playerCache.has(name)) return playerCache.get(name)!;
-    const existing = await db.player.findFirst({ where: { leagueId: batch.leagueId, name } });
-    const positions = positionRaw
-      ? positionRaw
-          .split("/")
-          .map((p) => p.trim())
-          .filter(Boolean)
-      : [];
-    const player =
+    const sameName = await db.player.findMany({
+      where: { leagueId: batch.leagueId, name },
+      select: {
+        id: true,
+        _count: {
+          select: {
+            draftPicks: { where: { seasonYear: { lt: seasonYear } } },
+            acquisitions: { where: { seasonYear: { lt: seasonYear } } },
+          },
+        },
+      },
+    });
+    const prospects = sameName.filter((p) => p._count.draftPicks === 0 && p._count.acquisitions === 0);
+    let id: string | null;
+    if (prospects.length === 1) {
+      id = prospects[0].id;
+    } else if (sameName.length === 0) {
+      const positions = positionRaw
+        ? positionRaw
+            .split("/")
+            .map((p) => p.trim())
+            .filter(Boolean)
+        : [];
       // An FYPD held before season Y drafts the previous summer's class.
-      existing ?? (await db.player.create({ data: { leagueId: batch.leagueId, name, positions, mlbDraftYear: seasonYear - 1 } }));
-    playerCache.set(name, player.id);
-    return player.id;
+      id = (await db.player.create({ data: { leagueId: batch.leagueId, name, positions, mlbDraftYear: seasonYear - 1 } })).id;
+      playersCreated++;
+    } else {
+      id = null;
+    }
+    playerCache.set(name, id);
+    return id;
   }
 
   const roundOneOrder = new Map<number, string>(); // slot -> teamId
@@ -138,6 +165,13 @@ export async function promoteFypdBatch(db: Db, batchId: string): Promise<FypdPro
     }
 
     const playerId = await getOrCreatePlayer(pick.playerName, pick.positionRaw);
+    if (!playerId) {
+      skipped.push({
+        ...pick,
+        reason: `"${pick.playerName}" matches a player who already has league history before ${seasonYear} (or more than one possible prospect) - link this pick by hand.`,
+      });
+      continue;
+    }
     const slot = getSnakeSlot(pick.overallPickInSource, TEAM_COUNT);
     if (slot.round === 1) roundOneOrder.set(slot.pickInRound, teamId);
 
@@ -166,5 +200,5 @@ export async function promoteFypdBatch(db: Db, batchId: string): Promise<FypdPro
 
   await db.fypdImportBatch.update({ where: { id: batch.id }, data: { status: "CONFIRMED", confirmedAt: new Date() } });
 
-  return { draftId: draft.id, seasonYear, picksPromoted, playersCreated: playerCache.size, skipped };
+  return { draftId: draft.id, seasonYear, picksPromoted, playersCreated, skipped };
 }
