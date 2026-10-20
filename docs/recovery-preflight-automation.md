@@ -20,8 +20,32 @@ reviewed fingerprint and the confirmation phrase, exactly as before (see
 
 ## How it works
 
-`.github/workflows/recovery-preflight.yml` starts at 11:41 UTC, with a backup
-trigger at 12:11. It runs only from the repository's default branch (the
+Production's daily Yahoo sync starts `.github/workflows/recovery-preflight.yml`
+as soon as it has finished. The Vercel cron (`/api/cron/yahoo-sync`, 12:00 UTC)
+sends a `workflow_dispatch` (mode `preflight`) to GitHub once a league has
+synced (`src/lib/recovery-preflight-dispatch.ts`), so the run starts about a
+minute after the sync, without waiting on GitHub's own schedule. That schedule
+proved unusable for the window: the runs due at 11:41 and 12:11 UTC on
+2026-10-20 started at 15:49 and 16:57.
+
+The dispatch:
+
+- is sent only from Production, and only once `GITHUB_RECOVERY_DISPATCH_TOKEN`
+  is set in Vercel;
+- retries once on a network error or a 5xx, and never fails or delays the sync
+  beyond about 25 s;
+- is recorded as a `RECOVERY_PREFLIGHT_DISPATCH` audit entry with its outcome
+  (`sent`, or `failed` with GitHub's HTTP status). The token is never logged.
+  The preflight's own checks ignore this entry: they read `YAHOO_SYNC_CRON`
+  and count `YAHOO_TRANSACTION_RECOVERY%`.
+
+The workflow still decides whether anything runs: without
+`RECOVERY_PREFLIGHT_ENABLED` the run appears in the Actions list with its job
+skipped. A schedule at 14:17 UTC remains only as a missed-run alarm: it skips
+when today's evidence exists, and otherwise records a STOP, because it is past
+the deadline.
+
+The workflow runs only from the repository's default branch (the
 production branch Vercel deploys, currently
 `claude/antlerboard-fantasy-baseball-7b3vai`; `main` is a stale branch). It runs `python3 -I scripts/recovery/preflight.py`, which
 does the following and stops at the first failure.
@@ -111,13 +135,16 @@ for 90 days and contains:
 | `unresolved.md` | Every record that isn't ready, with its issues |
 | `dry-run-error.txt` | Only when the endpoint answered non-200 |
 
-A STOP fails the run (a run that ends before writing evidence is recorded as a STOP too, so the backup trigger never retries it), and GitHub emails a failure notice to the account that
-last changed the workflow's schedule (Settings > Notifications > Actions).
+A STOP fails the run. A run that ends before writing evidence is recorded as
+a STOP too, so no later trigger retries it. GitHub emails a failure notice for
+a failed run (Settings > Notifications > Actions): for a dispatched run, to the
+owner of the dispatch token; for the 14:17 alarm, to the account that last
+changed the workflow's schedule.
 
 ## One-time setup
 
 Each step changes production configuration and needs the commissioner's
-approval. The schedule does nothing until step 6.
+approval. Nothing runs until step 7.
 
 1. **Merge PR #36.** That deploys the route change, which is inert without
    `RECOVERY_DRYRUN_TOKEN`: every bearer token is refused.
@@ -152,12 +179,25 @@ approval. The schedule does nothing until step 6.
      refresh"). This check only runs while the Yahoo token is expired and
      outside 11:58–13:05 UTC, so the request stops before reading Yahoo.
      Otherwise the run fails with "couldn't be checked now".
-6. **Activate.** In GitHub, go to Settings > Secrets and variables > Actions >
-   Variables and create `RECOVERY_PREFLIGHT_ENABLED` = `true`. Do this only
-   after step 5 passes. Until the variable exists, the schedule and manual
-   `preflight` runs skip the job.
+6. **Connect the sync to GitHub.** Create a fine-grained personal access token
+   (GitHub > Settings > Developer settings > Fine-grained tokens):
+   - Resource owner `scottyfncodes`.
+   - Repository access: only `Antlerboard`.
+   - Repository permissions: **Actions: Read and write** (Metadata: read-only
+     is added automatically) and nothing else.
+   - An expiry, for example 90 days.
 
-Every scheduled run repeats the step-5 checks after its first poll, so the
+   Save it in Vercel as `GITHUB_RECOVERY_DISPATCH_TOKEN`: **Production only**,
+   Sensitive on. Then redeploy production. The next scheduled sync dispatches
+   a run, which shows with its job skipped (the switch is still off). That
+   run, plus a `RECOVERY_PREFLIGHT_DISPATCH` audit entry with status `sent`,
+   proves the dispatch path and its timing before anything is enabled.
+7. **Activate.** In GitHub, go to Settings > Secrets and variables > Actions >
+   Variables and create `RECOVERY_PREFLIGHT_ENABLED` = `true`. Do this only
+   after steps 5 and 6 pass. Until the variable exists, dispatched,
+   scheduled and manual `preflight` runs skip the job.
+
+Every preflight run repeats the step-5 checks after its first poll, so the
 first real run proves the Neon credential and GitHub-to-Vercel connectivity
 explicitly. When the run starts after the sync (the Yahoo token valid), the
 token check is recorded as deferred and the dry run proves it: a 401 then is a
@@ -166,6 +206,15 @@ STOP that names the blocker.
 ## Turning it off, rotating, removing
 
 - **Pause:** set `RECOVERY_PREFLIGHT_ENABLED` to `false`, or delete it.
+- **Stop the dispatch:** delete `GITHUB_RECOVERY_DISPATCH_TOKEN` from Vercel
+  and redeploy, or revoke the token in GitHub. A revoked or expired token makes
+  each dispatch fail (recorded in the audit entry); the sync itself is
+  unaffected.
+- **Dispatch token scope:** "Actions: read and write" on this one repository
+  lets the holder start, cancel and re-run workflows and delete workflow runs
+  and artifacts. It can't read code or secrets, push, or change settings.
+  Deleting today's evidence artifact would allow a second run that day. Keep
+  it Production-only and Sensitive in Vercel, and give it an expiry.
 - **Rotate the token:**
   - Replace it in Vercel and GitHub together, then redeploy.
   - A leaked token only allows the read-only dry run, and only while a Yahoo
@@ -185,9 +234,15 @@ STOP that names the blocker.
 - **A late cron leaves no window.** If Vercel's cron fires after about 12:35
   UTC, there's no valid window that day: finish + 10 minutes lands past
   12:45. The run reports STOP with the evidence. Observed fire times: 12:56
-  (Oct 15) and about 12:00 (Oct 16–18).
-- **GitHub can delay or drop scheduled runs.** The early 11:41 start and the
-  12:11 backup cover that. A run that starts after 12:45 reports STOP.
+  (Oct 15) and 12:00:37 ± 1 s (Oct 16–20). On Hobby, Vercel only promises
+  some time within the hour.
+- **A failed sync means no run that day.** Nothing is dispatched unless a
+  league synced, and the 14:17 alarm records the STOP. On Oct 20 the sync
+  failed because the database took 8.4 s to start; the cron now waits for the
+  database (up to four attempts, 3 s apart) before syncing.
+- **GitHub can delay a dispatched run too.** `workflow_dispatch` runs usually
+  start within a minute, but GitHub doesn't guarantee it. A run that starts
+  after the latest start reports STOP.
 - **One run a day.** Once today's evidence exists, later triggers, manual
   ones included, skip. A STOP is final for that day.
 
