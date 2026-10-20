@@ -11,6 +11,8 @@
 
 import { prisma } from "./db";
 import type { PlayerTagType } from "@prisma/client";
+import { CURRENT_SEASON_YEAR } from "./config";
+import { getCurrentHolders } from "./rosters";
 
 export class PlayerTagActionError extends Error {}
 
@@ -38,22 +40,26 @@ export async function setOwnPlayerTag(
     throw new PlayerTagActionError(`${tag} cannot be set by a manager directly.`);
   }
 
-  const keeperRecord = await prisma.keeperRecord.findFirst({
-    where: { playerId, team: { managerId }, status: { not: "DROPPED" } },
-    orderBy: [{ seasonYear: "desc" }, { stintIndex: "desc" }],
-  });
-  if (!keeperRecord) {
+  // The player's current team - the same source trades check against (the
+  // Yahoo roster snapshot, or his live keeper stint) - must be one of this
+  // manager's. A keeper record from an old season doesn't count once he's
+  // been traded away, and a waiver pickup with no keeper record does.
+  const player = await prisma.player.findUnique({ where: { id: playerId }, select: { leagueId: true } });
+  const holderTeamId = player
+    ? (await getCurrentHolders(prisma, player.leagueId, CURRENT_SEASON_YEAR, [playerId])).get(playerId)
+    : undefined;
+  const team = holderTeamId ? await prisma.team.findUnique({ where: { id: holderTeamId }, select: { id: true, managerId: true } }) : null;
+  if (!team || team.managerId !== managerId) {
     throw new PlayerTagActionError("That player is not on one of your rosters.");
   }
-
   if (tag === null) {
-    await prisma.playerTag.deleteMany({ where: { playerId, teamId: keeperRecord.teamId } });
+    await prisma.playerTag.deleteMany({ where: { playerId, teamId: team.id } });
     return;
   }
 
   await prisma.playerTag.upsert({
-    where: { playerId_teamId: { playerId, teamId: keeperRecord.teamId } },
-    create: { playerId, teamId: keeperRecord.teamId, tag, note },
+    where: { playerId_teamId: { playerId, teamId: team.id } },
+    create: { playerId, teamId: team.id, tag, note },
     update: { tag, note },
   });
 }

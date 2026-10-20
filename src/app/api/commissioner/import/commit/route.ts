@@ -20,6 +20,11 @@ interface CommitRow {
   force?: boolean;
 }
 
+/** Start of the season for draft-style acquisitions, mid-season for in-season moves. */
+function acquisitionDateFor(season: number, method: AcquisitionMethod): Date {
+  return method === "DRAFT" || method === "FYPD" ? new Date(Date.UTC(season, 2, 15)) : new Date(Date.UTC(season, 6, 1));
+}
+
 export async function POST(req: Request) {
   const commissioner = await requireCommissioner();
   if (!commissioner) {
@@ -109,64 +114,77 @@ export async function POST(req: Request) {
   let skipped = 0;
   const playerIdsTouched = new Set<string>();
 
-  for (const row of rows) {
-    if (row.conflict && !row.force) {
-      skipped++;
-      continue;
-    }
-    if (!row.teamId || !row.season || !row.method || !row.playerName) {
-      skipped++;
-      continue;
-    }
+  // All or nothing: a failure part-way leaves no half-imported batch.
+  await prisma.$transaction(async (tx) => {
+    for (const row of rows) {
+      if (row.conflict && !row.force) {
+        skipped++;
+        continue;
+      }
+      if (!row.teamId || !row.season || !row.method || !row.playerName) {
+        skipped++;
+        continue;
+      }
 
-    const season = await prisma.season.upsert({
-      where: { leagueId_year: { leagueId: league.id, year: row.season } },
-      create: { leagueId: league.id, year: row.season, status: "COMPLETE" },
-      update: {},
-    });
-
-    let playerId = row.existingPlayerId;
-    if (!playerId) {
-      const positions = row.positions
-        ? row.positions.split(/[/,]/).map((p) => p.trim()).filter(Boolean)
-        : [];
-      const player = await prisma.player.create({
-        data: { leagueId: league.id, name: row.playerName, mlbTeam: row.mlbTeam, positions },
+      const season = await tx.season.upsert({
+        where: { leagueId_year: { leagueId: league.id, year: row.season } },
+        create: { leagueId: league.id, year: row.season, status: "COMPLETE" },
+        update: {},
       });
-      playerId = player.id;
+
+      let playerId = row.existingPlayerId;
+      if (!playerId) {
+        const positions = row.positions
+          ? row.positions.split(/[/,]/).map((p) => p.trim()).filter(Boolean)
+          : [];
+        const player = await tx.player.create({
+          data: { leagueId: league.id, name: row.playerName, mlbTeam: row.mlbTeam, positions },
+        });
+        playerId = player.id;
+      }
+
+      // A replayed request (double tap, retry) must not add the same
+      // acquisition twice - that would open a second stint and double the
+      // player's keeper records.
+      const acquisition = { seasonYear: row.season, playerId, teamId: row.teamId, method: row.method, cost: row.cost || 0 };
+      if (await tx.acquisition.findFirst({ where: acquisition, select: { id: true } })) {
+        skipped++;
+        continue;
+      }
+      await tx.acquisition.create({
+        data: {
+          ...acquisition,
+          seasonId: season.id,
+          // Dated inside the season the row names, never "now": the keeper
+          // engine orders a season's events by date, and an import run today
+          // would otherwise land after every drop already on record. Same
+          // convention as the league-history import: drafts at the start of
+          // the season, other moves mid-season, drops at its end.
+          date: acquisitionDateFor(row.season, row.method),
+          draftRound: row.draftRound ? Number(row.draftRound) : undefined,
+          draftPick: row.draftPick ? Number(row.draftPick) : undefined,
+        },
+      });
+
+      await tx.auditLogEntry.create({
+        data: {
+          actorName: commissioner.name,
+          action: "CSV_IMPORT_ACQUISITION",
+          entityType: "Player",
+          entityId: playerId,
+          isHistoricalCorrection: true,
+          after: { ...row },
+        },
+      });
+
+      playerIdsTouched.add(playerId);
+      imported++;
     }
 
-    await prisma.acquisition.create({
-      data: {
-        seasonId: season.id,
-        seasonYear: row.season,
-        playerId,
-        teamId: row.teamId,
-        method: row.method,
-        cost: row.cost || 0,
-        draftRound: row.draftRound ? Number(row.draftRound) : undefined,
-        draftPick: row.draftPick ? Number(row.draftPick) : undefined,
-      },
-    });
-
-    await prisma.auditLogEntry.create({
-      data: {
-        actorName: commissioner.name,
-        action: "CSV_IMPORT_ACQUISITION",
-        entityType: "Player",
-        entityId: playerId,
-        isHistoricalCorrection: true,
-        after: { ...row },
-      },
-    });
-
-    playerIdsTouched.add(playerId);
-    imported++;
-  }
-
-  for (const playerId of playerIdsTouched) {
-    await recomputeKeeperRecordsForPlayer(playerId, CURRENT_SEASON_YEAR);
-  }
+    for (const playerId of playerIdsTouched) {
+      await recomputeKeeperRecordsForPlayer(playerId, CURRENT_SEASON_YEAR, tx);
+    }
+  }, { timeout: 120_000, maxWait: 10_000 });
 
   return NextResponse.json({ imported, skipped });
 }

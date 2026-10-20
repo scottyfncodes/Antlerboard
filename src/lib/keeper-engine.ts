@@ -197,6 +197,30 @@ export function buildStints(events: PlayerHistoryEvent[]): Stint[] {
   return stints;
 }
 
+export interface StintRestart {
+  fromSeason: number;
+  toSeason: number;
+  reason: "DROPPED" | "FORCED_BACK" | "REACQUIRED";
+}
+
+/**
+ * Why each stint after the first began: the previous one ended with a drop,
+ * ran its full MAX_CONSECUTIVE_KEEPER_YEARS and went back to the auction, or
+ * neither is on record (a new acquisition with no drop, before year 5).
+ */
+export function describeStintRestarts(stints: Stint[]): StintRestart[] {
+  return stints.slice(1).map((curr, i) => {
+    const prev = stints[i];
+    const reason =
+      prev.endSeason !== null
+        ? "DROPPED"
+        : curr.startSeason - prev.startSeason > MAX_CONSECUTIVE_KEEPER_YEARS
+          ? "FORCED_BACK"
+          : "REACQUIRED";
+    return { fromSeason: prev.startSeason, toSeason: curr.startSeason, reason };
+  });
+}
+
 /** Team holding the player at the end of `season` (every move up to and including that season applied). */
 function teamForSeason(stint: Stint, season: number): string {
   let team = stint.moves[0].teamId;

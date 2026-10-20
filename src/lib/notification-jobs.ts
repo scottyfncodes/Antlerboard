@@ -59,7 +59,7 @@ export async function runKeeperDeadlineChecks(): Promise<{ notified: number }> {
           : `Heads up: ${record.player.name} enters Year 5 next season`,
       body:
         record.keeperYear === 5
-          ? `${record.player.name} will be forced back into the ${CURRENT_SEASON_YEAR + 1} draft unless traded.`
+          ? `${record.player.name} can't be kept again: he goes back into the ${CURRENT_SEASON_YEAR + 1} draft (a trade carries the keeper clock with him).`
           : `${record.player.name} has one keeper year left after this season.`,
       link: `/players/${record.playerId}`,
       relatedEntityType: "Player",

@@ -713,7 +713,8 @@ export function buildLeagueHistory(input: BuilderInput): LeagueHistoryPreview {
             if (!to) continue;
             const addFlags: string[] = [];
             let method: StintStartMethod;
-            if (isProspect(player)) {
+            const paidBid = tx.faabBid !== null && tx.faabBid > 0;
+            if (isProspect(player) && !paidBid) {
               method = "FYPD";
               player.isFypdProspect = true;
             } else if (p.sourceType === "waivers" && tx.faabBid === null && season >= 2024) {
@@ -722,6 +723,9 @@ export function buildLeagueHistory(input: BuilderInput): LeagueHistoryPreview {
               addFlags.push("$0 waiver add in the FYPD era with no matching prospect row - assumed to be an FYPD call-up.");
             } else {
               method = p.sourceType === "freeagents" ? "FREE_AGENT" : "WAIVER";
+              // A prospect's name, but someone paid FAAB for him: a real claim,
+              // so the bid (not the call-up's assumed $4) is his base price.
+              if (isProspect(player)) addFlags.push(`Matches an FYPD prospect but was claimed for $${tx.faabBid} FAAB - recorded as a ${method === "WAIVER" ? "waiver" : "free-agent"} add.`);
             }
             events.push({
               playerKey: player.key,

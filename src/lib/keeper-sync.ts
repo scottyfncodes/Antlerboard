@@ -81,12 +81,19 @@ type RecordRow = {
   stintIndex: number;
 };
 
-function rowsForPlayer(playerId: string, events: PlayerHistoryEvent[], throughSeason: number, seasonIdByYear: Map<number, string>, overridden: Set<string>): RecordRow[] {
+function rowsForPlayer(playerId: string, events: PlayerHistoryEvent[], throughSeason: number, seasonIdByYear: Map<number, string>): RecordRow[] {
   const rows: RecordRow[] = [];
   if (events.length === 0) return rows;
+  const forcedBackStints = new Set<number>();
   for (const info of getContinuousKeeperHistory(events, throughSeason)) {
     const seasonId = seasonIdByYear.get(info.season);
-    if (!seasonId || overridden.has(`${playerId}|${info.season}|${info.stintIndex}`)) continue;
+    if (!seasonId) continue;
+    // A stint past its fifth kept year is back in the draft: one FORCED_BACK
+    // row records that, but the seasons after it aren't his on any team.
+    if (info.status === "FORCED_BACK") {
+      if (forcedBackStints.has(info.stintIndex)) continue;
+      forcedBackStints.add(info.stintIndex);
+    }
     rows.push({
       seasonId,
       seasonYear: info.season,
@@ -104,9 +111,11 @@ function rowsForPlayer(playerId: string, events: PlayerHistoryEvent[], throughSe
 }
 
 /**
- * Rebuilds a player's KeeperRecord rows from their event history. Rows a
- * commissioner has marked as an override are left exactly as they are;
- * everything else is rewritten, so stale rows (e.g. after a drop was
+ * Rebuilds a player's KeeperRecord rows from their event history. A
+ * commissioner override pins a row's cost: its keeperCost is never touched,
+ * while who holds the player, the keeper year and the status still follow
+ * the history (an overridden player traded away belongs to his new team).
+ * Everything else is rewritten, so stale rows (e.g. after a drop was
  * recorded) never linger.
  */
 export async function recomputeKeeperRecordsForPlayer(playerId: string, throughSeason: number, db: Db = prisma): Promise<void> {
@@ -151,11 +160,20 @@ export async function rebuildKeeperRecordsBulk(playerIds: string[], throughSeaso
   }
 
   const rows: RecordRow[] = [];
+  const overriddenRows: RecordRow[] = [];
   for (const playerId of playerIds) {
     const events = toEvents(acqByPlayer.get(playerId) ?? [], dropsByPlayer.get(playerId) ?? []);
-    rows.push(...rowsForPlayer(playerId, events, throughSeason, seasonIdByYear, overridden));
+    for (const row of rowsForPlayer(playerId, events, throughSeason, seasonIdByYear)) {
+      (overridden.has(`${row.playerId}|${row.seasonYear}|${row.stintIndex}`) ? overriddenRows : rows).push(row);
+    }
   }
 
+  for (const row of overriddenRows) {
+    await db.keeperRecord.updateMany({
+      where: { playerId: row.playerId, seasonYear: row.seasonYear, stintIndex: row.stintIndex, commissionerOverride: true },
+      data: { teamId: row.teamId, startTeamId: row.startTeamId, keeperYear: row.keeperYear, yearsRemaining: row.yearsRemaining, status: row.status },
+    });
+  }
   await db.keeperRecord.deleteMany({ where: { playerId: { in: playerIds }, commissionerOverride: false } });
   for (let i = 0; i < rows.length; i += 1000) {
     await db.keeperRecord.createMany({ data: rows.slice(i, i + 1000) });

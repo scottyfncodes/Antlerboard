@@ -71,7 +71,11 @@ gracefully (with clear in-app messaging) when either is unset.
   with the workbook before `league-history-commit.ts` writes anything.
   Recorded costs that differ are kept as flagged commissioner overrides.
   Every row the import writes carries a `league-history:` sourceRef, so a
-  re-run replaces its own rows and leaves hand-entered data alone.
+  re-run replaces its own rows and leaves hand-entered acquisitions alone.
+  Keeper-cost overrides are the exception: a re-run clears every override
+  for the players it covers and re-applies only the workbook's, so make
+  per-season hand corrections after the final import. An override pins a
+  record's cost only; who holds the player still follows the history.
 - `src/lib/draft-color-engine.ts` computes the 5-color draft cycle from a
   single anchor point, honoring skipped seasons without breaking the cycle.
 - `src/lib/yahoo/` holds the OAuth client and sync engine. The sync engine

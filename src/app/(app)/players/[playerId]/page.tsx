@@ -14,6 +14,9 @@ import {
   getForcedRedraftSeason,
   isKeeperEligible,
   didPlayerResetKeeperClock,
+  buildStints,
+  describeStintRestarts,
+  type StintRestart,
 } from "@/lib/keeper-engine";
 import Link from "next/link";
 import { getCurrentManager } from "@/lib/current-manager";
@@ -22,6 +25,12 @@ import { tradeTitle } from "@/lib/trades";
 import { notFound } from "next/navigation";
 import { describePlayerMove } from "@/lib/transaction-display";
 
+
+const RESTART_NOTE: Record<StintRestart["reason"], string> = {
+  DROPPED: "Dropped after previous stint — keeper clock reset",
+  FORCED_BACK: "Back to the auction after 5 kept years — keeper clock reset",
+  REACQUIRED: "Re-acquired — keeper clock reset",
+};
 export const dynamic = "force-dynamic";
 
 const ACQUISITION_LABEL: Record<string, string> = {
@@ -80,6 +89,20 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
   const currentTeam = await getCurrentTeamForPlayer(playerId, CURRENT_SEASON_YEAR);
   const teamIdForCurrentTag = currentTeam.team?.id;
   const currentTag = player.tags.find((t) => t.teamId === teamIdForCurrentTag);
+
+  // Each season's stored record carries what the rest of the app shows - a
+  // commissioner override, or "Unavailable" for a missing or guessed price -
+  // so the timeline uses it rather than the engine's raw figure.
+  const allRecords = await prisma.keeperRecord.findMany({ where: { playerId } });
+  const recordCosts = await loadKeeperCostValues(allRecords);
+  const recordBySeason = new Map(allRecords.map((r) => [`${r.seasonYear}|${r.stintIndex}`, r]));
+  const timelineCost = (season: number, stintIndex: number, engineCost: number | null) => {
+    const record = recordBySeason.get(`${season}|${stintIndex}`);
+    const value = record ? recordCosts.get(record.id) : undefined;
+    if (!value) return engineCost !== null ? formatCost(engineCost) : "";
+    return value.status === "recorded" ? formatCost(value.amount) : costLabel(value);
+  };
+  const restartBefore = new Map(describeStintRestarts(buildStints(events)).map((r, i) => [i + 1, r.reason]));
 
   // Group timeline rows into stints for a clear visual break between them.
   const stints = new Map<number, typeof timeline>();
@@ -161,7 +184,7 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
             <div key={stintIndex} className="relative pl-6 border-l-2 border-border">
               {stintIndex > 0 && (
                 <p className="text-xs text-red mb-2 -ml-6 pl-6 border-l-2 border-red -mt-2">
-                  Dropped after previous stint — keeper clock reset
+                  {RESTART_NOTE[restartBefore.get(stintIndex) ?? "REACQUIRED"]}
                 </p>
               )}
               <ul className="space-y-2">
@@ -176,7 +199,7 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
                           : `Kept — Year ${row.keeperYear}`}
                       {row.droppedThisSeason && <span className="text-muted"> · dropped during the season</span>}
                     </span>
-                    <span className="tabular text-muted">{row.cost !== null ? formatCost(row.cost) : ""}</span>
+                    <span className="tabular text-muted">{timelineCost(row.season, row.stintIndex, row.cost)}</span>
                     {row.keeperYear >= 4 && row.status === "KEPT" && (
                       <Badge variant={row.keeperYear === 5 ? "red" : "yellow"}>Year {row.keeperYear}/5</Badge>
                     )}

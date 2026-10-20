@@ -243,4 +243,36 @@ describe("promoteFypdBatch", () => {
     const result = await promoteFypdBatch(prisma, batch.id);
     expect(result.picksPromoted).toBe(1);
   });
+
+  it("never hands a pick to a same-named veteran: skips it for a manual link, and counts only players it created", async () => {
+    const { league } = await makeLeagueWithSeason(2025);
+    const { team } = await makeRosteredManager(league.id, "Aaron", 2025);
+    const lastSeason = await prisma.season.create({ data: { leagueId: league.id, year: 2024 } });
+    const veteran = await prisma.player.create({ data: { leagueId: league.id, name: "Max Muncy" } });
+    await prisma.acquisition.create({
+      data: { seasonId: lastSeason.id, seasonYear: 2024, playerId: veteran.id, teamId: team.id, method: "DRAFT", cost: 12 },
+    });
+    await makeRosteredManager(league.id, "Bob", 2025);
+    await makeRosteredManager(league.id, "Cal", 2025);
+    const existingProspect = await prisma.player.create({ data: { leagueId: league.id, name: "Known Prospect" } });
+    const batch = await prisma.fypdImportBatch.create({
+      data: {
+        leagueId: league.id, label: "T", sourceSheet: "FYPD", seasonYear: 2025, status: "PENDING_REVIEW",
+        rawPicks: [
+          { overallPickInSource: 1, teamNameRaw: "Aaron", playerName: "Max Muncy", positionRaw: "SS", extra: {} },
+          { overallPickInSource: 2, teamNameRaw: "Bob", playerName: "Known Prospect", positionRaw: null, extra: {} },
+          { overallPickInSource: 3, teamNameRaw: "Cal", playerName: "Brand New", positionRaw: null, extra: {} },
+        ],
+      },
+    });
+
+    const result = await promoteFypdBatch(prisma, batch.id);
+
+    expect(result.skipped.map((s) => s.playerName)).toEqual(["Max Muncy"]);
+    expect(result.picksPromoted).toBe(2);
+    expect(result.playersCreated).toBe(1);
+    const selections = await prisma.fypdSelection.findMany({ orderBy: { overallPick: "asc" } });
+    expect(selections.map((x) => x.playerId)).not.toContain(veteran.id);
+    expect(selections[0].playerId).toBe(existingProspect.id);
+  });
 });
