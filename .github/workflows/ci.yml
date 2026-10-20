@@ -1,0 +1,47 @@
+# Lint, typecheck and the full test suite on every pull request, against a
+# throwaway Postgres. No secrets and no access to any real database.
+name: CI
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ci-only-password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DB: postgresql://postgres:ci-only-password@127.0.0.1:5432/antlerboard_test
+    steps:
+      - name: Check out
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Install
+        run: npm ci
+
+      - name: Create and migrate the test database
+        run: |
+          psql "postgresql://postgres:ci-only-password@127.0.0.1:5432/postgres" -c "CREATE DATABASE antlerboard_test"
+          DATABASE_URL="$DB" DIRECT_URL="$DB" npx prisma migrate deploy
+          printf 'DATABASE_URL="%s"\nDIRECT_URL="%s"\nAUTH_SECRET="ci-test-secret-ci-test-secret-ci-test-secret"\nCRON_SECRET="ci-cron"\n' "$DB" "$DB" > .env.test
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Tests
+        run: npx vitest run
