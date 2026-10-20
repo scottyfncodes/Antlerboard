@@ -8,9 +8,9 @@ export async function GET() {
   const bets = await prisma.dpudBet.findMany({
     orderBy: { createdAt: "desc" },
     include: {
-      creator: true,
+      creator: { select: { id: true, name: true } },
       players: { include: { player: true } },
-      participants: { include: { manager: true } },
+      participants: { include: { manager: { select: { id: true, name: true } } } },
     },
   });
   return NextResponse.json({ bets });

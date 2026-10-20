@@ -76,4 +76,15 @@ describe("getCurrentManager / requireCommissioner", () => {
   it("requireCommissioner rejects an unauthenticated request", async () => {
     expect(await requireCommissioner(null)).toBeNull();
   });
+
+  it("signs out sessions issued before the manager's PIN was last reset", async () => {
+    const { league } = await makeLeagueWithSeason();
+    const { manager } = await makeManagerAndTeam(league.id, "Reset Manager");
+    const credential = await prisma.managerCredential.create({ data: { managerId: manager.id, provider: "pin", secretHash: "x" } });
+    const token = await createSessionToken(manager.id, "pin");
+    expect((await getCurrentManager(token))?.id).toBe(manager.id);
+
+    await prisma.managerCredential.update({ where: { id: credential.id }, data: { updatedAt: new Date(Date.now() + 2000) } });
+    expect(await getCurrentManager(token)).toBeNull();
+  });
 });

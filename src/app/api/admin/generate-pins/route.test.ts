@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach, beforeEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { POST as generatePinsRoute } from "./route";
 import { makeLeagueWithSeason, makeManagerAndTeam, resetDatabase } from "@/lib/test-helpers";
@@ -54,7 +54,29 @@ describe("POST /api/admin/generate-pins", () => {
     for (const credential of credentials) {
       const matchingRow = body.rows.find((r: { pin: string }) => verifyPin(r.pin, credential.secretHash));
       expect(matchingRow).toBeTruthy();
-      expect(credential.secretHash).not.toContain(matchingRow.pin);
+      // Hashed, never the plaintext (a 4-digit PIN can turn up inside the hex by chance).
+      expect(credential.secretHash).toMatch(/^scrypt:[0-9a-f]+:[0-9a-f]+$/);
+      expect(credential.secretHash).not.toBe(matchingRow.pin);
     }
+  });
+
+  it("is refused on Preview deployments, which share Production's database", async () => {
+    vi.stubEnv("VERCEL_ENV", "preview");
+    try {
+      expect((await generatePinsRoute(req({}, "test-cron-secret"))).status).toBe(403);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("records the run in the audit log, without the PINs", async () => {
+    const { league } = await makeLeagueWithSeason();
+    await makeManagerAndTeam(league.id, "Audited Manager");
+    const res = await generatePinsRoute(req({}, "test-cron-secret"));
+    expect(res.status).toBe(200);
+    const { rows } = await res.json();
+    const entry = await prisma.auditLogEntry.findFirstOrThrow({ where: { action: "GENERATE_PINS" } });
+    expect(entry.after).toEqual({ managersAffected: ["Audited Manager"] });
+    expect(JSON.stringify(entry)).not.toContain(rows[0].pin);
   });
 });

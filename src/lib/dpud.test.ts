@@ -71,4 +71,22 @@ describe("DPUD lifecycle", () => {
     const updated = await prisma.dpudBet.findUniqueOrThrow({ where: { id: bet.id } });
     expect(updated.status).toBe("CANCELLED");
   });
+
+  it("refuses to re-open a settled bet: no opt-in, re-resolve or cancel after it's complete", async () => {
+    const { bet, participant, creator } = await makeOpenBet();
+    await optIntoBet(bet.id, participant.id);
+    await resolveBet(bet.id, "Done", undefined);
+    await expect(optIntoBet(bet.id, creator.id)).rejects.toMatchObject({ status: 409 });
+    await expect(resolveBet(bet.id, "Changed", undefined)).rejects.toMatchObject({ status: 409 });
+    await expect(cancelBet(bet.id)).rejects.toMatchObject({ status: 409 });
+    expect((await prisma.dpudBet.findUniqueOrThrow({ where: { id: bet.id } })).result).toBe("Done");
+  });
+
+  it("needs a result, and a winner who is actually in the bet", async () => {
+    const { bet, participant } = await makeOpenBet();
+    await optIntoBet(bet.id, participant.id);
+    await expect(resolveBet(bet.id, "  ", undefined)).rejects.toMatchObject({ status: 400 });
+    await expect(resolveBet(bet.id, "Done", "someone-else")).rejects.toMatchObject({ status: 400 });
+    expect((await prisma.dpudBet.findUniqueOrThrow({ where: { id: bet.id } })).status).toBe("ACTIVE");
+  });
 });

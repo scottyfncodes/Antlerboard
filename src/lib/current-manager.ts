@@ -33,6 +33,14 @@ export async function getCurrentManager(tokenOverride?: string | null) {
     include: { teams: true },
   });
   if (!manager || !manager.active) return null;
+
+  // A session only lasts as long as the credential it was issued for:
+  // resetting a manager's PIN signs out every browser that used the old one.
+  const credential = await prisma.managerCredential.findUnique({
+    where: { managerId_provider: { managerId: manager.id, provider: session.provider } },
+    select: { updatedAt: true },
+  });
+  if (credential && Math.floor(credential.updatedAt.getTime() / 1000) > session.iat) return null;
   return manager;
 }
 

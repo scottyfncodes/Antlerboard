@@ -14,7 +14,10 @@ import type { CurrentManagerSummary } from "@/lib/auth/types";
 export default async function AuthenticatedLayout({ children }: { children: React.ReactNode }) {
   const manager = await getCurrentManager();
   if (!manager) {
-    redirect("/login");
+    // Through logout rather than straight to /login: a cookie that is signed
+    // but no longer valid (PIN reset, manager deactivated) would otherwise
+    // bounce between middleware's "/login -> /" and this redirect forever.
+    redirect("/api/auth/logout");
   }
 
   const currentManager: CurrentManagerSummary = {
