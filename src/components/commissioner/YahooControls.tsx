@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { sendJson } from "@/lib/call-api";
 import type { DiscoveredLeague, LeagueDiagnostic } from "@/app/api/yahoo/leagues/route";
 import type { LinkableTeam, YahooTeamLinkRow } from "@/app/api/yahoo/teams/route";
 import type { SyncSectionResult } from "@/lib/yahoo/sync";
@@ -21,6 +22,7 @@ export function YahooControls({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loadingLeagues, setLoadingLeagues] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [syncResult, setSyncResult] = useState<{ summary: string; failed: boolean; sections: SyncSectionResult[] } | null>(
     null
   );
@@ -41,11 +43,12 @@ export function YahooControls({
   }, [connected, selectedLeagueKey]);
 
   async function selectLeague(league: DiscoveredLeague) {
-    await fetch("/api/yahoo/select-league", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ leagueKey: league.key, gameKey: league.gameKey }),
-    });
+    setActionError(null);
+    const res = await sendJson("/api/yahoo/select-league", { leagueKey: league.key, gameKey: league.gameKey });
+    if (!res.ok) {
+      setActionError(res.error);
+      return;
+    }
     router.refresh();
   }
 
@@ -74,7 +77,12 @@ export function YahooControls({
   }
 
   async function disconnect() {
-    await fetch("/api/yahoo/disconnect", { method: "POST" });
+    setActionError(null);
+    const res = await sendJson("/api/yahoo/disconnect", {});
+    if (!res.ok) {
+      setActionError(res.error);
+      return;
+    }
     router.refresh();
   }
 
@@ -154,6 +162,7 @@ export function YahooControls({
         <button onClick={disconnect} className="rounded-md border border-border px-3 py-1.5 text-sm text-muted hover:text-foreground">
           Disconnect
         </button>
+        {actionError && <p className="text-sm text-red">{actionError}</p>}
       </div>
     );
   }
@@ -172,6 +181,7 @@ export function YahooControls({
           Disconnect
         </button>
       </div>
+      {actionError && <p className="text-sm text-red">{actionError}</p>}
       {syncResult && (
         <div className="text-sm">
           <p className={syncResult.failed ? "text-red" : "text-muted"}>{syncResult.summary}</p>

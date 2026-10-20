@@ -4,7 +4,7 @@ import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { TradeActions } from "./TradeActions";
 import { canPerformTradeAction, isTradeParty, type TradeViewer } from "@/lib/trade-access";
-import { timeAgo } from "@/lib/format";
+import { statusLabel, timeAgo } from "@/lib/format";
 
 interface CardTrade {
   id: string;
@@ -50,7 +50,7 @@ export function TradeCard({ trade, viewer }: { trade: CardTrade; viewer: TradeVi
             Proposed by {trade.proposer.name} · {timeAgo(trade.createdAt)}
           </p>
         </div>
-        <Badge variant={trade.status === "ACCEPTED" ? "green" : trade.status === "REJECTED" ? "red" : "default"}>{trade.status}</Badge>
+        <Badge variant={trade.status === "ACCEPTED" ? "green" : trade.status === "REJECTED" ? "red" : "default"}>{statusLabel(trade.status)}</Badge>
       </div>
 
       <ul className="space-y-2">

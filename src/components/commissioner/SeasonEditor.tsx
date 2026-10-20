@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { sendJson } from "@/lib/call-api";
 
 interface SeasonRow {
   id: string;
@@ -14,15 +15,17 @@ interface SeasonRow {
 export function SeasonEditor({ seasons }: { seasons: SeasonRow[] }) {
   const router = useRouter();
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   async function save(seasonId: string, keeperDeadline: string, draftDate: string) {
     setBusyId(seasonId);
-    await fetch("/api/commissioner/seasons", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ seasonId, keeperDeadline, draftDate }),
-    });
+    setErrors((e) => ({ ...e, [seasonId]: "" }));
+    const res = await sendJson("/api/commissioner/seasons", { seasonId, keeperDeadline, draftDate }, "PATCH");
     setBusyId(null);
+    if (!res.ok) {
+      setErrors((e) => ({ ...e, [seasonId]: res.error }));
+      return;
+    }
     router.refresh();
   }
 
@@ -40,7 +43,7 @@ export function SeasonEditor({ seasons }: { seasons: SeasonRow[] }) {
         </thead>
         <tbody>
           {seasons.map((s) => (
-            <SeasonRowEditor key={s.id} season={s} busy={busyId === s.id} onSave={save} />
+            <SeasonRowEditor key={s.id} season={s} busy={busyId === s.id} error={errors[s.id]} onSave={save} />
           ))}
         </tbody>
       </table>
@@ -56,10 +59,12 @@ function toDatetimeLocal(iso: string | null): string {
 function SeasonRowEditor({
   season,
   busy,
+  error,
   onSave,
 }: {
   season: SeasonRow;
   busy: boolean;
+  error?: string;
   onSave: (id: string, keeperDeadline: string, draftDate: string) => void;
 }) {
   const [keeperDeadline, setKeeperDeadline] = useState(toDatetimeLocal(season.keeperDeadline));
@@ -89,10 +94,11 @@ function SeasonRowEditor({
         <button
           disabled={busy}
           onClick={() => onSave(season.id, keeperDeadline, draftDate)}
-          className="rounded-md border border-border px-2 py-1 text-xs hover:border-antler-dim"
+          className="rounded-md border border-border px-2 py-1 text-xs hover:border-antler-dim disabled:opacity-50"
         >
           Save
         </button>
+        {error && <p className="text-xs text-red mt-1">{error}</p>}
       </td>
     </tr>
   );

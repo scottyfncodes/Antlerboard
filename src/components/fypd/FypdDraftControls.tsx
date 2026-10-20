@@ -2,44 +2,50 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { sendJson } from "@/lib/call-api";
 
 export function FypdDraftControls({ draftId, status }: { draftId: string; status: string }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function act(action: string) {
     setBusy(true);
-    await fetch(`/api/fypd/${draftId}/action`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action }),
-    });
+    setError(null);
+    const res = await sendJson(`/api/fypd/${draftId}/action`, { action });
     setBusy(false);
+    if (!res.ok) {
+      setError(res.error);
+      return;
+    }
     router.refresh();
   }
 
   return (
-    <div className="flex gap-2">
-      {status === "SETUP" && (
-        <button onClick={() => act("start")} disabled={busy} className="rounded-md bg-antler px-3 py-1.5 text-sm font-medium text-[#1a1305] hover:bg-antler-strong disabled:opacity-50">
-          Start Draft
-        </button>
-      )}
-      {status === "IN_PROGRESS" && (
-        <button onClick={() => act("pause")} disabled={busy} className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-antler-dim disabled:opacity-50">
-          Pause
-        </button>
-      )}
-      {status === "PAUSED" && (
-        <button onClick={() => act("resume")} disabled={busy} className="rounded-md bg-antler px-3 py-1.5 text-sm font-medium text-[#1a1305] hover:bg-antler-strong disabled:opacity-50">
-          Resume
-        </button>
-      )}
-      {(status === "IN_PROGRESS" || status === "PAUSED") && (
-        <button onClick={() => act("undo")} disabled={busy} className="rounded-md border border-border px-3 py-1.5 text-sm text-muted hover:text-foreground disabled:opacity-50">
-          Undo Last Pick
-        </button>
-      )}
+    <div className="space-y-1">
+      <div className="flex gap-2">
+        {status === "SETUP" && (
+          <button onClick={() => act("start")} disabled={busy} className="rounded-md bg-antler px-3 py-1.5 text-sm font-medium text-[#1a1305] hover:bg-antler-strong disabled:opacity-50">
+            Start Draft
+          </button>
+        )}
+        {status === "IN_PROGRESS" && (
+          <button onClick={() => act("pause")} disabled={busy} className="rounded-md border border-border px-3 py-1.5 text-sm hover:border-antler-dim disabled:opacity-50">
+            Pause
+          </button>
+        )}
+        {status === "PAUSED" && (
+          <button onClick={() => act("resume")} disabled={busy} className="rounded-md bg-antler px-3 py-1.5 text-sm font-medium text-[#1a1305] hover:bg-antler-strong disabled:opacity-50">
+            Resume
+          </button>
+        )}
+        {(status === "IN_PROGRESS" || status === "PAUSED") && (
+          <button onClick={() => act("undo")} disabled={busy} className="rounded-md border border-border px-3 py-1.5 text-sm text-muted hover:text-foreground disabled:opacity-50">
+            Undo Last Pick
+          </button>
+        )}
+      </div>
+      {error && <p className="text-sm text-red">{error}</p>}
     </div>
   );
 }
@@ -62,15 +68,10 @@ export function FypdMakeSelection({
     if (!playerId) return;
     setBusy(true);
     setError(null);
-    const res = await fetch(`/api/fypd/${draftId}/action`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "select", playerId }),
-    });
-    const data = await res.json();
+    const res = await sendJson(`/api/fypd/${draftId}/action`, { action: "select", playerId }, "POST", "Could not make that selection.");
     setBusy(false);
     if (!res.ok) {
-      setError(data.error ?? "Could not make that selection.");
+      setError(res.error);
       return;
     }
     setPlayerId("");
@@ -80,26 +81,21 @@ export function FypdMakeSelection({
   async function addProspectAndSelect() {
     setBusy(true);
     setError(null);
-    const res = await fetch("/api/fypd/players", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(newPlayer),
-    });
-    const data = await res.json();
+    const res = await sendJson<{ player: { id: string } }>("/api/fypd/players", newPlayer, "POST", "Could not add that prospect.");
     if (!res.ok) {
       setBusy(false);
-      setError(data.error ?? "Could not add that prospect.");
+      setError(res.error);
       return;
     }
-    const selectRes = await fetch(`/api/fypd/${draftId}/action`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "select", playerId: data.player.id }),
-    });
+    const selectRes = await sendJson(
+      `/api/fypd/${draftId}/action`,
+      { action: "select", playerId: res.data.player.id },
+      "POST",
+      "Prospect added, but the pick failed."
+    );
     setBusy(false);
     if (!selectRes.ok) {
-      const selectData = await selectRes.json();
-      setError(selectData.error ?? "Prospect added, but the pick failed.");
+      setError(selectRes.error);
       return;
     }
     setShowNewPlayer(false);

@@ -52,12 +52,18 @@ export async function GET(req: NextRequest) {
 
   // Keeper costs are checked like everywhere else (classifyKeeperCost): a
   // cost from a missing or guessed price reads Unavailable, forced back None.
-  const latest = players.flatMap((p) => (p.keeperRecords[0] ? [p.keeperRecords[0]] : []));
+  // A player whose latest record is a drop isn't on that team any more, so
+  // they read as unrostered (as on the player page), not "Team · $X · Yr N".
+  const current = (p: (typeof players)[number]) => {
+    const r = p.keeperRecords[0];
+    return r && r.status !== "DROPPED" ? r : undefined;
+  };
+  const latest = players.flatMap((p) => current(p) ?? []);
   const costs = await loadKeeperCostValues(latest);
 
   return NextResponse.json({
     players: players.map((p) => {
-      const r = p.keeperRecords[0];
+      const r = current(p);
       const cost = r ? costs.get(r.id) : undefined;
       return {
         id: p.id,

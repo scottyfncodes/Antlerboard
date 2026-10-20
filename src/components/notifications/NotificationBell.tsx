@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Bell } from "lucide-react";
 import clsx from "clsx";
 import { timeAgo } from "@/lib/format";
+import { markNotificationRead } from "./NotificationLink";
 
 interface Notif {
   id: string;
@@ -67,7 +68,7 @@ export function NotificationBell() {
         )}
       </button>
       {open && (
-        <div className="absolute right-0 mt-2 w-80 max-h-96 overflow-y-auto rounded-md border border-border bg-surface-raised shadow-xl z-50">
+        <div className="absolute right-0 mt-2 w-[min(20rem,calc(100vw-2rem))] max-h-96 overflow-y-auto rounded-md border border-border bg-surface-raised shadow-xl z-50">
           <div className="flex items-center justify-between px-3 py-2 border-b border-border">
             <span className="text-sm font-medium">Notifications</span>
             <button onClick={markAllRead} className="text-xs text-antler hover:text-antler-strong">
@@ -82,7 +83,14 @@ export function NotificationBell() {
               <li key={n.id} className={clsx("border-b border-border last:border-0", !n.read && "bg-antler-dim/10")}>
                 <Link
                   href={n.link ?? "/notifications"}
-                  onClick={() => setOpen(false)}
+                  onClick={() => {
+                    if (!n.read) {
+                      markNotificationRead(n.id);
+                      setNotifications((list) => list.map((x) => (x.id === n.id ? { ...x, read: true } : x)));
+                      setUnreadCount((c) => Math.max(0, c - 1));
+                    }
+                    setOpen(false);
+                  }}
                   className="block px-3 py-2 hover:bg-surface"
                 >
                   <p className="text-sm font-medium">{n.title}</p>

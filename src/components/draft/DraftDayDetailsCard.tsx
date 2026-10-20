@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/Card";
-import { formatCost } from "@/lib/format";
+import { formatCost, formatDate } from "@/lib/format";
+import { sendJson } from "@/lib/call-api";
 
 interface Details {
   draftTime: string | null;
@@ -55,7 +56,7 @@ export function DraftDayDetailsCard({
           {draftDate && (
             <>
               <dt className="text-muted">Date</dt>
-              <dd>{new Date(draftDate).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}</dd>
+              <dd>{formatDate(draftDate, "long")}</dd>
             </>
           )}
           {details?.draftTime && (
@@ -126,6 +127,7 @@ function DraftDayDetailsEditor({
     commissionerNotes: details?.commissionerNotes ?? "",
   });
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   function field(key: keyof typeof form, label: string, placeholder: string) {
     return (
@@ -143,12 +145,14 @@ function DraftDayDetailsEditor({
 
   async function save() {
     setSaving(true);
-    await fetch("/api/commissioner/draft-day-details", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ seasonId, ...form }),
-    });
+    setError(null);
+    const res = await sendJson("/api/commissioner/draft-day-details", { seasonId, ...form }, "PATCH");
     setSaving(false);
+    if (!res.ok) {
+      // Stay in the editor with the user's edits intact.
+      setError(res.error);
+      return;
+    }
     onDone();
     router.refresh();
   }
@@ -177,6 +181,7 @@ function DraftDayDetailsEditor({
           Cancel
         </button>
       </div>
+      {error && <p className="text-sm text-red mt-2">{error}</p>}
     </Card>
   );
 }

@@ -2,6 +2,10 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { sendJson } from "@/lib/call-api";
+
+// Taller on touch screens so the buttons are comfortable to tap on a phone.
+const TAP = "pointer-coarse:min-h-10 pointer-coarse:px-3";
 
 export function DpudResolveForm({
   betId,
@@ -11,43 +15,92 @@ export function DpudResolveForm({
   participants: { id: string; managerName: string }[];
 }) {
   const [open, setOpen] = useState(false);
+  const [confirmingCancel, setConfirmingCancel] = useState(false);
   const [result, setResult] = useState("");
   const [winnerParticipantId, setWinnerParticipantId] = useState("");
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const router = useRouter();
 
   async function resolve() {
     setBusy(true);
-    await fetch(`/api/dpud/${betId}/resolve`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ result, winnerParticipantId: winnerParticipantId || undefined }),
+    setError(null);
+    const res = await sendJson(`/api/dpud/${betId}/resolve`, {
+      result,
+      winnerParticipantId: winnerParticipantId || undefined,
     });
     setBusy(false);
+    if (!res.ok) {
+      // Keep the form open with what they typed so they can fix and retry.
+      setError(res.error);
+      return;
+    }
     setOpen(false);
     router.refresh();
   }
 
   async function cancel() {
     setBusy(true);
-    await fetch(`/api/dpud/${betId}/resolve`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cancel: true }),
-    });
+    setError(null);
+    const res = await sendJson(`/api/dpud/${betId}/resolve`, { cancel: true });
     setBusy(false);
+    setConfirmingCancel(false);
+    if (!res.ok) {
+      setError(res.error);
+      return;
+    }
     router.refresh();
+  }
+
+  if (!open && confirmingCancel) {
+    return (
+      <div className="space-y-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs">Cancel this bet for everyone?</span>
+          <button
+            disabled={busy}
+            onClick={cancel}
+            className={`rounded-md bg-red/10 border border-red/30 text-red px-2.5 py-1 text-xs font-medium hover:bg-red/20 disabled:opacity-50 ${TAP}`}
+          >
+            {busy ? "Cancelling…" : "Yes, cancel bet"}
+          </button>
+          <button
+            disabled={busy}
+            onClick={() => setConfirmingCancel(false)}
+            className={`rounded-md border border-border px-2.5 py-1 text-xs text-muted hover:text-foreground disabled:opacity-50 ${TAP}`}
+          >
+            No, keep it
+          </button>
+        </div>
+        {error && <p className="text-xs text-red">{error}</p>}
+      </div>
+    );
   }
 
   if (!open) {
     return (
-      <div className="flex gap-2">
-        <button onClick={() => setOpen(true)} className="rounded-md border border-border px-2.5 py-1 text-xs hover:border-antler-dim">
-          Resolve
-        </button>
-        <button onClick={cancel} className="rounded-md border border-border px-2.5 py-1 text-xs text-muted hover:text-foreground">
-          Cancel Bet
-        </button>
+      <div className="space-y-1">
+        <div className="flex gap-2">
+          <button
+            onClick={() => {
+              setError(null);
+              setOpen(true);
+            }}
+            className={`rounded-md border border-border px-2.5 py-1 text-xs hover:border-antler-dim ${TAP}`}
+          >
+            Resolve
+          </button>
+          <button
+            onClick={() => {
+              setError(null);
+              setConfirmingCancel(true);
+            }}
+            className={`rounded-md border border-border px-2.5 py-1 text-xs text-muted hover:text-foreground ${TAP}`}
+          >
+            Cancel Bet
+          </button>
+        </div>
+        {error && <p className="text-xs text-red">{error}</p>}
       </div>
     );
   }
@@ -74,13 +127,25 @@ export function DpudResolveForm({
         ))}
       </select>
       <div className="flex gap-2">
-        <button disabled={busy} onClick={resolve} className="rounded-md bg-antler px-2.5 py-1 text-xs font-medium text-[#1a1305]">
-          Save Result
+        <button
+          disabled={busy}
+          onClick={resolve}
+          className={`rounded-md bg-antler px-2.5 py-1 text-xs font-medium text-[#1a1305] disabled:opacity-50 ${TAP}`}
+        >
+          {busy ? "Saving…" : "Save Result"}
         </button>
-        <button onClick={() => setOpen(false)} className="text-xs text-muted">
+        <button
+          disabled={busy}
+          onClick={() => {
+            setError(null);
+            setOpen(false);
+          }}
+          className={`text-xs text-muted ${TAP}`}
+        >
           Cancel
         </button>
       </div>
+      {error && <p className="text-xs text-red">{error}</p>}
     </div>
   );
 }

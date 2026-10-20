@@ -3,8 +3,8 @@ import { getCurrentManager } from "@/lib/current-manager";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/Card";
 import { timeAgo } from "@/lib/format";
-import Link from "next/link";
 import { MarkAllReadButton } from "@/components/notifications/MarkAllReadButton";
+import { NotificationLink } from "@/components/notifications/NotificationLink";
 import clsx from "clsx";
 
 export const dynamic = "force-dynamic";
@@ -33,7 +33,7 @@ export default async function NotificationsPage() {
         <ul className="divide-y divide-border rounded-xl border border-border overflow-hidden">
           {notifications.map((n) => (
             <li key={n.id} className={clsx(!n.read && "bg-antler-dim/10")}>
-              <Link href={n.link ?? "/notifications"} className="block px-4 py-3 hover:bg-surface-raised">
+              <NotificationLink id={n.id} read={n.read} href={n.link ?? "/notifications"} className="block px-4 py-3 hover:bg-surface-raised">
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <p className="text-sm font-medium">{n.title}</p>
@@ -41,7 +41,7 @@ export default async function NotificationsPage() {
                   </div>
                   <span className="text-xs text-muted whitespace-nowrap">{timeAgo(n.createdAt)}</span>
                 </div>
-              </Link>
+              </NotificationLink>
             </li>
           ))}
         </ul>

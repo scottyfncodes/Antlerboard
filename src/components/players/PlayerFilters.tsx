@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 
 export function PlayerFilters({
@@ -12,19 +13,41 @@ export function PlayerFilters({
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
+  const [q, setQ] = useState(params.get("q") ?? "");
+  const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  function update(key: string, value: string) {
+  function update(key: string, value: string, { replace = false } = {}) {
     const next = new URLSearchParams(params.toString());
     if (value) next.set(key, value);
     else next.delete(key);
-    router.push(`${pathname}?${next.toString()}`);
+    const url = `${pathname}?${next.toString()}`;
+    if (replace) router.replace(url, { scroll: false });
+    else router.push(url);
+  }
+
+  useEffect(() => () => {
+    if (debounce.current) clearTimeout(debounce.current);
+  }, []);
+
+  // Typing settles before the URL changes, and replaces the history entry
+  // rather than adding one per letter (same as UrlFilterBar).
+  function onSearch(value: string) {
+    setQ(value);
+    if (debounce.current) clearTimeout(debounce.current);
+    debounce.current = setTimeout(() => update("q", value.trim(), { replace: true }), 300);
+  }
+
+  function clear() {
+    if (debounce.current) clearTimeout(debounce.current);
+    setQ("");
+    router.push(pathname);
   }
 
   return (
     <div className="flex flex-wrap gap-2 items-center">
       <input
-        defaultValue={params.get("q") ?? ""}
-        onChange={(e) => update("q", e.target.value)}
+        value={q}
+        onChange={(e) => onSearch(e.target.value)}
         placeholder="Filter by name…"
         className="rounded-md border border-border bg-surface px-2 py-1.5 text-sm w-40"
       />
@@ -93,7 +116,7 @@ export function PlayerFilters({
       </select>
 
       {[...params.keys()].length > 0 && (
-        <button onClick={() => router.push(pathname)} className="text-xs text-muted hover:text-foreground underline">
+        <button onClick={clear}className="text-xs text-muted hover:text-foreground underline">
           Clear filters
         </button>
       )}
