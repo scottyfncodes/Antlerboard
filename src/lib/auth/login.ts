@@ -6,7 +6,7 @@
 
 import { prisma } from "@/lib/db";
 import { isValidPinFormat, verifyPin } from "./pin";
-import { checkRateLimit, rateLimitKeyForIp, recordFailedAttempt, recordSuccessfulAttempt } from "./rate-limit";
+import { lockAfterFailure, rateLimitKeyForIp, recordSuccessfulAttempt, reserveAttempt } from "./rate-limit";
 
 export type LoginResult =
   | { ok: true; managerId: string; provider: string }
@@ -16,13 +16,15 @@ export type LoginResult =
 export async function attemptPinLogin(pin: unknown, ip: string): Promise<LoginResult> {
   const key = rateLimitKeyForIp(ip);
 
-  const status = await checkRateLimit(key);
+  // Counted as a failure before the PIN is even looked at (and given back
+  // on success), so concurrent attempts can't all slip in under one check.
+  const status = await reserveAttempt(key);
   if (status.locked) {
     return { ok: false, reason: "locked", retryAfterSeconds: status.retryAfterSeconds ?? 30 };
   }
 
   if (!isValidPinFormat(pin)) {
-    const failure = await recordFailedAttempt(key);
+    const failure = await lockAfterFailure(key);
     if (failure.locked) return { ok: false, reason: "locked", retryAfterSeconds: failure.retryAfterSeconds ?? 30 };
     return { ok: false, reason: "invalid" };
   }
@@ -43,7 +45,7 @@ export async function attemptPinLogin(pin: unknown, ip: string): Promise<LoginRe
   }
 
   if (!matchedManagerId) {
-    const failure = await recordFailedAttempt(key);
+    const failure = await lockAfterFailure(key);
     if (failure.locked) return { ok: false, reason: "locked", retryAfterSeconds: failure.retryAfterSeconds ?? 30 };
     return { ok: false, reason: "invalid" };
   }

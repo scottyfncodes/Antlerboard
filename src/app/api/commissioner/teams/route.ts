@@ -3,7 +3,11 @@ import { prisma } from "@/lib/db";
 import { requireCommissioner } from "@/lib/current-manager";
 
 export async function GET() {
-  const teams = await prisma.team.findMany({ include: { manager: true }, orderBy: { name: "asc" } });
+  if (!(await requireCommissioner())) return NextResponse.json({ error: "Commissioner access required" }, { status: 403 });
+  const teams = await prisma.team.findMany({
+    include: { manager: { select: { id: true, name: true, active: true, isCommissioner: true } } },
+    orderBy: { name: "asc" },
+  });
   return NextResponse.json({ teams });
 }
 

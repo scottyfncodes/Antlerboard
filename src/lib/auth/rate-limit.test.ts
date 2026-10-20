@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { prisma } from "@/lib/db";
 import { resetDatabase } from "@/lib/test-helpers";
-import { checkRateLimit, rateLimitKeyForIp, recordFailedAttempt, recordSuccessfulAttempt } from "./rate-limit";
+import { checkRateLimit, GLOBAL_RATE_LIMIT_KEY, rateLimitKeyForIp, recordFailedAttempt, recordSuccessfulAttempt, reserveAttempt } from "./rate-limit";
 
 describe("rate-limit", () => {
   afterEach(async () => {
@@ -69,5 +69,28 @@ describe("rate-limit", () => {
     await prisma.loginAttempt.update({ where: { key }, data: { lockedUntil: new Date(Date.now() - 1000) } });
 
     expect((await checkRateLimit(key)).locked).toBe(false);
+  });
+
+  it("counts a burst of concurrent attempts one by one, so only the first few get checked", async () => {
+    const key = rateLimitKeyForIp("7.7.7.7");
+    const results = await Promise.all(Array.from({ length: 25 }, () => reserveAttempt(key)));
+    // Three failures earn the first lock, so at most three attempts arrive unlocked.
+    expect(results.filter((r) => !r.locked).length).toBeLessThanOrEqual(3);
+    expect((await prisma.loginAttempt.findUniqueOrThrow({ where: { key } })).failCount).toBe(25);
+  });
+
+  it("caps failures across every IP, so rotating addresses doesn't reset the budget", async () => {
+    for (let i = 0; i < 20; i++) await reserveAttempt(rateLimitKeyForIp(`10.9.0.${i}`));
+    const fresh = await reserveAttempt(rateLimitKeyForIp("10.9.1.1"));
+    expect(fresh.locked).toBe(true);
+    expect(fresh.retryAfterSeconds).toBeGreaterThan(0);
+  });
+
+  it("a correct PIN gives back its reserved league-wide failure", async () => {
+    const key = rateLimitKeyForIp("8.8.8.8");
+    await reserveAttempt(key);
+    await recordSuccessfulAttempt(key);
+    expect((await prisma.loginAttempt.findUniqueOrThrow({ where: { key: GLOBAL_RATE_LIMIT_KEY } })).failCount).toBe(0);
+    expect((await prisma.loginAttempt.findUniqueOrThrow({ where: { key } })).failCount).toBe(0);
   });
 });

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { safeNextPath } from "@/lib/auth/next-path";
 
 const PIN_LENGTH = 4;
 
@@ -33,8 +34,7 @@ export function PinLoginForm() {
       });
 
       if (res.ok) {
-        const next = searchParams.get("next") || "/";
-        router.push(next);
+        router.push(safeNextPath(searchParams.get("next")));
         router.refresh();
         return;
       }

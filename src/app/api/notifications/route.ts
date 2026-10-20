@@ -33,8 +33,8 @@ export async function POST(req: Request) {
   }
 
   if (body.id) {
-    await prisma.notification.update({
-      where: { id: body.id },
+    await prisma.notification.updateMany({
+      where: { id: String(body.id), managerId: manager.id },
       data: { read: true },
     });
     return NextResponse.json({ ok: true });

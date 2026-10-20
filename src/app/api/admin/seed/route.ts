@@ -1,21 +1,26 @@
 import { NextResponse } from "next/server";
 import { runSeed } from "@/lib/db-seed";
+import { isAuthorizedCronRequest } from "@/lib/cron-auth";
 
 /**
- * One-off/manual re-seed endpoint. Exists because some database providers
- * (Vercel's Postgres/Neon marketplace integration in particular) only ever
- * expose their real connection string inside a running Vercel build or
- * deployment - never through the Management API, and never to an external
- * script. Running the seed through this route, from inside the deployment
- * itself, is the only way to populate that kind of database at all.
+ * One-off/manual re-seed endpoint for a brand-new, empty database. Exists
+ * because some database providers (Vercel's Postgres/Neon marketplace
+ * integration in particular) only ever expose their real connection string
+ * inside a running Vercel build or deployment.
  *
- * Gated behind CRON_SECRET (already a private secret nobody but the
- * commissioner has) rather than adding a new one for a rarely-used route.
+ * The seed wipes ~30 tables, so it never runs on a deployed environment:
+ * Production holds the real league, and Preview deployments share
+ * Production's database. Gated behind CRON_SECRET as well.
  */
 export async function POST(req: Request) {
-  const auth = req.headers.get("authorization");
-  if (!process.env.CRON_SECRET || auth !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!isAuthorizedCronRequest(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (process.env.VERCEL_ENV) {
+    return NextResponse.json(
+      { error: "The demo seed is disabled on deployed environments: it would wipe the league's data." },
+      { status: 403 }
+    );
   }
 
   try {

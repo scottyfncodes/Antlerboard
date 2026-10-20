@@ -6,11 +6,18 @@
 import { prisma } from "./db";
 import { notifyManagers } from "./notifications";
 
-export class DpudActionError extends Error {}
+export class DpudActionError extends Error {
+  constructor(message: string, readonly status = 400) {
+    super(message);
+  }
+}
+
+const SETTLED = new Set(["COMPLETE", "CANCELLED"]);
 
 export async function optIntoBet(betId: string, managerId: string) {
   const bet = await prisma.dpudBet.findUnique({ where: { id: betId } });
-  if (!bet) throw new DpudActionError("Bet not found");
+  if (!bet) throw new DpudActionError("Bet not found", 404);
+  if (SETTLED.has(bet.status)) throw new DpudActionError("This bet is already settled.", 409);
 
   await prisma.dpudParticipant.upsert({
     where: { betId_managerId: { betId, managerId } },
@@ -35,7 +42,12 @@ export async function optIntoBet(betId: string, managerId: string) {
 
 export async function resolveBet(betId: string, result: string | undefined, winnerParticipantId: string | undefined) {
   const bet = await prisma.dpudBet.findUnique({ where: { id: betId }, include: { participants: true } });
-  if (!bet) throw new DpudActionError("Bet not found");
+  if (!bet) throw new DpudActionError("Bet not found", 404);
+  if (SETTLED.has(bet.status)) throw new DpudActionError("This bet is already settled.", 409);
+  if (!result?.trim()) throw new DpudActionError("Describe the result before resolving the bet.");
+  if (winnerParticipantId && !bet.participants.some((p) => p.id === winnerParticipantId)) {
+    throw new DpudActionError("The winner must be one of the bet's participants.");
+  }
 
   await prisma.dpudBet.update({
     where: { id: betId },
@@ -54,6 +66,7 @@ export async function resolveBet(betId: string, result: string | undefined, winn
 
 export async function cancelBet(betId: string) {
   const bet = await prisma.dpudBet.findUnique({ where: { id: betId } });
-  if (!bet) throw new DpudActionError("Bet not found");
+  if (!bet) throw new DpudActionError("Bet not found", 404);
+  if (SETTLED.has(bet.status)) throw new DpudActionError("This bet is already settled.", 409);
   await prisma.dpudBet.update({ where: { id: betId }, data: { status: "CANCELLED" } });
 }

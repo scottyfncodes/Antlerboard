@@ -7,7 +7,7 @@
  */
 
 import { prisma } from "@/lib/db";
-import { generatePinExcluding, generateUniquePins, hashPin } from "./pin";
+import { generatePinExcluding, generateUniquePins, hashPin, verifyPin } from "./pin";
 
 export interface GeneratedPinRow {
   managerId: string;
@@ -53,7 +53,12 @@ export async function generatePins(options: { resetAll?: boolean; resetName?: st
         error: `No manager named "${resetName}" found. Known managers: ${managers.map((m) => m.name).join(", ")}`,
       };
     }
-    const pin = generatePinExcluding([]);
+    // PINs are stored hashed, so "not already taken" means it verifies
+    // against no other manager's credential - two managers sharing a PIN
+    // would let one sign in as the other.
+    const others = existing.filter((c) => c.managerId !== manager.id);
+    let pin = generatePinExcluding([]);
+    while (others.some((c) => verifyPin(pin, c.secretHash))) pin = generatePinExcluding([pin]);
     await storePin(manager.id, pin);
     rows.push({
       managerId: manager.id,
