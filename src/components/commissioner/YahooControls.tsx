@@ -62,7 +62,7 @@ export function YahooControls({
       setSyncResult(
         data.status && data.sections
           ? {
-              summary: `${data.status} — ${data.totalRecordsUpdated ?? 0} records updated`,
+              summary: `${data.status}: ${data.totalRecordsUpdated ?? 0} records updated`,
               failed: data.status !== "SUCCESS",
               sections: data.sections,
             }
@@ -190,7 +190,7 @@ export function YahooControls({
               {syncResult.sections.map((s) => (
                 <li key={s.section}>
                   {s.section}: {s.recordsUpdated} updated
-                  {s.error && <span className="text-red"> — {s.error}</span>}
+                  {s.error && <span className="text-red">: {s.error}</span>}
                 </li>
               ))}
             </ul>

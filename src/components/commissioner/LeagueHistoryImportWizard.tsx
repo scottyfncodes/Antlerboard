@@ -357,8 +357,8 @@ function MismatchTable({ rows }: { rows: KeeperCheck[] }) {
               <td className="px-2 py-1.5 tabular">{r.season}</td>
               <td className="px-2 py-1.5">{r.franchise}</td>
               <td className="px-2 py-1.5">{r.rawName}</td>
-              <td className="px-2 py-1.5 tabular text-right">{r.recordedCost ?? "—"}</td>
-              <td className="px-2 py-1.5 tabular text-right">{r.computedCost ?? "—"}</td>
+              <td className="px-2 py-1.5 tabular text-right">{r.recordedCost ?? "–"}</td>
+              <td className="px-2 py-1.5 tabular text-right">{r.computedCost ?? "–"}</td>
               <td className="px-2 py-1.5 text-muted">{STATUS_LABEL[r.status]}</td>
             </tr>
           ))}

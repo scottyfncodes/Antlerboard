@@ -126,7 +126,7 @@ export function ImportWizard() {
     return (
       <div className="rounded-xl border border-dashed border-border p-8 text-center">
         <p className="text-sm text-muted mb-3">
-          Upload a CSV of acquisition/keeper history — one row per player-season (draft, waiver, or free agent
+          Upload a CSV of acquisition/keeper history: one row per player-season (draft, waiver, or free agent
           pickup).
         </p>
         <input
@@ -198,7 +198,7 @@ export function ImportWizard() {
     return (
       <div className="space-y-4">
         <p className="text-sm text-muted">
-          {checkedRows.length} rows — {errorCount} with errors, {conflictCount} conflicts,{" "}
+          {checkedRows.length} rows: {errorCount} with errors, {conflictCount} conflicts,{" "}
           {includedCount} will be imported.
         </p>
         <div className="rounded-xl border border-border overflow-x-auto max-h-[28rem] overflow-y-auto">
@@ -250,7 +250,7 @@ export function ImportWizard() {
                             )
                           }
                         />
-                        {row.conflict} — import anyway
+                        {row.conflict}. Import anyway
                       </label>
                     )}
                   </td>

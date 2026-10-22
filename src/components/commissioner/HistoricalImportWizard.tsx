@@ -192,7 +192,7 @@ export function HistoricalImportWizard() {
                         <span className="text-muted"> (predecessor)</span>
                       )}
                     </td>
-                    <td className="px-2 py-1.5">{r.finish ?? "—"}</td>
+                    <td className="px-2 py-1.5">{r.finish ?? "–"}</td>
                     <td className="px-2 py-1.5">
                       <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium ${ATTRIBUTION_VARIANT[r.attribution]}`}>
                         {ATTRIBUTION_LABEL[r.attribution]}

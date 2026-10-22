@@ -1,16 +1,20 @@
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono, Fraunces } from "next/font/google";
+import { Libre_Franklin, IBM_Plex_Mono, Fraunces } from "next/font/google";
 import "./globals.css";
 import { ServiceWorkerRegister } from "@/components/pwa/ServiceWorkerRegister";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+// Franklin Gothic is the typeface of the newspaper sports page and the box
+// score, which is what Antlerboard's dense standings and keeper tables are.
+// Paired with Fraunces for headings and Plex Mono for PINs.
+const bodySans = Libre_Franklin({
+  variable: "--font-body",
   subsets: ["latin"],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const bodyMono = IBM_Plex_Mono({
+  variable: "--font-body-mono",
   subsets: ["latin"],
+  weight: ["400", "500"],
 });
 
 const fraunces = Fraunces({
@@ -20,7 +24,7 @@ const fraunces = Fraunces({
 });
 
 export const metadata: Metadata = {
-  title: "Antlerboard — C&A Front Office",
+  title: "Antlerboard · C&A Front Office",
   description:
     "The Claw & Antler League's front office: keepers, trades, DPUD, and league history in one place.",
   applicationName: "Antlerboard",
@@ -56,7 +60,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} ${fraunces.variable} antialiased bg-background text-foreground`}
+        className={`${bodySans.variable} ${bodyMono.variable} ${fraunces.variable} antialiased bg-background text-foreground`}
       >
         <ServiceWorkerRegister />
         {children}

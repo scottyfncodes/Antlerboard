@@ -60,7 +60,7 @@ export function PlayerRow({
         <Link href={`/players/${player.id}`} className="block truncate text-[15px] font-semibold leading-tight hover:text-antler-strong">
           {player.name}
         </Link>
-        <p className="truncate text-xs text-muted mt-0.5">{subline || "—"}</p>
+        <p className="truncate text-xs text-muted mt-0.5">{subline || "–"}</p>
       </div>
       <div className="flex shrink-0 flex-col items-end gap-1">
         <div className="flex items-center gap-2">

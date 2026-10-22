@@ -201,7 +201,7 @@ function CostCard({ row }: { row: PlayerCostRow }) {
           <Link href={`/players/${player.id}`} className="block truncate text-[15px] font-semibold leading-tight hover:text-antler-strong">
             {player.name}
           </Link>
-          <p className="truncate text-xs text-muted">{[player.mlbTeam, player.positions.join(", ")].filter(Boolean).join(" · ") || "—"}</p>
+          <p className="truncate text-xs text-muted">{[player.mlbTeam, player.positions.join(", ")].filter(Boolean).join(" · ") || "–"}</p>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-0.5">
           <span className="text-[10px] uppercase tracking-wide text-muted">Now</span>
