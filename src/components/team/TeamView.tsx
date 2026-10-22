@@ -105,7 +105,7 @@ export async function TeamView({
           budget.budgetLeft === null
             ? {
                 label: "Budget left",
-                value: "—",
+                value: "–",
                 tone: "muted",
                 title: `${budget.unconfirmed} keeper cost${budget.unconfirmed === 1 ? "" : "s"} unconfirmed - the budget left can't be worked out yet.`,
               }
@@ -239,7 +239,7 @@ async function TeamDraft({ teamId }: { teamId: string }) {
                       {d.player.name}
                     </Link>
                   ) : (
-                    <span className="text-muted">—</span>
+                    <span className="text-muted">–</span>
                   )}
                   <span className="shrink-0 tabular text-muted">
                     <span title={pick.number.title}>{pick.isKeeperSlot ? "Keeper slot" : pick.number.text}</span> ·{" "}

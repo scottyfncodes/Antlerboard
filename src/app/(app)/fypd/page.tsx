@@ -192,7 +192,7 @@ export default async function FypdPage() {
                           {selection.player.name}
                         </Link>
                       ) : (
-                        <span className="text-muted">—</span>
+                        <span className="text-muted">–</span>
                       )}
                     </td>
                     <td className="px-2 py-2 hide-xs text-muted">

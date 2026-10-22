@@ -80,7 +80,7 @@ export default async function BoardPage() {
           </p>
           <h1 className="font-display text-3xl tracking-tight mt-1">The Board</h1>
           <p className="text-sm text-muted mt-1">
-            What&apos;s happening in C&amp;A right now{myTeam ? ` — ${myTeam.name}` : ""}.
+            What&apos;s happening in C&amp;A right now{myTeam ? ` (${myTeam.name})` : ""}.
           </p>
         </div>
         {unreadCount > 0 && (
@@ -209,7 +209,7 @@ export default async function BoardPage() {
                     <span className="text-muted">({k.team.name})</span>
                   </span>
                   <Badge variant={k.keeperYear >= 5 ? "red" : "yellow"}>
-                    Year {k.keeperYear}/5 {k.keeperYear >= 5 ? "— FORCED BACK NEXT" : ""}
+                    Year {k.keeperYear}/5 {k.keeperYear >= 5 ? "· FORCED BACK NEXT" : ""}
                   </Badge>
                 </li>
               ))}

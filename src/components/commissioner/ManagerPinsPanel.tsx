@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { TriangleAlert, Copy, Check, KeyRound, RefreshCw, RotateCcw } from "lucide-react";
+import { TriangleAlert, Copy, Check } from "lucide-react";
 import type { ManagerRole } from "@/lib/auth/types";
 
 interface ManagerRow {
@@ -99,7 +99,6 @@ export function ManagerPinsPanel({ managers }: { managers: ManagerRow[] }) {
 
       {/* Generate */}
       <ActionSection
-        icon={<KeyRound className="h-5 w-5" strokeWidth={2.25} />}
         title="Generate PINs"
         description="Creates a PIN for any manager who doesn't have one yet. Managers who already have a PIN keep it."
         pending={pending?.type === "generate"}
@@ -114,7 +113,6 @@ export function ManagerPinsPanel({ managers }: { managers: ManagerRow[] }) {
 
       {/* Reset all */}
       <ActionSection
-        icon={<RefreshCw className="h-5 w-5" strokeWidth={2.25} />}
         title="Reset All PINs"
         description="Replaces every manager's PIN, including the commissioner's. Old PINs stop working immediately."
         pending={pending?.type === "reset-all"}
@@ -130,10 +128,7 @@ export function ManagerPinsPanel({ managers }: { managers: ManagerRow[] }) {
 
       {/* Reset one */}
       <div className="rounded-xl border border-border bg-surface p-4 space-y-3">
-        <div className="flex items-center gap-2">
-          <RotateCcw className="h-5 w-5 text-antler" strokeWidth={2.25} />
-          <p className="font-display text-base">Reset One Manager&apos;s PIN</p>
-        </div>
+        <p className="font-display text-base">Reset One Manager&apos;s PIN</p>
         <p className="text-sm text-muted">Use this when someone forgets their PIN. Only their PIN changes.</p>
         <select
           value={selectedManager}
@@ -219,7 +214,6 @@ export function ManagerPinsPanel({ managers }: { managers: ManagerRow[] }) {
 }
 
 function ActionSection({
-  icon,
   title,
   description,
   pending,
@@ -232,7 +226,6 @@ function ActionSection({
   onConfirm,
   buttonLabel,
 }: {
-  icon: React.ReactNode;
   title: string;
   description: string;
   pending: boolean;
@@ -247,10 +240,7 @@ function ActionSection({
 }) {
   return (
     <div className="rounded-xl border border-border bg-surface p-4 space-y-3">
-      <div className="flex items-center gap-2">
-        <span className={destructive ? "text-red" : "text-antler"}>{icon}</span>
-        <p className="font-display text-base">{title}</p>
-      </div>
+      <p className="font-display text-base">{title}</p>
       <p className="text-sm text-muted">{description}</p>
       {pending ? (
         <ConfirmPanel

@@ -248,7 +248,7 @@ function PickCards({ picks, isAuction }: { picks: DraftHistoryPick[]; isAuction:
                 {isAuction && <span className="shrink-0 font-semibold tabular">{p.cost === null ? <span className="text-muted text-sm font-normal">Unavailable</span> : formatCost(p.cost)}</span>}
               </div>
               {p.player && (
-                <p className="text-xs text-muted">{[p.player.mlbTeam, p.player.positions.join(", ")].filter(Boolean).join(" · ") || "—"}</p>
+                <p className="text-xs text-muted">{[p.player.mlbTeam, p.player.positions.join(", ")].filter(Boolean).join(" · ") || "–"}</p>
               )}
               <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
                 <dt className="text-muted">{isAuction ? "Won by" : "Selected by"}</dt>

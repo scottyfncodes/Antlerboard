@@ -27,9 +27,9 @@ import { describePlayerMove } from "@/lib/transaction-display";
 
 
 const RESTART_NOTE: Record<StintRestart["reason"], string> = {
-  DROPPED: "Dropped after previous stint — keeper clock reset",
-  FORCED_BACK: "Back to the auction after 5 kept years — keeper clock reset",
-  REACQUIRED: "Re-acquired — keeper clock reset",
+  DROPPED: "Dropped after previous stint, keeper clock reset",
+  FORCED_BACK: "Back to the auction after 5 kept years, keeper clock reset",
+  REACQUIRED: "Re-acquired, keeper clock reset",
 };
 export const dynamic = "force-dynamic";
 
@@ -144,7 +144,7 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
               <p className="text-xs text-muted">{currentCost.reason}</p>
             </>
           ) : (
-            <p className="mt-1 font-display text-xl tabular">—</p>
+            <p className="mt-1 font-display text-xl tabular">–</p>
           )}
         </Card>
         <Card>
@@ -153,13 +153,13 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
             {currentRecord ? (
               <KeeperYearBadge keeperYear={currentRecord.keeperYear} status={currentRecord.status} />
             ) : (
-              "—"
+              "–"
             )}
           </div>
         </Card>
         <Card>
           <p className="text-xs text-muted">Forced Redraft Season</p>
-          <p className="mt-1 font-display text-xl tabular">{forcedRedraftSeason ?? "—"}</p>
+          <p className="mt-1 font-display text-xl tabular">{forcedRedraftSeason ?? "–"}</p>
         </Card>
       </section>
 
@@ -196,7 +196,7 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
                         ? ACQUISITION_LABEL[row.acquisitionMethod]
                         : row.status === "FORCED_BACK"
                           ? "Forced back into the draft"
-                          : `Kept — Year ${row.keeperYear}`}
+                          : `Kept: Year ${row.keeperYear}`}
                       {row.droppedThisSeason && <span className="text-muted"> · dropped during the season</span>}
                     </span>
                     <span className="tabular text-muted">{timelineCost(row.season, row.stintIndex, row.cost)}</span>
@@ -222,7 +222,7 @@ export default async function PlayerProfilePage({ params }: { params: Promise<{ 
               {draftPicks.map((d) => (
                 <li key={d.id} className="flex items-center justify-between">
                   <span>
-                    {d.seasonYear} — Rd {d.round}, Pick {d.pick} ({d.team.name})
+                    {d.seasonYear}: Rd {d.round}, Pick {d.pick} ({d.team.name})
                   </span>
                   <span className="tabular text-muted">{formatCost(d.cost)}</span>
                 </li>

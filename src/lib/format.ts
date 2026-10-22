@@ -14,7 +14,7 @@ export function timeAgo(dateInput: string | Date): string {
 }
 
 export function formatCost(cost: number | null | undefined): string {
-  if (cost === null || cost === undefined) return "—";
+  if (cost === null || cost === undefined) return "–";
   return `$${cost.toFixed(cost % 1 === 0 ? 0 : 2)}`;
 }
 

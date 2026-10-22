@@ -57,7 +57,7 @@ export default async function StandingsPage() {
                     <td className="px-1 py-2.5 text-right tabular font-semibold whitespace-nowrap">
                       {s.wins}-{s.losses}-{s.ties}
                     </td>
-                    <td className="pr-3 py-2.5 text-right tabular text-muted">{s.gamesBack ? s.gamesBack : "—"}</td>
+                    <td className="pr-3 py-2.5 text-right tabular text-muted">{s.gamesBack ? s.gamesBack : "–"}</td>
                   </tr>
                 );
               })}

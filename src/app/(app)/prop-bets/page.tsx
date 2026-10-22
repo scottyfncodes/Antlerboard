@@ -36,7 +36,7 @@ export default async function DpudPage() {
       />
 
       <BetSection title="Active" bets={active} manager={manager} />
-      <BetSection title="Open — Needs Opt-Ins" bets={open} manager={manager} />
+      <BetSection title="Open: Needs Opt-Ins" bets={open} manager={manager} />
       <BetSection title="Completed & Cancelled" bets={complete} manager={manager} isHistory />
     </div>
   );

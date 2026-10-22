@@ -98,7 +98,7 @@ export default async function DraftBoardPage({ params }: { params: Promise<{ yea
                           {p.player.name}
                         </Link>
                       ) : (
-                        "—"
+                        "–"
                       )}
                     </td>
                     {cost.confirmed ? (
