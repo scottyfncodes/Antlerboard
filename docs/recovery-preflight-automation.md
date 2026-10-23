@@ -5,8 +5,9 @@ window each day:
 
 - it opens 10 minutes after the scheduled sync finishes (the sync runs some
   time between 12:00 and 12:59 UTC);
-- it closes at the earlier of 12:45 UTC and the Yahoo token's expiry minus
-  5 minutes.
+- it closes at the Yahoo token's expiry minus 5 minutes (about 55 minutes
+  after the sync started; Yahoo's access token lasts an hour), and never
+  later than 13:55 UTC.
 
 Waiting for that window by hand kept missing it. This automation runs the
 whole read-only preflight and the dry run itself, then keeps the evidence for
@@ -70,13 +71,26 @@ does the following and stops at the first failure.
    |---|---|
    | Session | `transaction_read_only = on` |
    | Clocks | Runner and database within 60 s |
-   | Hard deadline | Now ≤ 12:45 UTC |
+   | Hard deadline | Now ≤ 13:55 UTC (the last minute of the cron hour + the one-hour token − 5 min) |
    | Baseline | 907 / `098de21868f2e3306d3a5df8ffc84b7f` / 0 / 0 |
    | FYPD | All seven players present, none with a Yahoo id |
    | Scheduled sync | Today's `YAHOO_SYNC_CRON` audit entry by "Vercel Cron", outcome `synced`, naming the latest SyncLog (so not a manual Sync Now) |
-   | Sync result | Started today after 12:00 UTC, finished, `PARTIAL`, `legacyAwaitingRecovery` 907, `writeErrors` 0 |
+   | Sync result | Started inside today's cron hour (12:00–13:00 UTC), finished, `PARTIAL`, `legacyAwaitingRecovery` 907, `writeErrors` 0 |
    | Token | Refreshed by that sync (expires after the sync started) |
-   | Window | Earliest = finish + 10 min. Latest = min(12:45, expiry − 5 min). Earliest ≤ latest, and now ≤ latest |
+   | Window | Earliest = finish + 10 min. Latest = expiry − 5 min. Earliest ≤ latest, and now ≤ latest |
+
+   **Why the latest start is the token's expiry − 5 min** (it was a fixed 12:45
+   until 2026-10-23):
+   - Yahoo issues a one-hour access token at the sync: `tokenExpiresAt` was
+     exactly 60 min after the sync started on every day checked (12:00:38 →
+     13:00:38 on Oct 19 and Oct 23).
+   - The dry-run endpoint never refreshes it (`allowRefresh: false`), answers
+     409 once it has lapsed, and runs for at most 300 s (`maxDuration`). The
+     5-minute margin is that 300 s, so a request started at the latest start
+     finishes while the token is still valid.
+   - Vercel's Hobby cron only promises to fire within the hour (12:56 on Oct
+     15). A fixed 12:45 stopped every late-cron day even with 45 minutes of
+     valid token left; the bound now follows the sync that actually ran.
 
    - Before the sync is recorded, or before the earliest start, it **waits**.
    - Any failed, missing, unreadable or inconsistent value is an immediate
@@ -231,18 +245,21 @@ STOP that names the blocker.
 
 ## Limits
 
-- **A late cron leaves no window.** If Vercel's cron fires after about 12:35
-  UTC, there's no valid window that day: finish + 10 minutes lands past
-  12:45. The run reports STOP with the evidence. Observed fire times: 12:56
-  (Oct 15) and 12:00:37 ± 1 s (Oct 16–20). On Hobby, Vercel only promises
-  some time within the hour.
+- **A late cron shifts the window, it doesn't lose the day.** The window
+  follows the sync: a 12:56 cron (as on Oct 15) gives roughly 13:07–13:51.
+  Observed fire times: 12:56 (Oct 15), 12:00:37 ± 2 s (Oct 16–23).
 - **A failed sync means no run that day.** Nothing is dispatched unless a
   league synced, and the 14:17 alarm records the STOP. On Oct 20 the sync
   failed because the database took 8.4 s to start; the cron now waits for the
   database (up to four attempts, 3 s apart) before syncing.
 - **GitHub can delay a dispatched run too.** `workflow_dispatch` runs usually
   start within a minute, but GitHub doesn't guarantee it. A run that starts
-  after the latest start reports STOP.
+  after the latest start reports STOP. On Oct 23 the dispatched run was
+  created 1 s after the sync's audit entry.
+- **No token, no dry run.** Outside the hour after the daily sync the Yahoo
+  token has lapsed and the endpoint refuses (409). Nothing here refreshes it,
+  and a Sync Now would make the sync gates fail, so a missed day can't be
+  made up the same day.
 - **One run a day.** Once today's evidence exists, later triggers, manual
   ones included, skip. A STOP is final for that day.
 
