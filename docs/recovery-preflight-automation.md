@@ -33,7 +33,11 @@ does the following and stops at the first failure.
    - `window-checks.sql` c4e40efc…
 
    The hashes are pinned in `SHA256SUMS` and again inside `preflight.py`.
-2. **Polls production every 60 s.** Each poll is one REPEATABLE READ READ
+2. **Proves the setup**, after the first poll that isn't a STOP. These are
+   the checks listed under "Verify the setup" below: the Neon login,
+   GitHub-to-Vercel connectivity, fail-closed behavior and the token. Any
+   failure is a STOP that names the blocker.
+3. **Polls production every 60 s.** Each poll is one REPEATABLE READ READ
    ONLY transaction as the read-only role. It runs `window-checks.sql`
    unchanged, `fypd-unlinked.sql` and `write-probe.sql`, then re-checks every
    gate:
@@ -54,17 +58,17 @@ does the following and stops at the first failure.
    - Any failed, missing, unreadable or inconsistent value is an immediate
      **STOP**, and so is reaching the deadline. Nothing is retried, and the
      deadline is never extended.
-3. **On GO, makes one GET of the production dry run.** The URL is fixed in
+4. **On GO, makes one GET of the production dry run.** The URL is fixed in
    the script: `https://antlerboard.vercel.app/api/commissioner/yahoo-transaction-recovery?season=2026`.
    - It sends the `RECOVERY_DRYRUN_TOKEN` bearer token and never follows a
      redirect.
    - It saves the response byte for byte.
    - Any answer other than 200 is a STOP, and the error text is kept.
-4. **Takes the same snapshot again.** Any difference from the GO snapshot is a
+5. **Takes the same snapshot again.** Any difference from the GO snapshot is a
    STOP. This compares the token expiry, the sync and cron rows, the baseline,
    the FYPD players, and the write probe (Yahoo transaction and link counts,
    players, recovery audit entries, sync logs, connection `updatedAt`).
-5. **Validates the report, in order, stopping at the first failure:**
+6. **Validates the report, in order, stopping at the first failure:**
    1. The original JSON and its envelope: league, season, fingerprint and
       records, with `generatedAt` inside the request and before the token
       expired.
@@ -113,38 +117,51 @@ last changed the workflow's schedule (Settings > Notifications > Actions).
 ## One-time setup
 
 Each step changes production configuration and needs the commissioner's
-approval. Nothing runs until step 5.
+approval. The schedule does nothing until step 6.
 
-1. **Merge this PR.** That deploys the route change, which is inert without
+1. **Merge PR #36.** That deploys the route change, which is inert without
    `RECOVERY_DRYRUN_TOKEN`: every bearer token is refused.
-2. **Create the read-only role.** In the Neon SQL editor (project
-   `hidden-wave-58536414`, branch `main`, database `neondb`), run
-   `scripts/recovery/neon-preflight-role.sql`. Check that verification queries
-   V1–V7 show exactly the expected values. If any doesn't, remove the role
-   (below) and stop.
-3. **Set its password without anyone seeing it.**
-   - On your own computer, run
-     `python3 -I scripts/recovery/make-preflight-credential.py`. It prints:
-     - an `ALTER ROLE … PASSWORD 'SCRAM-SHA-256$…'` line; run that in the
-       Neon SQL editor. Only the salted verifier reaches Neon.
-     - the connection URL. In GitHub, go to Settings > Secrets and variables >
-       Actions > New repository secret, name it `PREFLIGHT_DATABASE_URL`, and
-       paste the URL.
-   - Then clear the terminal.
-   - If Neon refuses a pre-hashed password, run
-     `ALTER ROLE antlerboard_preflight WITH PASSWORD '<a 40+ character password from your password manager>';`
-     instead, and build the URL the same way.
-4. **Create the dry-run token.**
-   - Generate one locally:
-     `python3 -c "import secrets; print(secrets.token_urlsafe(48))"`.
-   - Add it as the GitHub repository secret `RECOVERY_DRYRUN_TOKEN`.
-   - Add it in Vercel (Project antlerboard > Settings > Environment Variables)
-     as `RECOVERY_DRYRUN_TOKEN`, type Sensitive, environment **Production
-     only**.
-   - Redeploy production so the variable takes effect.
-5. **Activate.** In GitHub, go to Settings > Secrets and variables > Actions >
-   Variables and create `RECOVERY_PREFLIGHT_ENABLED` = `true`. Every trigger
-   skips the job until this exists.
+2. **Create the read-only role.** Run `scripts/recovery/neon-preflight-role.sql`
+   against project `hidden-wave-58536414`, branch `main`, database `neondb`,
+   and check that verification queries V1–V7 show exactly the expected values.
+   The role has no password yet, so it can't log in.
+3. **Generate the two secrets on your own computer.** Run
+   `python3 -I scripts/recovery/make-preflight-credential.py`. It prints three
+   values and saves nothing:
+   - an `ALTER ROLE antlerboard_preflight WITH PASSWORD '…';` statement. Run it
+     in the Neon SQL editor. Neon only accepts plaintext passwords; it
+     refused a pre-hashed SCRAM verifier when tried on 2026-10-19.
+   - the `PREFLIGHT_DATABASE_URL` value. Save it in GitHub: Settings > Secrets
+     and variables > Actions > New repository secret.
+   - the `RECOVERY_DRYRUN_TOKEN` value. Save it as a GitHub repository secret
+     too, and in Vercel (Project antlerboard > Settings > Environment
+     Variables) with environment **Production only** and Sensitive on.
+
+   Then clear the terminal.
+4. **Redeploy production** so the Vercel variable takes effect.
+5. **Verify the setup.** Run the workflow manually in `verify-setup` mode
+   (Actions > Recovery preflight (read-only) > Run workflow). It is allowed
+   while the schedule is disabled, and it never runs the dry run. It proves:
+   - **Neon:** the login works, it is `antlerboard_preflight`, the session is
+     read-only, and it can't read the Yahoo token column.
+   - **GitHub to Vercel:** production is reachable and refuses a wrong token
+     (401).
+   - **Fail closed:** a POST to the apply with the dry-run token is refused
+     (401 or 403).
+   - **The token:** production accepts the dry-run token (409, "doesn't
+     refresh"). This check only runs while the Yahoo token is expired and
+     outside 11:58–13:05 UTC, so the request stops before reading Yahoo.
+     Otherwise the run fails with "couldn't be checked now".
+6. **Activate.** In GitHub, go to Settings > Secrets and variables > Actions >
+   Variables and create `RECOVERY_PREFLIGHT_ENABLED` = `true`. Do this only
+   after step 5 passes. Until the variable exists, the schedule and manual
+   `preflight` runs skip the job.
+
+Every scheduled run repeats the step-5 checks after its first poll, so the
+first real run proves the Neon credential and GitHub-to-Vercel connectivity
+explicitly. When the run starts after the sync (the Yahoo token valid), the
+token check is recorded as deferred and the dry run proves it: a 401 then is a
+STOP that names the blocker.
 
 ## Turning it off, rotating, removing
 

@@ -2,9 +2,15 @@
 # recovery. Never applies anything. Procedure, setup and evidence:
 # docs/recovery-preflight-automation.md.
 #
-# Disabled until the repository variable RECOVERY_PREFLIGHT_ENABLED is "true"
-# (Settings > Secrets and variables > Actions > Variables). Without it every
-# trigger, manual ones included, skips the job.
+# Two modes:
+# - preflight (the schedule, or a manual run): the daily preflight and, on GO,
+#   the dry run. Disabled until the repository variable
+#   RECOVERY_PREFLIGHT_ENABLED is "true" (Settings > Secrets and variables >
+#   Actions > Variables).
+# - verify-setup (manual runs only): proves the Neon login, GitHub-to-Vercel
+#   connectivity, the dry-run token and fail-closed behavior, and never runs
+#   the dry run. It works while the schedule is disabled, so the setup can be
+#   verified before it is enabled.
 name: Recovery preflight (read-only)
 
 on:
@@ -15,6 +21,12 @@ on:
     - cron: "41 11 * * *"
     - cron: "11 12 * * *"
   workflow_dispatch:
+    inputs:
+      mode:
+        description: "verify-setup (no dry run) or preflight (needs RECOVERY_PREFLIGHT_ENABLED)"
+        type: choice
+        options: [verify-setup, preflight]
+        default: verify-setup
 
 permissions:
   contents: read
@@ -27,28 +39,37 @@ concurrency:
 jobs:
   preflight:
     # Schedules always run on the default (production) branch; a manual run
-    # must be started from it too.
+    # must be started from it too. The preflight mode needs the switch.
     if: >-
-      vars.RECOVERY_PREFLIGHT_ENABLED == 'true' &&
-      (github.event_name == 'schedule' || github.ref_name == github.event.repository.default_branch)
+      (github.event_name == 'schedule' || github.ref_name == github.event.repository.default_branch) &&
+      (inputs.mode == 'verify-setup' || vars.RECOVERY_PREFLIGHT_ENABLED == 'true')
     runs-on: ubuntu-24.04
     # Covers 11:41 to the 12:45 deadline, a 5-minute dry run and the validators.
     timeout-minutes: 80
+    env:
+      MODE: ${{ inputs.mode || 'preflight' }}
     steps:
       - name: Check out
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           persist-credentials: false
 
-      - name: Name today's evidence
+      - name: Name the evidence
         id: day
-        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+          if [ "$MODE" = "verify-setup" ]; then
+            echo "name=recovery-setup-check-$(date -u +%F)-$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=recovery-preflight-$(date -u +%F)" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Run at most once a day
+      - name: Run the preflight at most once a day
         id: once
+        if: env.MODE == 'preflight'
         env:
           GH_TOKEN: ${{ github.token }}
-          NAME: recovery-preflight-${{ steps.day.outputs.date }}
+          NAME: ${{ steps.day.outputs.name }}
         run: |
           count=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$NAME&per_page=1" --jq .total_count)
           if [ "$count" != "0" ]; then
@@ -61,17 +82,23 @@ jobs:
         working-directory: scripts/recovery
         run: sha256sum --check --strict SHA256SUMS
 
-      - name: Preflight, then the dry run on GO (read-only)
+      - name: Run (read-only)
         if: steps.once.outputs.skip != 'true'
         env:
           PREFLIGHT_DATABASE_URL: ${{ secrets.PREFLIGHT_DATABASE_URL }}
           RECOVERY_DRYRUN_TOKEN: ${{ secrets.RECOVERY_DRYRUN_TOKEN }}
-        run: python3 -I scripts/recovery/preflight.py "evidence/${{ steps.day.outputs.date }}"
+          DIR: evidence/${{ steps.day.outputs.name }}
+        run: |
+          if [ "$MODE" = "verify-setup" ]; then
+            python3 -I scripts/recovery/preflight.py --verify-setup "$DIR"
+          else
+            python3 -I scripts/recovery/preflight.py "$DIR"
+          fi
 
       - name: Publish the summary
         if: always() && steps.once.outputs.skip != 'true'
         env:
-          DIR: evidence/${{ steps.day.outputs.date }}
+          DIR: evidence/${{ steps.day.outputs.name }}
         run: |
           # A run that ended before writing evidence is still today's one
           # attempt: record it as a STOP so the backup trigger doesn't retry.
@@ -85,7 +112,7 @@ jobs:
         if: always() && steps.once.outputs.skip != 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: recovery-preflight-${{ steps.day.outputs.date }}
-          path: evidence/${{ steps.day.outputs.date }}/
+          name: ${{ steps.day.outputs.name }}
+          path: evidence/${{ steps.day.outputs.name }}/
           retention-days: 90
           if-no-files-found: error

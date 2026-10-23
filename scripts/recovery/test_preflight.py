@@ -178,18 +178,24 @@ class LoopWithoutDatabase(unittest.TestCase):
         out = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, out)
         it, now, calls = iter(snaps), [start], []
+        token = "tok-" + "x" * 40
         def next_snapshot(db):
             s = next(it)
             now[0] = pf.ts(s["ro"][0]["db_now"])
             return s
         env = {"PREFLIGHT_DATABASE_URL": "postgresql://antlerboard_preflight:pw-xxxxxxxxxxxxxxxx@db.example/neondb",
-               "RECOVERY_DRYRUN_TOKEN": "tok-" + "x" * 40}
+               "RECOVERY_DRYRUN_TOKEN": token}
+        def request(method, url, auth, data=None):
+            calls.append((method, auth == token))
+            return (500, "", b"") if (method, auth) == ("GET", token) else (401, "", b'{"error":"refused"}')
         with mock.patch.dict(os.environ, env), mock.patch.object(pf.Db, "snapshot", next_snapshot), \
                 mock.patch.object(pf, "utcnow", lambda: now[0]), mock.patch.object(pf, "sleep", lambda s: None), \
-                mock.patch.object(pf, "http_get", lambda *a: calls.append(a) or (500, "", b"")), \
+                mock.patch.object(pf, "http_request", request), \
+                mock.patch.object(pf.Db, "refused", lambda db, sql: "ERROR:  permission denied for table YahooConnection"), \
                 mock.patch.object(pf.shutil, "which", lambda name: "/usr/bin/psql"):
             code = pf.main(["preflight.py", out])
-        return code, calls, json.loads(read(os.path.join(out, "preflight.json"))), read(os.path.join(out, "summary.md"))
+        dry_runs = [c for c in calls if c == ("GET", True)]
+        return code, dry_runs, json.loads(read(os.path.join(out, "preflight.json"))), read(os.path.join(out, "summary.md"))
 
     def test_outside_the_window_it_stops_without_calling_the_endpoint(self):
         code, calls, ev, md = self.run_main([snapshot(now=t(13, 2))], start=t(13, 2))
@@ -223,17 +229,16 @@ class LoopWithoutDatabase(unittest.TestCase):
 
 
 class Credential(unittest.TestCase):
-    """PostgreSQL itself checks the verifier: Integration logs in over SCRAM with it."""
-
-    def test_verifier_format(self):
-        import base64, re
-        v = cred.scram_verifier("pencil", b"0123456789abcdef")
-        m = re.fullmatch(r"SCRAM-SHA-256\$4096:([A-Za-z0-9+/=]+)\$([A-Za-z0-9+/=]+):([A-Za-z0-9+/=]+)", v)
-        self.assertIsNotNone(m)
-        self.assertEqual(base64.b64decode(m.group(1)), b"0123456789abcdef")
-        self.assertEqual([len(base64.b64decode(m.group(i))) for i in (2, 3)], [32, 32])
-        self.assertEqual(v, cred.scram_verifier("pencil", b"0123456789abcdef"))
-        self.assertNotEqual(v, cred.scram_verifier("pencil2", b"0123456789abcdef"))
+    def test_generates_matching_url_and_sql_and_a_separate_token(self):
+        g = cred.generate()
+        u = urllib.parse.urlsplit(g["database_url"])
+        self.assertEqual((u.scheme, u.username, u.hostname, u.path), ("postgresql", "antlerboard_preflight", cred.HOST, "/neondb"))
+        self.assertEqual(dict(urllib.parse.parse_qsl(u.query)), {"sslmode": "require", "channel_binding": "require"})
+        self.assertEqual(g["sql"], f"ALTER ROLE antlerboard_preflight WITH PASSWORD '{u.password}';")
+        self.assertGreaterEqual(len(u.password), 40)
+        self.assertGreaterEqual(len(g["dry_run_token"]), 60)
+        self.assertNotIn(g["dry_run_token"], g["database_url"])
+        self.assertNotEqual(cred.generate()["dry_run_token"], g["dry_run_token"])
 
 
 # --- Integration: a real Postgres, the real role SQL, a local stand-in endpoint ---
@@ -260,7 +265,7 @@ class Integration(unittest.TestCase):
         role_sql = read(os.path.join(HERE, "neon-preflight-role.sql")).replace("ON DATABASE neondb", f"ON DATABASE {db}")
         cls.verification = admin(role_sql).strip().splitlines()
         cls.password = "it-pw-" + os.urandom(12).hex()
-        admin(f"ALTER ROLE {ROLE} WITH PASSWORD '{cred.scram_verifier(cls.password, os.urandom(16))}';")
+        admin(f"ALTER ROLE {ROLE} WITH PASSWORD '{cls.password}';")
         u = urllib.parse.urlsplit(ADMIN)
         cls.role_url = f"postgresql://{ROLE}:{cls.password}@{u.hostname}:{u.port or 5432}/{db}?sslmode=disable"
 
@@ -320,21 +325,33 @@ INSERT INTO "AuditLogEntry"(id, "actorName", action, "entityType", "createdAt", 
     def endpoint(self, status):
         test = self
         class Handler(http.server.BaseHTTPRequestHandler):
-            def do_GET(self):
-                test.hits.append({"path": self.path, "auth": self.headers.get("Authorization")})
-                if test.during:
-                    test.during()
-                body = dict(test.report, generatedAt=datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")) \
-                    if test.status == 200 else {"error": "The stored Yahoo access token has expired"}
+            def answer(self, status, body):
                 data = json.dumps(body).encode()
-                self.send_response(test.status)
+                self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
+            def do_POST(self):
+                test.requests.append(("POST", self.headers.get("Authorization")))
+                self.answer(test.post_status, {"error": "Authentication required."})
+            def do_GET(self):
+                auth = self.headers.get("Authorization")
+                test.requests.append(("GET", auth))
+                if auth != f"Bearer {TOKEN}" or test.token_status:
+                    return self.answer(test.token_status or test.wrong_token_status, {"error": "Invalid dry-run token"})
+                if test.yahoo_expired:
+                    return self.answer(409, {"error": "The stored Yahoo access token has expired, and this read-only tool doesn't refresh it"})
+                test.hits.append({"path": self.path, "auth": auth})
+                if test.during:
+                    test.during()
+                body = dict(test.report, generatedAt=datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")) \
+                    if test.status == 200 else {"error": "The stored Yahoo access token has expired"}
+                self.answer(test.status, body)
             def log_message(self, *a):
                 pass
-        self.status = status
+        self.status, self.requests, self.yahoo_expired = status, [], False
+        self.token_status, self.wrong_token_status, self.post_status = None, 401, 401
         server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.addCleanup(server.server_close)
@@ -375,11 +392,15 @@ INSERT INTO "AuditLogEntry"(id, "actorName", action, "entityType", "createdAt", 
         self.assertEqual((code, ev["outcome"]), (0, "DRY_RUN_VALIDATED"), ev["stopReasons"])
         self.assertEqual(len(self.hits), 1)
         self.assertEqual(self.hits[0]["auth"], f"Bearer {TOKEN}")
-        self.assertEqual([s["ok"] for s in ev["steps"]], [True] * len(ev["steps"]))
         self.assertEqual([s["step"] for s in ev["steps"]], [
-            "audited script hashes unchanged", "preflight", "production unchanged by the dry run",
+            "audited script hashes unchanged", "Neon login is the read-only role", "the role can't read the Yahoo tokens",
+            "GitHub reaches production, which refuses a wrong token", "the dry-run token can't reach the apply (POST)",
+            "production accepts the dry-run token", "preflight", "production unchanged by the dry run",
             "original JSON, intact envelope, generatedAt inside the request and the token's life",
             "python3 -I validate_dry_run.py", "cross-check SELECTs", "python3 -I waiver_fa_check.py"])
+        # The Yahoo token is valid in this fixture, so the token probe is deferred to the dry run itself.
+        self.assertEqual([s["ok"] for s in ev["steps"]], [True] * 5 + [None] + [True] * 6)
+        self.assertEqual([m for m, _ in self.requests], ["GET", "POST", "GET"])
         day = datetime.now(UTC).date().isoformat()
         for f in [f"dry-run-{day}.json", f"dry-run-{day}.crosscheck.sql", f"dry-run-{day}.yahoo-sample.md", f"dry-run-{day}.summary.txt",
                   f"dry-run-{day}.waiver-fa.md", "validate_dry_run.output.txt", "waiver_fa_check.output.txt", "crosscheck-results.json",
@@ -396,7 +417,7 @@ INSERT INTO "AuditLogEntry"(id, "actorName", action, "entityType", "createdAt", 
         with mock.patch.object(pf, "HARD_DEADLINE", (past.hour, past.minute)):
             code = pf.main(["preflight.py", self.out])
         ev = self.evidence()
-        self.assertEqual((code, ev["outcome"], self.hits), (1, "STOP", []))
+        self.assertEqual((code, ev["outcome"], self.hits, self.requests), (1, "STOP", [], []))
         self.assertIn("hard deadline", ev["stopReasons"][0])
 
     def test_a_write_during_the_dry_run_is_a_stop(self):
@@ -428,6 +449,73 @@ INSERT INTO "AuditLogEntry"(id, "actorName", action, "entityType", "createdAt", 
         ev = self.evidence()
         self.assertEqual(code, 1)
         self.assertIn("C3 every team exists", ev["stopReasons"][0])
+
+    def expire_yahoo_token(self):
+        admin('UPDATE "YahooConnection" SET "tokenExpiresAt" = (now() AT TIME ZONE \'utc\') - interval \'1 hour\';')
+        self.yahoo_expired = True
+
+    def verify(self):
+        with mock.patch.object(pf, "PROBE_QUIET", ((0, 0), (0, 0))):
+            code = pf.main(["preflight.py", "--verify-setup", self.out])
+        return code, self.evidence()
+
+    def test_verify_setup_proves_every_check_without_a_dry_run(self):
+        self.expire_yahoo_token()
+        code, ev = self.verify()
+        self.assertEqual((code, ev["outcome"], ev["mode"]), (0, "SETUP_VERIFIED", "verify-setup"), ev["stopReasons"])
+        self.assertEqual(self.hits, [])
+        self.assertEqual([m for m, _ in self.requests], ["GET", "POST", "GET"])
+        self.assertEqual(self.requests[1][1], f"Bearer {TOKEN}")
+        self.assertNotEqual(self.requests[0][1], f"Bearer {TOKEN}")
+        self.assertEqual([s["ok"] for s in ev["steps"]], [True] * 6)
+        self.assertIn("409", ev["steps"][-1]["detail"])
+        self.assertIn("# Recovery preflight: SETUP VERIFIED", read(os.path.join(self.out, "summary.md")))
+
+    def test_verify_setup_never_sends_the_token_while_the_yahoo_token_is_valid(self):
+        code, ev = self.verify()
+        self.assertEqual((code, ev["outcome"]), (1, "STOP"))
+        self.assertIn("couldn't be checked now", ev["stopReasons"][0])
+        self.assertNotIn(("GET", f"Bearer {TOKEN}"), self.requests)
+
+    def test_verify_setup_defers_the_token_near_the_scheduled_sync(self):
+        self.expire_yahoo_token()
+        now = datetime.now(UTC)
+        hm = lambda d: (d.hour, d.minute)
+        with mock.patch.object(pf, "PROBE_QUIET", (hm(now - timedelta(minutes=5)), hm(now + timedelta(minutes=5)))):
+            code = pf.main(["preflight.py", "--verify-setup", self.out])
+        ev = self.evidence()
+        self.assertEqual(code, 1)
+        self.assertIn("close to the scheduled sync", ev["steps"][-1]["detail"])
+        self.assertNotIn(("GET", f"Bearer {TOKEN}"), self.requests)
+
+    def test_a_token_vercel_rejects_is_a_stop_naming_the_blocker(self):
+        self.expire_yahoo_token()
+        self.token_status = 401
+        code, ev = self.verify()
+        self.assertEqual(code, 1)
+        self.assertIn("GitHub-to-Vercel check failed", ev["stopReasons"][0])
+        self.assertIn("Vercel Production", ev["stopReasons"][0])
+
+    def test_a_production_that_accepts_a_wrong_token_is_a_stop(self):
+        self.wrong_token_status = 200
+        code = pf.main(["preflight.py", self.out])
+        ev = self.evidence()
+        self.assertEqual((code, self.hits), (1, []))
+        self.assertIn("a wrong token got HTTP 200", ev["stopReasons"][0])
+
+    def test_an_apply_reachable_with_the_token_is_a_stop(self):
+        self.post_status = 200
+        code = pf.main(["preflight.py", self.out])
+        ev = self.evidence()
+        self.assertEqual((code, self.hits), (1, []))
+        self.assertIn("fail-closed check failed", ev["stopReasons"][0])
+
+    def test_a_neon_credential_that_doesnt_work_is_a_stop(self):
+        with mock.patch.dict(os.environ, {"PREFLIGHT_DATABASE_URL": self.role_url.replace(self.password, "not-the-password")}):
+            code = pf.main(["preflight.py", self.out])
+        ev = self.evidence()
+        self.assertEqual((code, self.requests), (1, []))
+        self.assertIn("password authentication failed", ev["stopReasons"][0])
 
 
 if __name__ == "__main__":

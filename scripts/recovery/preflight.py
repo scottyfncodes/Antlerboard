@@ -5,6 +5,7 @@ recovery. Run by .github/workflows/recovery-preflight.yml; setup and the
 operating procedure are in docs/recovery-preflight-automation.md.
 
 Usage:  python3 -I scripts/recovery/preflight.py EVIDENCE_DIR
+        python3 -I scripts/recovery/preflight.py --verify-setup EVIDENCE_DIR
 
 Environment (GitHub secrets, never printed):
   PREFLIGHT_DATABASE_URL  the read-only antlerboard_preflight login
@@ -12,20 +13,28 @@ Environment (GitHub secrets, never printed):
 
 Stops at the first failure:
   1. The three audited scripts must match their recorded hashes.
-  2. Poll production (read-only) until today's scheduled sync has finished
+  2. After the first poll that isn't a STOP, prove the setup explicitly:
+     the Neon login is the read-only role and can't read the Yahoo tokens;
+     production is reachable and refuses a wrong token; the dry-run token
+     can't reach the apply (POST); and production accepts the dry-run token
+     (only while the Yahoo token is expired, so that request stops at 409
+     before reading Yahoo). --verify-setup runs just these checks, never the
+     dry run, and is how the setup is verified before the schedule is enabled.
+  3. Poll production (read-only) until today's scheduled sync has finished
      and settled. Every poll re-checks every gate: read-only session, clocks,
      baseline, the seven FYPD players, the sync (scheduled cron, PARTIAL, 907
      awaiting, 0 write errors) and the token. GO only inside
      [sync finish + 10 min, min(12:45 UTC, token expiry - 5 min)].
-  3. On GO: one GET of the production dry run (never Apply), then the same
+  4. On GO: one GET of the production dry run (never Apply), then the same
      snapshot again. Any difference is a STOP.
-  4. validate_dry_run.py, then its SELECT-only cross-checks, then
+  5. validate_dry_run.py, then its SELECT-only cross-checks, then
      waiver_fa_check.py.
 Exit 0 = the dry run was fetched and every check passed: evidence is ready for
-the commissioner's review (it is not an approval to apply). Exit 1 = STOP.
+the commissioner's review (it is not an approval to apply); with --verify-setup,
+every setup check passed. Exit 1 = STOP.
 Evidence (preflight.json, summary.md and every output) is written either way.
 """
-import csv, hashlib, io, json, os, re, shutil, subprocess, sys, time
+import csv, hashlib, io, json, os, re, secrets, shutil, subprocess, sys, time
 import urllib.error, urllib.parse, urllib.request
 from datetime import datetime, timedelta, timezone
 
@@ -43,6 +52,7 @@ AUDITED_HASHES = {
 BASELINE = {"legacy": 907, "keys_md5": "098de21868f2e3306d3a5df8ffc84b7f", "legacy_rows_detailed": 0, "recovery_audits": 0}
 EXPECTED_SYNC = {"status": "PARTIAL", "legacy_awaiting": 907, "write_errors": 0}
 LEAGUE_KEY, SEASON = "469.l.8891", 2026
+ROLE = "antlerboard_preflight"
 FYPD_PLAYERS = {
     "cmubjpgy0001wgqsl6sqoo7u8": "Braden Montgomery",
     "cmubjph26003ggqslajf8accf": "Ryan Waldschmidt",
@@ -58,6 +68,9 @@ HARD_DEADLINE = (12, 45)    # latest start, whatever the token says
 SYNC_SETTLE = timedelta(minutes=10)
 TOKEN_MARGIN = timedelta(minutes=5)
 MAX_CLOCK_SKEW = timedelta(seconds=60)
+# Around the scheduled sync a request with the real token could race a token
+# refresh and turn into a full dry run, so the token probe isn't made then.
+PROBE_QUIET = ((11, 58), (13, 5))
 POLL_SECONDS = 60
 HTTP_TIMEOUT_SECONDS = 330  # the route's maxDuration is 300
 MAX_REPORT_BYTES = 20_000_000
@@ -211,6 +224,13 @@ class Db:
         if missing:
             raise Stop(f"database returned no result for {', '.join(missing)}")
         return out
+
+    def refused(self, stmt):
+        """The error for a SELECT the role must not be allowed to run ("" if it ran). Its output is discarded."""
+        select_statements(stmt + ";")
+        p = subprocess.run(["psql", "-X", "-q", "--csv", "-f", "-"], env=self.env, capture_output=True, text=True, timeout=60,
+                           input=f"\\set ON_ERROR_STOP on\nBEGIN READ ONLY;\n{stmt};\nROLLBACK;\n")
+        return "" if p.returncode == 0 else redact(p.stderr.strip())
 
     def snapshot(self):
         labelled = list(zip(["W1", "W2", "W3", "W4"], sql_file("window-checks.sql", 4)))
@@ -369,9 +389,10 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None  # a redirect is answered as an HTTPError, and the token never follows it
 
 
-def http_get(url, token):
-    req = urllib.request.Request(url, headers={
-        "Authorization": f"Bearer {token}", "Accept": "application/json", "User-Agent": "antlerboard-recovery-preflight"})
+def http_request(method, url, token, data=None):
+    req = urllib.request.Request(url, method=method, data=data, headers={
+        "Authorization": f"Bearer {token}", "Accept": "application/json", "Content-Type": "application/json",
+        "User-Agent": "antlerboard-recovery-preflight"})
     opener = urllib.request.build_opener(_NoRedirect)
     try:
         with opener.open(req, timeout=HTTP_TIMEOUT_SECONDS) as r:
@@ -379,7 +400,11 @@ def http_get(url, token):
     except urllib.error.HTTPError as e:
         return e.code, e.headers.get("content-type", "") if e.headers else "", e.read(MAX_REPORT_BYTES + 1)
     except Exception as e:
-        raise Stop(f"dry-run request failed: {type(e).__name__}")
+        raise Stop(f"request to production failed: {type(e).__name__}")
+
+
+def http_get(url, token):
+    return http_request("GET", url, token)
 
 
 # --- Evidence ------------------------------------------------------------------
@@ -420,11 +445,12 @@ class Evidence:
 
     def markdown(self):
         d, g = self.data, self.data["gate"] or {}
-        ok = d["outcome"] == "DRY_RUN_VALIDATED"
-        md = ["# Recovery preflight: " + ("DRY RUN VALIDATED" if ok else "STOP"), ""]
-        md.append("Read-only. Nothing was applied, linked or written. " +
-                  ("The report is ready for the commissioner's review; this is not an approval to apply."
-                   if ok else "Nothing further runs today."))
+        outcome = d["outcome"]
+        md = ["# Recovery preflight: " + {"DRY_RUN_VALIDATED": "DRY RUN VALIDATED", "SETUP_VERIFIED": "SETUP VERIFIED"}.get(outcome, "STOP"), ""]
+        md.append("Read-only. Nothing was applied, linked or written. " + {
+            "DRY_RUN_VALIDATED": "The report is ready for the commissioner's review; this is not an approval to apply.",
+            "SETUP_VERIFIED": "Every setup check passed. No dry run was made.",
+        }.get(outcome, "Nothing further runs today." if d.get("mode") == "preflight" else "The setup is not verified."))
         if d["stopReasons"]:
             md += ["", "## Why it stopped", ""] + [f"- {r}" for r in d["stopReasons"]]
         md += ["", "## Window", "", "| | UTC |", "|---|---|",
@@ -443,7 +469,8 @@ class Evidence:
             md += ["", "## Dry run", ""] + [f"- {k}: {v}" for k, v in d["dryRun"].items()]
         if d["steps"]:
             md += ["", "## Steps", "", "| Step | Result | Detail |", "|---|---|---|"]
-            md += [f"| {s['step']} | {'pass' if s['ok'] else '**FAIL**'} | {s.get('detail', '')} |" for s in d["steps"]]
+            label = lambda ok: "pass" if ok else ("deferred" if ok is None else "**FAIL**")
+            md += [f"| {s['step']} | {label(s['ok'])} | {s.get('detail', '')} |" for s in d["steps"]]
         for name in ("validate_dry_run.output.txt", "waiver_fa_check.output.txt"):
             if os.path.exists(self.path(name)):
                 md += ["", f"## `{name}`", "", "```", read_text(self.path(name)).rstrip(), "```"]
@@ -482,16 +509,86 @@ def unresolved_markdown(report):
     return "\n".join(md) + "\n"
 
 
-def run(ev):
-    verify_hashes(ev)
+def snippet(body):
+    return body[:160].decode("utf-8", "replace").replace("\n", " ").replace("|", "/")
+
+
+def setup_checks(ev, db, token, snap, now):
+    """
+    Explicit, read-only proof that the Neon login and the path from GitHub to
+    production work, and fail closed. Returns whether the dry-run token itself
+    was proven (False when the probe had to be deferred).
+    """
+    ro = snap["ro"][0]
+    ok = ro["db_user"] == ROLE and ro["transaction_read_only"] == "on"
+    ev.step("Neon login is the read-only role", ok,
+            detail=f"connected as {ro['db_user']}, transaction_read_only={ro['transaction_read_only']}, PostgreSQL {ro['server_version']}")
+    if not ok:
+        raise Stop(f"Neon credential check failed: connected as {ro['db_user']} (transaction_read_only={ro['transaction_read_only']}), expected {ROLE}, read-only")
+    err = db.refused('SELECT count("accessToken") FROM "YahooConnection"')
+    ok = "permission denied" in err
+    ev.step("the role can't read the Yahoo tokens", ok, detail=err.splitlines()[0][:160] if err else "the query was allowed")
+    if not ok:
+        raise Stop("Neon credential check failed: the role can read the Yahoo access token column")
+
+    status, _, body = http_request("GET", DRY_RUN_URL, "invalid-" + secrets.token_urlsafe(32))
+    ok = status == 401
+    ev.step("GitHub reaches production, which refuses a wrong token", ok, detail=f"HTTP {status} {snippet(body)}")
+    if not ok:
+        raise Stop(f"GitHub-to-Vercel check failed: a wrong token got HTTP {status} {snippet(body)}, expected 401")
+    status, _, body = http_request("POST", DRY_RUN_URL.split("?")[0], token, data=b"{}")
+    ok = status in (401, 403)
+    ev.step("the dry-run token can't reach the apply (POST)", ok, detail=f"HTTP {status} {snippet(body)}")
+    if not ok:
+        raise Stop(f"fail-closed check failed: a POST with the dry-run token got HTTP {status}, expected 401 or 403")
+
+    w1 = snap.get("W1") or []
+    expires = ts(w1[0]["tokenExpiresAt"]) if len(w1) == 1 else None
+    quiet = at(now.date(), PROBE_QUIET[0]) <= now <= at(now.date(), PROBE_QUIET[1])
+    if expires is None or expires > now or quiet:
+        why = "the Yahoo token is valid now" if expires and expires > now else \
+              "it's close to the scheduled sync" if quiet else "the Yahoo token's expiry is unknown"
+        ev.step("production accepts the dry-run token", None,
+                detail=f"deferred because {why}: a request with the token could become a full dry run")
+        return False
+    status, _, body = http_request("GET", DRY_RUN_URL, token)
+    ok = status == 409 and b"doesn't refresh" in body
+    ev.step("production accepts the dry-run token", ok,
+            detail=f"HTTP {status} {snippet(body)} (the Yahoo token expired {iso(expires)}, so it stops before reading Yahoo)")
+    if not ok:
+        hint = " (is RECOVERY_DRYRUN_TOKEN the same in GitHub and Vercel Production, and was Production redeployed?)" if status == 401 else ""
+        raise Stop(f"GitHub-to-Vercel check failed: the dry-run token got HTTP {status} {snippet(body)}, expected 409{hint}")
+    return True
+
+
+def credentials():
     url, token = os.environ.get("PREFLIGHT_DATABASE_URL", ""), os.environ.get("RECOVERY_DRYRUN_TOKEN", "")
     SECRETS.extend([url, token])
     if not url or not token:
         raise Stop("PREFLIGHT_DATABASE_URL or RECOVERY_DRYRUN_TOKEN isn't set")
     if shutil.which("psql") is None:
         raise Stop("psql isn't installed on the runner")
-    db = Db(url)
+    return Db(url), token
 
+
+def verify_setup(ev):
+    """Only the setup checks; never the dry run. Fails unless every check, including the token probe, ran and passed."""
+    verify_hashes(ev)
+    db, token = credentials()
+    snap = db.snapshot()
+    v = evaluate(snap, utcnow())
+    ev.gate(v)  # for information: outside the window the gate is a STOP, as it should be
+    if not setup_checks(ev, db, token, snap, v["now"] or utcnow()):
+        raise Stop("the dry-run token couldn't be checked now; run verify-setup again while the Yahoo token is expired, "
+                   "outside 11:58-13:05 UTC")
+    ev.data["outcome"] = "SETUP_VERIFIED"
+
+
+def run(ev):
+    verify_hashes(ev)
+    db, token = credentials()
+
+    checked = False
     while True:
         snap = db.snapshot()
         v = evaluate(snap, utcnow())
@@ -499,6 +596,9 @@ def run(ev):
         ev.gate(v)
         if v["decision"] == "STOP":
             raise Stop("; ".join(v["failures"]))
+        if not checked:
+            setup_checks(ev, db, token, snap, v["now"])
+            checked = True
         if v["decision"] == "GO":
             break
         now, target = v["now"], v["earliest"] or (v["now"] + timedelta(seconds=POLL_SECONDS))
@@ -514,6 +614,9 @@ def run(ev):
     ev.log(f"GET {DRY_RUN_URL}")
     status, ctype, body = http_get(DRY_RUN_URL, token)
     end = utcnow()
+    if status == 401:
+        raise Stop("GitHub-to-Vercel check failed: production refused the dry-run token (HTTP 401); "
+                   "is RECOVERY_DRYRUN_TOKEN the same in GitHub and Vercel Production, and was Production redeployed?")
     ev.data["dryRun"] = {"url": DRY_RUN_URL, "requestStartedAt": iso(start), "requestFinishedAt": iso(end),
                          "httpStatus": status, "contentType": ctype, "bytes": len(body)}
     if status != 200:
@@ -582,13 +685,17 @@ def run(ev):
 
 
 def main(argv):
-    if len(argv) != 2:
+    args = argv[1:]
+    mode = "verify-setup" if args[:1] == ["--verify-setup"] else "preflight"
+    args = args[1:] if mode == "verify-setup" else args
+    if len(args) != 1:
         print(__doc__)
         return 1
-    os.makedirs(argv[1], exist_ok=True)
-    ev = Evidence(argv[1])
+    os.makedirs(args[0], exist_ok=True)
+    ev = Evidence(args[0])
+    ev.data["mode"] = mode
     try:
-        run(ev)
+        (verify_setup if mode == "verify-setup" else run)(ev)
         code = 0
     except Stop as e:
         ev.data["outcome"], code = "STOP", 1

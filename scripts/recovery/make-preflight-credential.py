@@ -1,45 +1,51 @@
 #!/usr/bin/env python3
 """
-Generate the password for the read-only antlerboard_preflight role, on your
-own computer, without it ever appearing in the Neon console, chat, or logs.
+Generate the recovery preflight's two secrets on your own computer, so neither
+ever appears in chat or in a log.
 
 Usage:  python3 -I scripts/recovery/make-preflight-credential.py
 
-Prints two things for you alone:
-  1. An ALTER ROLE statement carrying only the SCRAM-SHA-256 verifier (a salted
-     hash). Run it in the Neon SQL editor; Neon stores the verifier and never
-     sees the password.
-  2. The connection URL to paste into the GitHub secret PREFLIGHT_DATABASE_URL.
-Nothing is written to disk. Close or clear the terminal afterwards.
+Prints, for you alone:
+  1. The statement that sets the read-only role's password. Run it in the
+     Neon SQL editor. (Neon only accepts plaintext passwords, so it can't be
+     given a pre-hashed one.)
+  2. The value for the GitHub secret PREFLIGHT_DATABASE_URL.
+  3. The value for RECOVERY_DRYRUN_TOKEN: the GitHub secret and the Vercel
+     Production environment variable, both set to the same value.
+Nothing is written to disk. Clear the terminal once all three are saved.
 """
-import base64, hashlib, hmac, secrets
+import secrets
 
 ROLE = "antlerboard_preflight"
 # Production branch "main", direct (unpooled) endpoint: session settings such
 # as default_transaction_read_only only take effect without the pooler.
 HOST = "ep-divine-smoke-avq2vhuj.c-11.us-east-1.aws.neon.tech"
 DATABASE = "neondb"
-ITERATIONS = 4096
 
 
-def scram_verifier(password: str, salt: bytes, iterations: int = ITERATIONS) -> str:
-    """The SCRAM-SHA-256 verifier PostgreSQL stores for a password (RFC 5802/7677)."""
-    salted = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iterations)
-    client_key = hmac.new(salted, b"Client Key", hashlib.sha256).digest()
-    stored_key = hashlib.sha256(client_key).digest()
-    server_key = hmac.new(salted, b"Server Key", hashlib.sha256).digest()
-    b64 = lambda b: base64.b64encode(b).decode()
-    return f"SCRAM-SHA-256${iterations}:{b64(salt)}${b64(stored_key)}:{b64(server_key)}"
+def generate():
+    # URL-safe, so the password needs no escaping in the URL or the SQL literal.
+    password = secrets.token_urlsafe(32)
+    return {
+        "sql": f"ALTER ROLE {ROLE} WITH PASSWORD '{password}';",
+        "database_url": f"postgresql://{ROLE}:{password}@{HOST}/{DATABASE}?sslmode=require&channel_binding=require",
+        "dry_run_token": secrets.token_urlsafe(48),
+    }
 
 
 def main():
-    password = secrets.token_urlsafe(32)  # 256 bits, URL-safe so the URL needs no escaping
-    verifier = scram_verifier(password, secrets.token_bytes(16))
-    print("1. Run this in the Neon SQL editor (branch main, database neondb):\n")
-    print(f"   ALTER ROLE {ROLE} WITH PASSWORD '{verifier}';\n")
-    print("2. Paste this as the GitHub repository secret PREFLIGHT_DATABASE_URL:\n")
-    print(f"   postgresql://{ROLE}:{password}@{HOST}/{DATABASE}?sslmode=require&channel_binding=require\n")
-    print("Nothing was saved. Clear this terminal once both are done.")
+    g = generate()
+    print("1. Neon SQL editor (project hidden-wave-58536414, branch main, database neondb):\n")
+    print(f"   {g['sql']}\n")
+    print("2. GitHub > Settings > Secrets and variables > Actions > New repository secret")
+    print("   Name: PREFLIGHT_DATABASE_URL   Secret:\n")
+    print(f"   {g['database_url']}\n")
+    print("3. The same value in both places:")
+    print("   - GitHub repository secret, Name: RECOVERY_DRYRUN_TOKEN")
+    print("   - Vercel > antlerboard > Settings > Environment Variables, Key: RECOVERY_DRYRUN_TOKEN,")
+    print("     Environments: Production only, Sensitive: on\n")
+    print(f"   {g['dry_run_token']}\n")
+    print("Nothing was saved. Clear this terminal once all three are done.")
 
 
 if __name__ == "__main__":
