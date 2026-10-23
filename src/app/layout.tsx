@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Libre_Franklin, IBM_Plex_Mono, Fraunces } from "next/font/google";
 import "./globals.css";
 import { ServiceWorkerRegister } from "@/components/pwa/ServiceWorkerRegister";
+import Script from "next/script";
 
 // Franklin Gothic is the typeface of the newspaper sports page and the box
 // score, which is what Antlerboard's dense standings and keeper tables are.
@@ -64,6 +65,8 @@ export default function RootLayout({
       >
         <ServiceWorkerRegister />
         {children}
+        {/* HaveAnApp Pulse: anonymous, cookieless usage counts. */}
+        <Script src="https://haveanapp-pulse-collect.vercel.app/p.js" data-app="antlerboard" strategy="afterInteractive" />
       </body>
     </html>
   );
