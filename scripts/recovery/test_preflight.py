@@ -93,7 +93,7 @@ class Gate(unittest.TestCase):
         v = decide(snapshot())
         self.assertEqual(v["decision"], "GO", v["failures"])
         self.assertEqual(v["earliest"], t(12, 11, 30))
-        self.assertEqual(v["deadline"], t(12, 45))
+        self.assertEqual(v["deadline"], t(12, 55, 10))  # token expiry 13:00:10 - 5 min
         self.assertTrue(all(c["ok"] for c in v["checks"]))
 
     def test_token_expiry_sets_an_earlier_deadline(self):
@@ -112,16 +112,45 @@ class Gate(unittest.TestCase):
         self.assertEqual(decide(snapshot(now=t(12, 3), cron_at=None))["decision"], "WAIT")
 
     def test_stop_after_the_hard_deadline_even_with_every_other_check_passing(self):
-        self.assertStop(decide(snapshot(now=t(12, 45, 1))), "hard deadline")
-        self.assertStop(decide(snapshot(now=t(12, 50), cron_at=None)), "hard deadline")
+        late = dict(started=t(12, 59), finished=t(12, 59, 40), cron_at=t(12, 59, 41), expires=t(15, 0))
+        self.assertEqual(decide(snapshot(now=t(13, 55), **late))["decision"], "GO")
+        self.assertStop(decide(snapshot(now=t(13, 55, 1), **late)), "hard deadline")
+        self.assertStop(decide(snapshot(now=t(14, 17), cron_at=None)), "hard deadline")
 
     def test_stop_inside_the_token_margin(self):
         self.assertStop(decide(snapshot(now=t(12, 20), expires=t(12, 15))), "a start window exists")
         self.assertStop(decide(snapshot(now=t(12, 30), finished=t(12, 15), cron_at=t(12, 15, 1), expires=t(12, 34))), "token margin")
 
     def test_stop_when_a_late_sync_leaves_no_window(self):
-        self.assertStop(decide(snapshot(now=t(12, 41), started=t(12, 39), finished=t(12, 40), cron_at=t(12, 40, 1), expires=t(13, 39))),
+        # A token that lapses before the sync has settled leaves no window at all.
+        self.assertStop(decide(snapshot(now=t(12, 52), started=t(12, 50), finished=t(12, 51), cron_at=t(12, 51, 1), expires=t(13, 5))),
                         "a start window exists")
+
+    def test_a_late_cron_still_gets_its_token_window(self):
+        # Vercel fired the 12:00 cron at 12:56 on 2026-10-15; its token lasts an hour.
+        late = dict(started=t(12, 56), finished=t(12, 56, 30), cron_at=t(12, 56, 31), expires=t(13, 56))
+        v = decide(snapshot(now=t(13, 0), **late))
+        self.assertEqual((v["decision"], v["earliest"], v["deadline"]), ("WAIT", t(13, 6, 30), t(13, 51)))
+        self.assertEqual(decide(snapshot(now=t(13, 7), **late))["decision"], "GO")
+        self.assertStop(decide(snapshot(now=t(13, 51, 1), **late)), "token margin")
+
+    def test_a_late_workflow_start_goes_only_inside_the_token_margin(self):
+        # The dispatched run can start late; the sync and token stay as they were.
+        self.assertEqual(decide(snapshot(now=t(12, 50)))["decision"], "GO")
+        self.assertEqual(decide(snapshot(now=t(12, 55, 10)))["decision"], "GO")
+        self.assertStop(decide(snapshot(now=t(12, 55, 11))), "token margin")
+        self.assertStop(decide(snapshot(now=t(13, 0, 10))), "token margin")
+
+    def test_an_expired_or_unrefreshed_token_is_never_a_go(self):
+        self.assertStop(decide(snapshot(now=t(13, 1))), "token margin")
+        self.assertStop(decide(snapshot(expires=t(12, 0))), "refreshed")
+        self.assertStop(decide(snapshot(expires=None)), "refreshed")
+
+    def test_a_sync_outside_the_cron_hour_is_not_the_scheduled_one(self):
+        # A sync started at or after 13:00 can't be the 12:00 cron, whoever logged it.
+        after = dict(started=t(13, 0), finished=t(13, 0, 30), cron_at=t(13, 0, 31), expires=t(14, 0))
+        self.assertStop(decide(snapshot(now=t(13, 11), **after)), "inside the cron hour")
+        self.assertStop(decide(snapshot(now=t(12, 20), started=t(11, 59, 59))), "inside the cron hour")
 
     def test_stop_on_sync_results(self):
         self.assertStop(decide(snapshot(status="SUCCESS")), "status PARTIAL")
@@ -198,17 +227,26 @@ class LoopWithoutDatabase(unittest.TestCase):
         return code, dry_runs, json.loads(read(os.path.join(out, "preflight.json"))), read(os.path.join(out, "summary.md"))
 
     def test_outside_the_window_it_stops_without_calling_the_endpoint(self):
-        code, calls, ev, md = self.run_main([snapshot(now=t(13, 2))], start=t(13, 2))
+        code, calls, ev, md = self.run_main([snapshot(now=t(14, 17))], start=t(14, 17))
         self.assertEqual((code, calls, ev["outcome"]), (1, [], "STOP"))
         self.assertIn("hard deadline", ev["stopReasons"][0])
         self.assertIn("# Recovery preflight: STOP", md)
         self.assertNotIn("pw-xxxxxxxxxxxxxxxx", json.dumps(ev) + md)
 
     def test_a_sync_that_never_comes_ends_in_stop_at_the_deadline(self):
-        snaps = [snapshot(now=n, cron_at=None) for n in (t(12, 30), t(12, 44), t(12, 46))]
+        snaps = [snapshot(now=n, cron_at=None) for n in (t(12, 30), t(13, 54), t(13, 56))]
         code, calls, ev, _ = self.run_main(snaps)
         self.assertEqual((code, calls), (1, []))
         self.assertEqual([p["decision"] for p in ev["polls"]], ["WAIT", "WAIT", "STOP"])
+
+    def test_a_late_cron_waits_then_makes_exactly_one_dry_run_request(self):
+        late = dict(started=t(12, 56), finished=t(12, 56, 30), cron_at=t(12, 56, 31), expires=t(13, 56))
+        snaps = [snapshot(now=t(12, 40), cron_at=None), snapshot(now=t(13, 0), **late), snapshot(now=t(13, 7), **late)]
+        code, calls, ev, _ = self.run_main(snaps + [snapshot(now=t(13, 8), **late)], start=t(12, 40))
+        self.assertEqual([p["decision"] for p in ev["polls"]], ["WAIT", "WAIT", "GO"])
+        self.assertEqual(len(calls), 1)  # the one dry-run GET; the stand-in answers 500, so it's a STOP
+        self.assertEqual(code, 1)
+        self.assertIn("HTTP 500", ev["stopReasons"][0])
 
     def test_a_failed_check_stops_immediately_without_calling_the_endpoint(self):
         code, calls, ev, _ = self.run_main([snapshot(write_errors="2")])
@@ -312,6 +350,7 @@ INSERT INTO "AuditLogEntry"(id, "actorName", action, "entityType", "createdAt", 
                         mock.patch.object(pf, "EXPECTED_SYNC", {"status": "PARTIAL", "legacy_awaiting": len(keys), "write_errors": 0}),
                         mock.patch.object(pf, "CRON_OPENS", hm(now - timedelta(minutes=30))),
                         mock.patch.object(pf, "HARD_DEADLINE", hm(now + timedelta(minutes=30))),
+                        mock.patch.object(pf, "CRON_CLOSES", hm(now + timedelta(minutes=30))),
                         mock.patch.object(pf, "sleep", lambda s: None),
                         mock.patch.dict(os.environ, {"PREFLIGHT_DATABASE_URL": self.role_url, "RECOVERY_DRYRUN_TOKEN": TOKEN, "NO_PROXY": "127.0.0.1"})]
         for p in self.patches:

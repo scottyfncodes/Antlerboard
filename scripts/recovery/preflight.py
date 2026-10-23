@@ -22,9 +22,10 @@ Stops at the first failure:
      dry run, and is how the setup is verified before the schedule is enabled.
   3. Poll production (read-only) until today's scheduled sync has finished
      and settled. Every poll re-checks every gate: read-only session, clocks,
-     baseline, the seven FYPD players, the sync (scheduled cron, PARTIAL, 907
-     awaiting, 0 write errors) and the token. GO only inside
-     [sync finish + 10 min, min(12:45 UTC, token expiry - 5 min)].
+     baseline, the seven FYPD players, the sync (scheduled cron inside its
+     12:00-13:00 UTC hour, PARTIAL, 907 awaiting, 0 write errors) and the
+     token. GO only inside [sync finish + 10 min, token expiry - 5 min], and
+     never after 13:55 UTC.
   4. On GO: one GET of the production dry run (never Apply), then the same
      snapshot again. Any difference is a STOP.
   5. validate_dry_run.py, then its SELECT-only cross-checks, then
@@ -64,7 +65,13 @@ FYPD_PLAYERS = {
 }
 
 CRON_OPENS = (12, 0)        # vercel.json "0 12 * * *" - fires some time in that hour
-HARD_DEADLINE = (12, 45)    # latest start, whatever the token says
+CRON_CLOSES = (13, 0)       # ...and Vercel Hobby only promises "within the hour" (12:56 on 2026-10-15)
+# Latest start, whatever the token says: the last minute the cron can start
+# the sync, plus Yahoo's one-hour access token, less the margin. The token's
+# own expiry - 5 min is the real bound (the margin covers the dry run's
+# 300 s maxDuration, and the endpoint never refreshes the token); this
+# ceiling only stops a run that starts hours late from going on at all.
+HARD_DEADLINE = (13, 55)
 SYNC_SETTLE = timedelta(minutes=10)
 TOKEN_MARGIN = timedelta(minutes=5)
 MAX_CLOCK_SKEW = timedelta(seconds=60)
@@ -311,7 +318,8 @@ def evaluate(snap, runner_now):
               f"actor {cron['actorName']}, outcome {result.get('outcome')}, at {iso(ts(cron['createdAt']))}")
         check("the latest sync log is the scheduled run's", result.get("syncLogId") == w2["id"],
               f"cron logged {result.get('syncLogId')}, latest is {w2['id']}")
-        check("the sync started today after 12:00 UTC", started is not None and started >= cron_open, f"started {iso(started)}")
+        check("the sync started inside the cron hour (12:00-13:00 UTC)",
+              started is not None and cron_open <= started < at(day, CRON_CLOSES), f"started {iso(started)}")
         check("the sync finished", finished is not None, f"finished {iso(finished)}")
         check(f"sync status {EXPECTED_SYNC['status']}", w2["status"] == EXPECTED_SYNC["status"], f"got {w2['status']}")
         check(f"{EXPECTED_SYNC['legacy_awaiting']} transactions awaiting recovery",
@@ -457,7 +465,7 @@ class Evidence:
                f"| Run started | {d['startedAt']} |", f"| Last check | {g.get('now') or '-'} |",
                f"| Sync finished | {(g.get('sync') or {}).get('finishedAt') or '-'} |",
                f"| Earliest start (finish + 10 min) | {g.get('earliestStart') or '-'} |",
-               f"| Latest start (min of 12:45, token expiry - 5 min) | {g.get('latestStart') or '-'} |",
+               f"| Latest start (token expiry - 5 min, never after 13:55) | {g.get('latestStart') or '-'} |",
                f"| Token expires | {g.get('tokenExpiresAt') or '-'} |",
                f"| Polls | {len(d['polls'])} |"]
         if g.get("checks"):

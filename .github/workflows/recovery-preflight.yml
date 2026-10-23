@@ -20,7 +20,7 @@ on:
     # Not a way to make the window: GitHub started the runs due at 11:41 and
     # 12:11 on 2026-10-20 at 15:49 and 16:57. This is a missed-run alarm. It
     # skips when today's evidence exists; otherwise it records a STOP (it is
-    # past the 12:45 deadline), so a day with no dispatch is never silent.
+    # past the 13:55 latest start), so a day with no dispatch is never silent.
     - cron: "17 14 * * *"
   workflow_dispatch:
     inputs:
@@ -46,9 +46,9 @@ jobs:
       (github.event_name == 'schedule' || github.ref_name == github.event.repository.default_branch) &&
       (inputs.mode == 'verify-setup' || vars.RECOVERY_PREFLIGHT_ENABLED == 'true')
     runs-on: ubuntu-24.04
-    # Covers a start as early as 12:00 to the 12:45 deadline, a 5-minute dry
-    # run and the validators.
-    timeout-minutes: 80
+    # Covers a manual start as early as 12:00 waiting up to the 13:55 latest
+    # start, a 5.5-minute dry run and the validators.
+    timeout-minutes: 130
     env:
       MODE: ${{ inputs.mode || 'preflight' }}
     steps:
